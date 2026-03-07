@@ -1,42 +1,82 @@
-const User = require('../models/user.model')
+
+const prisma = require('../db/prisma');
+const argon2 = require('argon2')
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
 const { createTokenUser, attachCookiesToResponse, checkPermissions } = require('../utils')
 
 const getAllUsers = async (req, res) => {
-    console.log(req.user)
-    const users = await User.find({ role: 'user' }).select('-password')
+    // Only looking for users, filtering out password hash
+    const users = await prisma.user.findMany({
+        where: { role: 'STUDENT' }, // Default map to old 'user' role
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            createdAt: true,
+            updatedAt: true
+        }
+    })
     res.status(StatusCodes.OK).json({ users })
 }
 
 const getSingleUser = async (req, res) => {
-    const user = await User.findOne({ _id: req.params.id })
+    const user = await prisma.user.findUnique({
+        where: { id: req.params.id },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            createdAt: true,
+            updatedAt: true
+        }
+    })
+
     if (!user) {
         throw new CustomError.NotFoundError(`No user with id : ${req.params.id}`)
     }
-    checkPermissions(req.user, user._id)
+
+    checkPermissions(req.user, user.id)
     res.status(StatusCodes.OK).json({ user })
 }
 
 const showCurrentUser = async (req, res) => {
-    res.status(StatusCodes.OK).json({ user: req.user })
+    // We want the frontend to have the full rich data, including email and nested profiles
+    const user = await prisma.user.findUnique({
+        where: { id: req.user.userId },
+        select: {
+            id: true,
+            name: true,
+            email: true,
+            role: true,
+            studentProfile: true,
+            teacherProfile: true,
+            parentProfile: true
+        }
+    })
+
+    if (!user) {
+        throw new CustomError.UnauthenticatedError('User no longer exists')
+    }
+
+    res.status(StatusCodes.OK).json({ user })
 }
 
-// update user with user.save()
 const updateUser = async (req, res) => {
-    const {email, name} = req.body
+    const { email, name } = req.body
+
     if (!email || !name) {
         throw new CustomError.BadRequestError('Please provide all values')
     }
-    console.log(email, name, req.user)
-    const user = await User.findOne({ _id: req.user.userId })
 
-    user.email = email
-    user.name = name
+    // Update user via Prisma
+    const user = await prisma.user.update({
+        where: { id: req.user.userId },
+        data: { email, name }
+    })
 
-    await user.save()
-    
-    // create new token User and attach cookies to response
     const tokenUser = createTokenUser(user)
     attachCookiesToResponse({ res, user: tokenUser })
     res.status(StatusCodes.OK).json({ user: tokenUser })
@@ -48,38 +88,34 @@ const updateUserPassword = async (req, res) => {
     if (!oldPassword || !newPassword) {
         throw new CustomError.BadRequestError('Please provide both values')
     }
-    const user = await User.findOne({ _id: req.user.userId })
 
-    const isPasswordCorrect = await user.comparePassword(oldPassword)
+    const user = await prisma.user.findUnique({
+        where: { id: req.user.userId }
+    })
+
+    if (!user) {
+        throw new CustomError.UnauthenticatedError('User not found for the provided token.')
+    }
+
+    const isPasswordCorrect = await argon2.verify(user.password, oldPassword)
     if (!isPasswordCorrect) {
         throw new CustomError.UnauthenticatedError('Invalid Credentials')
     }
-    user.password = newPassword
 
-    await user.save()
+    const hashedPassword = await argon2.hash(newPassword)
+
+    await prisma.user.update({
+        where: { id: req.user.userId },
+        data: { password: hashedPassword }
+    })
+
     res.status(StatusCodes.OK).json({ msg: 'Successfully updated password' })
 }
 
 module.exports = {
-    getAllUsers, 
+    getAllUsers,
     getSingleUser,
     showCurrentUser,
     updateUser,
     updateUserPassword
 }
-
-// const updateUser = async (req, res) => {
-//     const {email, name} = req.body
-//     if (!email || !name) {
-//         throw new CustomError.BadRequestError('Please provide all values')
-//     }
-//     const user = await User.findOneAndUpdate(
-//         { _id: req.user.userId }, 
-//         { email, name },
-//         { new: true, runValidators: true }
-//     )
-//     // create new token User and attach cookies to response
-//     const tokenUser = createTokenUser(user)
-//     attachCookiesToResponse({ res, user: tokenUser })
-//     res.status(StatusCodes.OK).json({ user: tokenUser })
-// }

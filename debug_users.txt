@@ -1,0 +1,68 @@
+[
+  {
+    "id": "6210609a-0a00-437c-a80a-9f4370eecf63",
+    "name": "Jereh Lomak",
+    "role": "STUDENT",
+    "email": "jereh@gmail.com"
+  },
+  {
+    "id": "99007bf7-18ac-4f6f-81b6-9668b05e7ef3",
+    "name": "admin",
+    "role": "ADMIN",
+    "email": "admin@gmail.com"
+  },
+  {
+    "id": "16ab2b97-2e70-49ec-948c-8a7bc7b1385f",
+    "name": "admin",
+    "role": "ADMIN",
+    "email": "admin2@gmail.com"
+  },
+  {
+    "id": "1450d167-8dca-4ca0-bd01-d2468991ead2",
+    "name": "Super Admin",
+    "role": "ADMIN",
+    "email": "admin@skooly.com"
+  },
+  {
+    "id": "7ee5a81f-b56c-41e9-8035-7722d9631acb",
+    "name": "Nandom Gora",
+    "role": "PARENT",
+    "email": "nandom.gora.p0001@skooly.parent"
+  },
+  {
+    "id": "4397b2f1-6acb-4979-a387-b2fc71502d1e",
+    "name": "Admin User",
+    "role": "ADMIN",
+    "email": "admin@eschool.com"
+  },
+  {
+    "id": "0d48d084-e206-4c54-a571-be7889d737e9",
+    "name": "Mr. John Doe (Teacher)",
+    "role": "STUDENT",
+    "email": "john1772624053836@school.com"
+  },
+  {
+    "id": "7d26b987-7dd0-4392-ac41-c1c5161d715e",
+    "name": "Jerry Lomak",
+    "role": "TEACHER",
+    "email": "jerry.lomak.t0001@skooly.employee"
+  },
+  {
+    "id": "b323be49-ca52-427e-91d7-339b4b177178",
+    "name": "Teacher1 Teacher1",
+    "role": "TEACHER",
+    "email": "teacher1.teacher1.t0002@skooly.employee"
+  },
+  {
+    "id": "84215f1e-e5a6-4f3c-9c5a-800f2ad92df9",
+    "name": "James Doe",
+    "role": "STUDENT",
+    "email": "james.doe.0002@skooly.student"
+  },
+  {
+    "id": "cbbe695c-2736-446c-94fa-eaed923b3e8e",
+    "name": "Comfort",
+    "role": "STUDENT",
+    "email": "comfort.0001@skooly.student"
+  }
+]
