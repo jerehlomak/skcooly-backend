@@ -54,6 +54,7 @@ app.use(cors({
         process.env.CLIENT_URL || 'http://localhost:5173',
         'http://localhost:5173', // Ensure local dev always works
         process.env.CENTRAL_ADMIN_URL || 'http://localhost:3000',
+        'https://central-admin-skcooly.netlify.app', // Deployed Central Admin
     ],
     credentials: true,
 }))
