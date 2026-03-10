@@ -43,6 +43,22 @@ const getSingleUser = async (req, res) => {
 }
 
 const showCurrentUser = async (req, res) => {
+    if (req.user.role === 'GROUP_ADMIN') {
+        const admin = await prisma.groupAdmin.findUnique({
+            where: { id: req.user.userId }
+        });
+        if (!admin) throw new CustomError.UnauthenticatedError('Admin no longer exists');
+        return res.status(StatusCodes.OK).json({
+            user: {
+                id: admin.id,
+                name: admin.name,
+                email: admin.email,
+                role: admin.role,
+                groupId: admin.groupId
+            }
+        });
+    }
+
     // We want the frontend to have the full rich data, including email and nested profiles
     const user = await prisma.user.findUnique({
         where: { id: req.user.userId },
@@ -51,6 +67,7 @@ const showCurrentUser = async (req, res) => {
             name: true,
             email: true,
             role: true,
+            schoolId: true,
             studentProfile: true,
             teacherProfile: true,
             parentProfile: true
@@ -61,7 +78,19 @@ const showCurrentUser = async (req, res) => {
         throw new CustomError.UnauthenticatedError('User no longer exists')
     }
 
-    res.status(StatusCodes.OK).json({ user })
+    let schoolData = null;
+    if (user.schoolId) {
+        schoolData = await prisma.school.findUnique({
+            where: { id: user.schoolId },
+            include: {
+                plan: true,
+                featureFlags: true,
+                group: { select: { id: true, name: true } }
+            }
+        });
+    }
+
+    res.status(StatusCodes.OK).json({ user: { ...user, school: schoolData } })
 }
 
 const updateUser = async (req, res) => {

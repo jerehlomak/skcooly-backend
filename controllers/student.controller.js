@@ -35,9 +35,18 @@ const addStudent = async (req, res) => {
 
     const currentYear = new Date().getFullYear()
 
-    // Generate unique admission number
+    // Fetch the school's code to namespace the generated email globally
+    const school = await prisma.school.findUnique({
+        where: { id: req.user.schoolId },
+        select: { schoolCode: true }
+    })
+    // Sanitize schoolCode for use in email: e.g. "SKL-A1B2C3" → "skla1b2c3"
+    const schoolTag = (school?.schoolCode || req.user.schoolId.slice(0, 8))
+        .toLowerCase().replace(/[^a-z0-9]/g, '')
+
+    // Generate unique admission number (scoped to this school)
     const lastStudent = await prisma.studentProfile.findFirst({
-        where: { admissionNo: { startsWith: `SKL-${currentYear}-` } },
+        where: { admissionNo: { startsWith: `SKL-${currentYear}-` }, schoolId: req.user.schoolId },
         orderBy: { enrollmentDate: 'desc' }
     })
 
@@ -50,9 +59,9 @@ const addStudent = async (req, res) => {
     const formattedSequence = sequence.toString().padStart(4, '0')
     const admissionNo = `SKL-${currentYear}-${formattedSequence}`
 
-    // Auto-generate credentials
+    // Auto-generate credentials — email is globally unique thanks to schoolTag
     const safeName = name.toLowerCase().replace(/\s+/g, '.')
-    const generatedEmail = `${safeName}.${formattedSequence}@skooly.student`
+    const generatedEmail = `${safeName}.${formattedSequence}.${schoolTag}@skooly.student`
     const generatedPassword = generateRandomPassword()
     const hashedPassword = await argon2.hash(generatedPassword)
 
@@ -63,8 +72,10 @@ const addStudent = async (req, res) => {
                 email: generatedEmail,
                 password: hashedPassword,
                 role: 'STUDENT',
+                schoolId: req.user.schoolId,
                 studentProfile: {
                     create: {
+                        schoolId: req.user.schoolId,
                         admissionNo,
                         classLevel,
                         classId: classId || null,
@@ -98,7 +109,16 @@ const addStudent = async (req, res) => {
 
 // ─── GET ALL STUDENTS ──────────────────────────────────────────────────────────
 const getAllStudents = async (req, res) => {
+    const schoolId = req.user.schoolId
+    if (!schoolId) {
+        return res.status(StatusCodes.FORBIDDEN).json({ msg: 'No school context found for this user.' })
+    }
+
     const students = await prisma.studentProfile.findMany({
+        where: {
+            schoolId,          // only this school
+            NOT: { schoolId: null }  // safety guard: never return null-schoolId orphans
+        },
         include: {
             user: { select: { id: true, name: true, email: true, role: true } },
             classArm: { select: { name: true, level: true } },
@@ -115,8 +135,8 @@ const getAllStudents = async (req, res) => {
 const getStudent = async (req, res) => {
     const { id } = req.params // This is the User.id
 
-    const user = await prisma.user.findUnique({
-        where: { id },
+    const user = await prisma.user.findFirst({
+        where: { id, schoolId: req.user.schoolId },
         include: {
             studentProfile: {
                 include: {
@@ -155,28 +175,33 @@ const updateStudent = async (req, res) => {
         classLevel = cls.level
     }
 
-    await prisma.user.update({
-        where: { id },
+    await prisma.user.updateMany({
+        where: { id, schoolId: req.user.schoolId },
         data: {
             ...updateData,
-            studentProfile: {
-                update: {
-                    ...(classLevel && { classLevel }),
-                    ...(classId && { classId }),
-                    ...(gender && { gender }),
-                    ...(status && { status }),
-                    phone: phone !== undefined ? phone : undefined,
-                    dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
-                    orphan: orphan !== undefined ? (orphan === true || orphan === 'yes') : undefined,
-                    religion: religion !== undefined ? religion : undefined,
-                    bloodGroup: bloodGroup !== undefined ? bloodGroup : undefined,
-                    address: address !== undefined ? address : undefined,
-                    previousSchool: previousSchool !== undefined ? previousSchool : undefined,
-                    parentProfileId: parentProfileId !== undefined ? parentProfileId : undefined
-                }
-            }
         }
     })
+
+    // Because updateMany doesn't support nested updates, we update the profile separately
+    if (Object.keys(updateData).length > 0 || classLevel || classId || gender || status || phone || dateOfBirth || orphan !== undefined || religion || bloodGroup || address || previousSchool || parentProfileId) {
+        await prisma.studentProfile.update({
+            where: { userId: id },
+            data: {
+                ...(classLevel && { classLevel }),
+                ...(classId && { classId }),
+                ...(gender && { gender }),
+                ...(status && { status }),
+                phone: phone !== undefined ? phone : undefined,
+                dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : undefined,
+                orphan: orphan !== undefined ? (orphan === true || orphan === 'yes') : undefined,
+                religion: religion !== undefined ? religion : undefined,
+                bloodGroup: bloodGroup !== undefined ? bloodGroup : undefined,
+                address: address !== undefined ? address : undefined,
+                previousSchool: previousSchool !== undefined ? previousSchool : undefined,
+                parentProfileId: parentProfileId !== undefined ? parentProfileId : undefined
+            }
+        })
+    }
 
     res.status(StatusCodes.OK).json({ msg: 'Student updated successfully' })
 }
@@ -185,7 +210,7 @@ const updateStudent = async (req, res) => {
 const deleteStudent = async (req, res) => {
     const { id } = req.params
     // Cascade via Prisma schema — deleting User deletes StudentProfile too
-    await prisma.user.delete({ where: { id } })
+    await prisma.user.deleteMany({ where: { id, schoolId: req.user.schoolId } })
     res.status(StatusCodes.OK).json({ msg: 'Student deleted successfully' })
 }
 

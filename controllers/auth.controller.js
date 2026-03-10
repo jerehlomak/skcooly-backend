@@ -3,12 +3,11 @@ const prisma = require('../db/prisma');
 const argon2 = require('argon2')
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
-const { createJWT, isTokenValid, attachCookiesToResponse, createTokenUser } = require('../utils')
+const { createTokenUser, attachCookiesToResponse } = require('../utils')
 
 const register = async (req, res) => {
     const { email, name, password } = req.body
 
-    // Check if user already exists
     const emailAlreadyExist = await prisma?.user?.findUnique({
         where: { email }
     })
@@ -17,10 +16,8 @@ const register = async (req, res) => {
         throw new CustomError.BadRequestError('Email already exists')
     }
 
-    // Hash password with Argon2
     const hashedPassword = await argon2.hash(password)
 
-    // Securely create user - Admins must be created differently or seeded. Default role is STUDENT.
     const user = await prisma.user.create({
         data: {
             email,
@@ -37,34 +34,52 @@ const register = async (req, res) => {
 }
 
 const login = async (req, res) => {
-    const { loginId, password, role } = req.body
+    const { loginId, password, role, schoolCode } = req.body
 
     if (!loginId || !password || !role) {
         throw new CustomError.BadRequestError('Please provide login credentials and role')
     }
 
+    if (!schoolCode) {
+        throw new CustomError.BadRequestError('Please provide your School ID')
+    }
+
+    // First, find the school by schoolCode
+    const school = await prisma.school.findUnique({
+        where: { schoolCode: schoolCode.toUpperCase().trim() },
+        include: { plan: true, featureFlags: true, group: { select: { id: true, name: true } } }
+    })
+
+    if (!school) {
+        throw new CustomError.UnauthenticatedError('Invalid School ID')
+    }
+
+    if (school.status === 'SUSPENDED') {
+        throw new CustomError.UnauthenticatedError('This school account has been suspended. Please contact platform support.')
+    }
+
     let user = null;
 
     if (role === 'ADMIN') {
-        user = await prisma.user.findUnique({
-            where: { email: loginId },
+        user = await prisma.user.findFirst({
+            where: { email: loginId, schoolId: school.id },
             include: { studentProfile: true, teacherProfile: true, parentProfile: true }
         })
     } else if (role === 'STUDENT') {
-        const profile = await prisma.studentProfile.findUnique({
-            where: { admissionNo: loginId },
+        const profile = await prisma.studentProfile.findFirst({
+            where: { admissionNo: loginId, schoolId: school.id },
             include: { user: { include: { studentProfile: true, teacherProfile: true, parentProfile: true } } }
         })
         user = profile ? profile.user : null;
     } else if (role === 'TEACHER') {
-        const profile = await prisma.teacherProfile.findUnique({
-            where: { employeeId: loginId },
+        const profile = await prisma.teacherProfile.findFirst({
+            where: { employeeId: loginId, schoolId: school.id },
             include: { user: { include: { studentProfile: true, teacherProfile: true, parentProfile: true } } }
         })
         user = profile ? profile.user : null;
     } else if (role === 'PARENT') {
-        const profile = await prisma.parentProfile.findUnique({
-            where: { parentId: loginId },
+        const profile = await prisma.parentProfile.findFirst({
+            where: { parentId: loginId, schoolId: school.id },
             include: { user: { include: { studentProfile: true, teacherProfile: true, parentProfile: true } } }
         })
         user = profile ? profile.user : null;
@@ -76,7 +91,6 @@ const login = async (req, res) => {
         throw new CustomError.UnauthenticatedError('Invalid Credentials')
     }
 
-    // Compare passwords with Argon2
     const isPasswordCorrect = await argon2.verify(user.password, password)
 
     if (!isPasswordCorrect) {
@@ -86,12 +100,13 @@ const login = async (req, res) => {
     const tokenUser = createTokenUser(user)
     attachCookiesToResponse({ res, user: tokenUser })
 
-    // Return the full user object (excluding password) to the frontend context immediately
     const userContextData = {
         id: user.id,
         name: user.name,
         email: user.email,
         role: user.role,
+        schoolId: user.schoolId || null,
+        school: school,
         studentProfile: user.studentProfile,
         teacherProfile: user.teacherProfile,
         parentProfile: user.parentProfile,
@@ -110,7 +125,7 @@ const logout = async (req, res) => {
 
 // Secure route to register an initial admin (needs an environment secret in production)
 const registerAdmin = async (req, res) => {
-    const { email, name, password, adminSecret } = req.body
+    const { email, name, password, adminSecret, schoolId } = req.body
 
     if (adminSecret !== process.env.ADMIN_SETUP_SECRET) {
         throw new CustomError.UnauthorizedError('Unauthorized to create admin account')
@@ -131,7 +146,8 @@ const registerAdmin = async (req, res) => {
             email,
             name,
             password: hashedPassword,
-            role: 'ADMIN'
+            role: 'ADMIN',
+            schoolId: schoolId || null,
         }
     })
 

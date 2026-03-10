@@ -9,6 +9,7 @@ const crypto = require('crypto');
 
 const getTransactions = async (req, res) => {
     const transactions = await prisma.transaction.findMany({
+        where: { schoolId: req.user.schoolId },
         orderBy: { date: 'desc' },
     });
 
@@ -39,7 +40,8 @@ const addTransaction = async (req, res) => {
             type,
             reference: ref,
             gateway: gateway || 'Manual',
-            date: new Date()
+            date: new Date(),
+            schoolId: req.user.schoolId
         }
     });
 
@@ -53,6 +55,7 @@ const getFeeInvoices = async (req, res) => {
     // We grab all active students and their latest invoice. 
     // If no invoice exists, we simulate one generated for "First Term 2024/2025"
     let students = await prisma.studentProfile.findMany({
+        where: { schoolId: req.user.schoolId },
         include: {
             user: true,
             feeInvoices: true
@@ -141,6 +144,7 @@ const collectFee = async (req, res) => {
             type: 'income',
             gateway: paymentMethod || 'Cash',
             reference: `FEE-${invoiceId.substring(0, 6)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+            schoolId: req.user.schoolId
         }
     });
 
@@ -155,7 +159,10 @@ const collectFee = async (req, res) => {
 
 const getSalaries = async (req, res) => {
     // Generate/fetch salary slips for active teachers
-    const teachers = await prisma.teacherProfile.findMany({ include: { user: true, salarySlips: true } });
+    const teachers = await prisma.teacherProfile.findMany({
+        where: { schoolId: req.user.schoolId },
+        include: { user: true, salarySlips: true }
+    });
 
     // Use current month/year, e.g. "March 2025"
     const currentPeriod = new Date().toLocaleString('default', { month: 'long', year: 'numeric' });
@@ -236,7 +243,8 @@ const paySalary = async (req, res) => {
             amount: slip.netPay,
             type: 'expense',
             reference: ref,
-            gateway: gateway || 'Cash'
+            gateway: gateway || 'Cash',
+            schoolId: req.user.schoolId
         }
     });
 

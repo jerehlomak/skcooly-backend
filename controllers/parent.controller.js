@@ -29,7 +29,7 @@ const addParent = async (req, res) => {
     const currentYear = new Date().getFullYear();
 
     const lastParent = await prisma.parentProfile.findFirst({
-        where: { parentId: { startsWith: `PRT-${currentYear}-` } },
+        where: { parentId: { startsWith: `PRT-${currentYear}-` }, schoolId: req.user.schoolId },
         orderBy: { user: { createdAt: 'desc' } }
     });
 
@@ -54,8 +54,10 @@ const addParent = async (req, res) => {
                 email: generatedEmail,
                 password: hashedPassword,
                 role: 'PARENT',
+                schoolId: req.user.schoolId,
                 parentProfile: {
                     create: {
+                        schoolId: req.user.schoolId,
                         parentId,
                         phone,
                         address: address || null,
@@ -89,6 +91,7 @@ const addParent = async (req, res) => {
 // ─── GET ALL PARENTS ──────────────────────────────────────────────────────────
 const getAllParents = async (req, res) => {
     const parents = await prisma.parentProfile.findMany({
+        where: { schoolId: req.user.schoolId },
         include: {
             user: { select: { id: true, name: true, email: true, role: true } },
             students: {
@@ -103,8 +106,8 @@ const getAllParents = async (req, res) => {
 // ─── GET SINGLE PARENT ────────────────────────────────────────────────────────
 const getParent = async (req, res) => {
     const { id } = req.params; // User.id
-    const user = await prisma.user.findUnique({
-        where: { id },
+    const user = await prisma.user.findFirst({
+        where: { id, schoolId: req.user.schoolId },
         include: {
             parentProfile: {
                 include: {
@@ -128,29 +131,33 @@ const updateParent = async (req, res) => {
         motherName, motherPhone, motherNationalId, motherOccupation, motherEducation
     } = req.body;
 
-    await prisma.user.update({
-        where: { id },
+    await prisma.user.updateMany({
+        where: { id, schoolId: req.user.schoolId },
         data: {
             ...(name && { name }),
-            parentProfile: {
-                update: {
-                    ...(phone && { phone }),
-                    ...(address !== undefined && { address }),
-                    ...(occupation !== undefined && { occupation }),
-                    ...(fatherName !== undefined && { fatherName }),
-                    ...(fatherPhone !== undefined && { fatherPhone }),
-                    ...(fatherNationalId !== undefined && { fatherNationalId }),
-                    ...(fatherOccupation !== undefined && { fatherOccupation }),
-                    ...(fatherEducation !== undefined && { fatherEducation }),
-                    ...(motherName !== undefined && { motherName }),
-                    ...(motherPhone !== undefined && { motherPhone }),
-                    ...(motherNationalId !== undefined && { motherNationalId }),
-                    ...(motherOccupation !== undefined && { motherOccupation }),
-                    ...(motherEducation !== undefined && { motherEducation })
-                }
-            }
         }
     });
+
+    if (phone || address !== undefined || occupation !== undefined || fatherName !== undefined || fatherPhone !== undefined || fatherNationalId !== undefined || fatherOccupation !== undefined || fatherEducation !== undefined || motherName !== undefined || motherPhone !== undefined || motherNationalId !== undefined || motherOccupation !== undefined || motherEducation !== undefined) {
+        await prisma.parentProfile.update({
+            where: { userId: id },
+            data: {
+                ...(phone && { phone }),
+                ...(address !== undefined && { address }),
+                ...(occupation !== undefined && { occupation }),
+                ...(fatherName !== undefined && { fatherName }),
+                ...(fatherPhone !== undefined && { fatherPhone }),
+                ...(fatherNationalId !== undefined && { fatherNationalId }),
+                ...(fatherOccupation !== undefined && { fatherOccupation }),
+                ...(fatherEducation !== undefined && { fatherEducation }),
+                ...(motherName !== undefined && { motherName }),
+                ...(motherPhone !== undefined && { motherPhone }),
+                ...(motherNationalId !== undefined && { motherNationalId }),
+                ...(motherOccupation !== undefined && { motherOccupation }),
+                ...(motherEducation !== undefined && { motherEducation })
+            }
+        });
+    }
 
     res.status(StatusCodes.OK).json({ msg: 'Parent updated successfully' });
 };
@@ -158,7 +165,7 @@ const updateParent = async (req, res) => {
 // ─── DELETE PARENT ────────────────────────────────────────────────────────────
 const deleteParent = async (req, res) => {
     const { id } = req.params;
-    await prisma.user.delete({ where: { id } });
+    await prisma.user.deleteMany({ where: { id, schoolId: req.user.schoolId } });
     res.status(StatusCodes.OK).json({ msg: 'Parent deleted securely' });
 };
 

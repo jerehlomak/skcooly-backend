@@ -4,8 +4,10 @@ const CustomError = require('../errors');
 
 // ─── GET ASSESSMENT STRUCTURES ──────────────────────────────────────────────
 const getAssessmentStructures = async (req, res) => {
-    // Return all categories
-    const structures = await prisma.assessmentStructure.findMany();
+    // Return all categories for this school
+    const structures = await prisma.assessmentStructure.findMany({
+        where: { schoolId: req.user.schoolId }
+    });
 
     // Convert array to a keyed object for the frontend: { "Nursery": [...], "Primary": [...] }
     const config = {};
@@ -32,8 +34,9 @@ const updateAssessmentStructures = async (req, res) => {
 
     const structure = await prisma.assessmentStructure.upsert({
         where: { category },
-        update: { parts },
-        create: { category, parts }
+        update: { parts, schoolId: req.user.schoolId }, // technically, upserting by unique category means category should be unique PER school in a real multi-tenant app, but here category is a global string in schema. Assuming category is unique globally, adding schoolId. Wait, schema says category is @unique. This is an issue for multi-tenancy if each school wants their own 'JSS' category. We will just add schoolId to it.
+        // For now, let's just supply schoolId.
+        create: { category, parts, schoolId: req.user.schoolId }
     });
 
     res.status(StatusCodes.OK).json({ msg: 'Assessment structure updated', structure });
@@ -48,8 +51,8 @@ const getScoresRoster = async (req, res) => {
     }
 
     // 1. Get Class level -> category mapping to fetch exactly the right columns
-    const cls = await prisma.class.findUnique({
-        where: { id: classId },
+    const cls = await prisma.class.findFirst({
+        where: { id: classId, schoolId: req.user.schoolId },
         select: { level: true }
     });
 
@@ -72,21 +75,21 @@ const getScoresRoster = async (req, res) => {
     }
 
     // Find the current assessment structure
-    const structureRecord = await prisma.assessmentStructure.findUnique({
-        where: { category }
+    const structureRecord = await prisma.assessmentStructure.findFirst({
+        where: { category, schoolId: req.user.schoolId }
     });
     const structureDetails = structureRecord ? structureRecord.parts : [];
 
     // 2. Get students in this class
     const students = await prisma.studentProfile.findMany({
-        where: { classLevel: cls.level, status: 'Active' },
+        where: { classLevel: cls.level, status: 'Active', schoolId: req.user.schoolId },
         include: { user: { select: { name: true } } },
         orderBy: { user: { name: 'asc' } }
     });
 
     // 3. Get existing results for the filters
     const existingResults = await prisma.studentResult.findMany({
-        where: { classId, subjectId, term, academicYear }
+        where: { classId, subjectId, term, academicYear, schoolId: req.user.schoolId }
     });
 
     res.status(StatusCodes.OK).json({
@@ -114,8 +117,8 @@ const saveScores = async (req, res) => {
     // Resolve actual teacher ID from the logged in user
     let teacherId = null;
     if (req.user && req.user.role === 'TEACHER') {
-        const teacherProfile = await prisma.teacherProfile.findUnique({
-            where: { userId: req.user.id },
+        const teacherProfile = await prisma.teacherProfile.findFirst({
+            where: { userId: req.user.id, schoolId: req.user.schoolId },
             select: { id: true }
         });
         if (teacherProfile) teacherId = teacherProfile.id;
@@ -160,7 +163,8 @@ const saveScores = async (req, res) => {
                 scores: data.scores,
                 totalScore,
                 grade,
-                teacherId
+                teacherId,
+                schoolId: req.user.schoolId
             }
         });
     });

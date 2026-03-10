@@ -34,6 +34,8 @@ const financialRouter = require('./routes/financial.route')
 const messagingRouter = require('./routes/messaging.route')
 const attendanceRouter = require('./routes/attendance.route')
 const assessmentRouter = require('./routes/assessment.route')
+const centralRouter = require('./routes/central.route')
+const groupAdminRouter = require('./routes/groupAdmin.route')
 
 // middleware 
 const notFoundMiddleware = require('./middleware/not-found')
@@ -48,7 +50,11 @@ app.use(
 )
 app.use(helmet())
 app.use(cors({
-    origin: process.env.CLIENT_URL || 'http://localhost:5173',
+    origin: [
+        process.env.CLIENT_URL || 'http://localhost:5173',
+        'http://localhost:5173', // Ensure local dev always works
+        process.env.CENTRAL_ADMIN_URL || 'http://localhost:3000',
+    ],
     credentials: true,
 }))
 
@@ -85,6 +91,8 @@ app.use('/api/v1/finance', financialRouter)
 app.use('/api/v1/communicate', messagingRouter)
 app.use('/api/v1/school', attendanceRouter)
 app.use('/api/v1/assessments', assessmentRouter)
+app.use('/api/v1/central', centralRouter)
+app.use('/api/v1/group-admin', groupAdminRouter)
 
 
 app.use(notFoundMiddleware)
@@ -104,3 +112,13 @@ const start = async () => {
 }
 
 start()
+
+// Graceful shutdown — ensures Prisma releases its connection when nodemon restarts
+process.on('SIGINT', async () => {
+    await prisma.$disconnect()
+    process.exit(0)
+})
+process.on('SIGTERM', async () => {
+    await prisma.$disconnect()
+    process.exit(0)
+})

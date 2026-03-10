@@ -8,8 +8,8 @@ const addSubject = async (req, res) => {
     const { name, code, category, stream, description, teacherId, classIds } = req.body
     if (!name) throw new CustomError.BadRequestError('Subject name is required')
 
-    const existing = await prisma.subject.findUnique({ where: { name } })
-    if (existing) throw new CustomError.BadRequestError(`Subject "${name}" already exists`)
+    const existing = await prisma.subject.findFirst({ where: { name, schoolId: req.user.schoolId } })
+    if (existing) throw new CustomError.BadRequestError(`Subject "${name}" already exists in this school`)
 
     const newSubject = await prisma.subject.create({
         data: {
@@ -19,6 +19,7 @@ const addSubject = async (req, res) => {
             stream: stream || 'ALL',
             description: description || null,
             teacherId: teacherId || null,
+            schoolId: req.user.schoolId,
             // Link to classes if provided
             classes: classIds && classIds.length > 0
                 ? { create: classIds.map(cid => ({ classId: cid })) }
@@ -34,6 +35,7 @@ const getAllSubjects = async (req, res) => {
     const { stream, category } = req.query
     const subjects = await prisma.subject.findMany({
         where: {
+            schoolId: req.user.schoolId,
             ...(stream && stream !== 'all' ? { stream } : {}),
             ...(category && category !== 'all' ? { category } : {})
         },
@@ -49,8 +51,8 @@ const getAllSubjects = async (req, res) => {
 // ─── GET SINGLE SUBJECT ───────────────────────────────────────────────────────
 const getSubject = async (req, res) => {
     const { id } = req.params
-    const subject = await prisma.subject.findUnique({
-        where: { id },
+    const subject = await prisma.subject.findFirst({
+        where: { id, schoolId: req.user.schoolId },
         include: {
             classes: { include: { class: true } },
             teacher: { include: { user: { select: { name: true, email: true } } } }
@@ -64,6 +66,9 @@ const getSubject = async (req, res) => {
 const updateSubject = async (req, res) => {
     const { id } = req.params
     const { name, code, category, stream, description, teacherId, status, classIds } = req.body
+
+    const existing = await prisma.subject.findFirst({ where: { id, schoolId: req.user.schoolId } })
+    if (!existing) throw new CustomError.NotFoundError(`No subject found with id: ${id}`)
 
     const updateData = {
         ...(name && { name: name.trim() }),
@@ -93,7 +98,7 @@ const updateSubject = async (req, res) => {
 // ─── DELETE SUBJECT ───────────────────────────────────────────────────────────
 const deleteSubject = async (req, res) => {
     const { id } = req.params
-    await prisma.subject.delete({ where: { id } })
+    await prisma.subject.deleteMany({ where: { id, schoolId: req.user.schoolId } })
     res.status(StatusCodes.OK).json({ msg: 'Subject deleted successfully' })
 }
 

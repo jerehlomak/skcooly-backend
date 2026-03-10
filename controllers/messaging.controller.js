@@ -12,8 +12,9 @@ const getMessages = async (req, res) => {
     const { group } = req.query; // filter by recipientGroup
 
     const where = group
-        ? { recipientGroup: group }
+        ? { recipientGroup: group, schoolId: req.user.schoolId }
         : {
+            schoolId: req.user.schoolId,
             OR: [
                 { senderId: userId },
                 { recipientGroup: 'all' },
@@ -41,6 +42,7 @@ const getThreads = async (req, res) => {
     // Pull messages visible to this user
     const messages = await prisma.message.findMany({
         where: {
+            schoolId: req.user.schoolId,
             OR: [
                 { senderId: userId },
                 { recipientGroup: 'all' },
@@ -90,6 +92,7 @@ const getThread = async (req, res) => {
 
     const messages = await prisma.message.findMany({
         where: {
+            schoolId: req.user.schoolId,
             senderId: senderId || userId,
             recipientGroup: recipientGroup,
         },
@@ -99,6 +102,7 @@ const getThread = async (req, res) => {
     // Mark as read
     await prisma.message.updateMany({
         where: {
+            schoolId: req.user.schoolId,
             senderId: { not: userId },
             recipientGroup,
             isRead: false,
@@ -122,6 +126,7 @@ const sendMessage = async (req, res) => {
 
     const message = await prisma.message.create({
         data: {
+            schoolId: req.user.schoolId,
             senderId: userId,
             senderName: name,
             recipientGroup,
@@ -139,10 +144,10 @@ const sendMessage = async (req, res) => {
 const deleteMessage = async (req, res) => {
     const { id } = req.params;
     const { userId } = req.user;
-    const msg = await prisma.message.findUnique({ where: { id } });
+    const msg = await prisma.message.findFirst({ where: { id, schoolId: req.user.schoolId } });
     if (!msg) throw new CustomError.NotFoundError('Message not found');
     if (msg.senderId !== userId) throw new CustomError.UnauthorizedError('Cannot delete another user\'s message');
-    await prisma.message.delete({ where: { id } });
+    await prisma.message.deleteMany({ where: { id, schoolId: req.user.schoolId } });
     res.status(StatusCodes.OK).json({ msg: 'Message deleted' });
 };
 
@@ -154,13 +159,14 @@ const deleteMessage = async (req, res) => {
  */
 const getSmsLogs = async (req, res) => {
     const logs = await prisma.smsLog.findMany({
+        where: { schoolId: req.user.schoolId },
         orderBy: { createdAt: 'desc' },
         take: 100,
     });
 
-    const totalCount = await prisma.smsLog.count();
-    const totalSent = await prisma.smsLog.aggregate({ _sum: { recipientCount: true } });
-    const delivered = await prisma.smsLog.count({ where: { status: 'DELIVERED' } });
+    const totalCount = await prisma.smsLog.count({ where: { schoolId: req.user.schoolId } });
+    const totalSent = await prisma.smsLog.aggregate({ _sum: { recipientCount: true }, where: { schoolId: req.user.schoolId } });
+    const delivered = await prisma.smsLog.count({ where: { status: 'DELIVERED', schoolId: req.user.schoolId } });
 
     res.status(StatusCodes.OK).json({
         logs,
@@ -190,20 +196,20 @@ const sendSms = async (req, res) => {
     for (const groupId of recipientGroups) {
         let count = 0;
         if (groupId === 'all-parents') {
-            count = await prisma.parentProfile.count();
+            count = await prisma.parentProfile.count({ where: { schoolId: req.user.schoolId } });
         } else if (groupId === 'all-students') {
-            count = await prisma.studentProfile.count({ where: { status: 'Active' } });
+            count = await prisma.studentProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
         } else if (groupId === 'all-teachers') {
-            count = await prisma.teacherProfile.count({ where: { status: 'Active' } });
+            count = await prisma.teacherProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
         } else if (groupId === 'all') {
-            const p = await prisma.parentProfile.count();
-            const s = await prisma.studentProfile.count({ where: { status: 'Active' } });
-            const t = await prisma.teacherProfile.count({ where: { status: 'Active' } });
+            const p = await prisma.parentProfile.count({ where: { schoolId: req.user.schoolId } });
+            const s = await prisma.studentProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
+            const t = await prisma.teacherProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
             count = p + s + t;
         } else {
             // class-level: count students in that class
             const classLevel = groupId.toUpperCase().replace('-', ' '); // jss1 -> JSS 1
-            count = await prisma.studentProfile.count({ where: { classLevel: { contains: classLevel, mode: 'insensitive' } } });
+            count = await prisma.studentProfile.count({ where: { classLevel: { contains: classLevel, mode: 'insensitive' }, schoolId: req.user.schoolId } });
         }
         totalCount += count;
         resolvedGroups.push(groupId);
@@ -213,6 +219,7 @@ const sendSms = async (req, res) => {
     // For now we mock the send and log it
     const logEntry = await prisma.smsLog.create({
         data: {
+            schoolId: req.user.schoolId,
             category: category || 'Custom',
             message,
             recipientGroup: resolvedGroups.join(', '),
@@ -233,10 +240,10 @@ const sendSms = async (req, res) => {
  */
 const getRecipientGroups = async (req, res) => {
     const [parents, students, allStudents, teachers] = await Promise.all([
-        prisma.parentProfile.count(),
-        prisma.studentProfile.count({ where: { status: 'Active' } }),
-        prisma.studentProfile.groupBy({ by: ['classLevel'], _count: { id: true } }),
-        prisma.teacherProfile.count({ where: { status: 'Active' } }),
+        prisma.parentProfile.count({ where: { schoolId: req.user.schoolId } }),
+        prisma.studentProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } }),
+        prisma.studentProfile.groupBy({ by: ['classLevel'], _count: { id: true }, where: { schoolId: req.user.schoolId } }),
+        prisma.teacherProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } }),
     ]);
 
     const groups = [

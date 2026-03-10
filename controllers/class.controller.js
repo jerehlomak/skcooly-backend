@@ -8,8 +8,8 @@ const addClass = async (req, res) => {
     const { name, level, section, capacity } = req.body
     if (!name || !level) throw new CustomError.BadRequestError('Class name and level are required')
 
-    const existing = await prisma.class.findUnique({ where: { name } })
-    if (existing) throw new CustomError.BadRequestError(`A class named "${name}" already exists`)
+    const existing = await prisma.class.findFirst({ where: { name, schoolId: req.user.schoolId } })
+    if (existing) throw new CustomError.BadRequestError(`A class named "${name}" already exists for this school`)
 
     const newClass = await prisma.class.create({
         data: {
@@ -17,7 +17,8 @@ const addClass = async (req, res) => {
             level: level.trim().toUpperCase(),
             section: section?.trim() || null,
             capacity: capacity ? parseInt(capacity) : 40,
-            status: 'Active'
+            status: 'Active',
+            schoolId: req.user.schoolId
         }
     })
     res.status(StatusCodes.CREATED).json({ msg: 'Class created successfully', class: newClass })
@@ -25,7 +26,16 @@ const addClass = async (req, res) => {
 
 // ─── GET ALL CLASSES ──────────────────────────────────────────────────────────
 const getAllClasses = async (req, res) => {
+    const schoolId = req.user.schoolId
+    if (!schoolId) {
+        return res.status(StatusCodes.FORBIDDEN).json({ msg: 'No school context found for this user.' })
+    }
+
     const classes = await prisma.class.findMany({
+        where: {
+            schoolId,
+            NOT: { schoolId: null }  // safety guard: never return null-schoolId orphans
+        },
         include: {
             subjects: {
                 include: {
@@ -43,8 +53,8 @@ const getAllClasses = async (req, res) => {
 // ─── GET SINGLE CLASS ─────────────────────────────────────────────────────────
 const getClass = async (req, res) => {
     const { id } = req.params
-    const cls = await prisma.class.findUnique({
-        where: { id },
+    const cls = await prisma.class.findFirst({
+        where: { id, schoolId: req.user.schoolId },
         include: {
             subjects: {
                 include: {
@@ -63,8 +73,8 @@ const getClass = async (req, res) => {
 const updateClass = async (req, res) => {
     const { id } = req.params
     const { name, level, section, capacity, status } = req.body
-    await prisma.class.update({
-        where: { id },
+    await prisma.class.updateMany({
+        where: { id, schoolId: req.user.schoolId },
         data: {
             ...(name && { name: name.trim().toUpperCase() }),
             ...(level && { level: level.trim().toUpperCase() }),
@@ -82,8 +92,8 @@ const assignFormTeacher = async (req, res) => {
     const { teacherId } = req.body
 
     // If teacherId is null or empty, it unassigns the form teacher
-    await prisma.class.update({
-        where: { id },
+    await prisma.class.updateMany({
+        where: { id, schoolId: req.user.schoolId },
         data: { formTeacherId: teacherId || null }
     })
     res.status(StatusCodes.OK).json({ msg: 'Form teacher updated successfully' })
@@ -113,7 +123,7 @@ const assignSubjectTeacher = async (req, res) => {
 // ─── DELETE CLASS ─────────────────────────────────────────────────────────────
 const deleteClass = async (req, res) => {
     const { id } = req.params
-    await prisma.class.delete({ where: { id } })
+    await prisma.class.deleteMany({ where: { id, schoolId: req.user.schoolId } })
     res.status(StatusCodes.OK).json({ msg: 'Class deleted successfully' })
 }
 

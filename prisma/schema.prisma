@@ -10,6 +10,7 @@ datasource db {
 
 model SchoolSettings {
   id          String     @id @default(uuid())
+  schoolId    String?    // tenant isolation
   schoolName  String     @default("My School")
   tagline     String?
   phone       String?
@@ -29,6 +30,7 @@ model SchoolSettings {
 
 model FeeParticular {
   id         String   @id @default(uuid())
+  schoolId   String?  // tenant isolation
   label      String
   amount     Float    @default(0)
   isRequired Boolean  @default(false)
@@ -39,6 +41,7 @@ model FeeParticular {
 
 model Transaction {
   id          String   @id @default(uuid())
+  schoolId    String?  // tenant isolation
   description String
   category    String
   amount      Float
@@ -53,6 +56,7 @@ model Transaction {
 
 model FeeInvoice {
   id               String         @id @default(uuid())
+  schoolId         String?        // tenant isolation
   studentProfileId String
   term             String
   year             String
@@ -68,6 +72,7 @@ model FeeInvoice {
 
 model SalarySlip {
   id               String         @id @default(uuid())
+  schoolId         String?        // tenant isolation
   teacherProfileId String
   payPeriod        String
   basic            Float
@@ -84,6 +89,7 @@ model SalarySlip {
 
 model BankAccount {
   id            String   @id @default(uuid())
+  schoolId      String?  // tenant isolation
   bankName      String
   accountNumber String
   branchAddress String?
@@ -117,6 +123,7 @@ model CustomRole {
 
 model User {
   id             String          @id @default(uuid())
+  schoolId       String?         // tenant isolation — links to School.id in central admin
   name           String
   email          String          @unique
   password       String
@@ -132,9 +139,10 @@ model User {
 
 model StudentProfile {
   id              String         @id @default(uuid())
+  schoolId        String?        // tenant isolation
   userId          String         @unique
   enrollmentDate  DateTime       @default(now())
-  admissionNo     String         @unique
+  admissionNo     String
   classLevel      String
   gender          String
   phone           String?
@@ -147,7 +155,7 @@ model StudentProfile {
   parentProfileId String?
   previousSchool  String?
   religion        String?
-  classId         String?        // NEW: specific class arm relation
+  classId         String?        // specific class arm relation
   enrollments     Enrollment[]
   feeInvoices     FeeInvoice[]
   attendanceRecords AttendanceRecord[]
@@ -155,13 +163,16 @@ model StudentProfile {
   parent          ParentProfile? @relation(fields: [parentProfileId], references: [id])
   user            User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   classArm        Class?         @relation("ClassStudents", fields: [classId], references: [id])
+
+  @@unique([schoolId, admissionNo])
 }
 
 model TeacherProfile {
   id               String    @id @default(uuid())
+  schoolId         String?   // tenant isolation
   userId           String    @unique
   department       String?
-  employeeId       String    @unique
+  employeeId       String
   gender           String
   hireDate         DateTime  @default(now())
   phone            String?
@@ -180,12 +191,15 @@ model TeacherProfile {
   formClasses      Class[]   @relation("FormTeacher")
   classSubjects    ClassSubject[] @relation("ClassSubjectTeacher")
   user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, employeeId])
 }
 
 model ParentProfile {
   id               String           @id @default(uuid())
+  schoolId         String?          // tenant isolation
   userId           String           @unique
-  parentId         String           @unique
+  parentId         String
   phone            String
   occupation       String?
   address          String?
@@ -201,11 +215,14 @@ model ParentProfile {
   motherPhone      String?
   user             User             @relation(fields: [userId], references: [id], onDelete: Cascade)
   students         StudentProfile[]
+
+  @@unique([schoolId, parentId])
 }
 
 model Class {
   id        String         @id @default(uuid())
-  name      String         @unique
+  schoolId  String?        // tenant isolation
+  name      String
   level     String
   section   String?
   capacity  Int            @default(40)
@@ -221,8 +238,9 @@ model Class {
 
 model Subject {
   id          String          @id @default(uuid())
-  name        String          @unique
-  code        String?         @unique
+  schoolId    String?         // tenant isolation
+  name        String
+  code        String?
   category    SubjectCategory @default(CORE)
   stream      SubjectStream   @default(ALL)
   description String?
@@ -250,6 +268,7 @@ model ClassSubject {
 
 model Course {
   id          String          @id @default(uuid())
+  schoolId    String?         // tenant isolation
   name        String
   description String?
   teacherId   String?
@@ -273,6 +292,7 @@ model Enrollment {
 // Daily attendance records for students
 model AttendanceRecord {
   id               String   @id @default(uuid())
+  schoolId         String?  // tenant isolation
   studentProfileId String
   date             String   // ISO date string: "2026-03-04"
   classId          String   // Specific class arm ID (e.g. JSS1A)
@@ -297,6 +317,7 @@ enum AttendanceStatus {
 // Weekly timetable entries persisted per class
 model TimetableEntry {
   id          String   @id @default(uuid())
+  schoolId    String?  // tenant isolation
   classId     String
   day         String
   period      String
@@ -328,6 +349,7 @@ model TimetableSetup {
 // Internal Messaging (staff-to-staff or broadcast)
 model Message {
   id          String   @id @default(uuid())
+  schoolId    String?  // tenant isolation
   senderId    String
   senderName  String
   recipientGroup String  // e.g. 'all', 'teachers', 'students', 'parents', or a userId
@@ -341,6 +363,7 @@ model Message {
 // Bulk SMS Log
 model SmsLog {
   id          String   @id @default(uuid())
+  schoolId    String?  // tenant isolation
   category    String
   message     String   @db.Text
   recipientGroup String
@@ -388,20 +411,227 @@ enum TransType {
   expense
 }
 
+// ─── CENTRAL ADMIN (Platform-level SaaS management) ──────────────────────────
+
+enum CentralAdminRole {
+  SUPER_ADMIN
+  SUPPORT
+}
+
+enum SchoolStatus {
+  ACTIVE
+  SUSPENDED
+  PENDING
+  DELETED
+}
+
+enum TicketStatus {
+  OPEN
+  IN_PROGRESS
+  RESOLVED
+  CLOSED
+}
+
+enum TicketPriority {
+  LOW
+  MEDIUM
+  HIGH
+  CRITICAL
+}
+
+// Central admin users (platform owner & support staff)
+model CentralAdmin {
+  id           String            @id @default(uuid())
+  name         String
+  email        String            @unique
+  password     String
+  role         CentralAdminRole  @default(SUPPORT)
+  isActive     Boolean           @default(true)
+  lastLogin    DateTime?
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  auditLogs    AuditLog[]
+  announcements Announcement[]
+  ticketReplies TicketReply[]
+}
+
+// Subscription plans available on the platform
+model SubscriptionPlan {
+  id              String   @id @default(uuid())
+  name            String   @unique // e.g., Basic, Pro, Enterprise
+  description     String?
+  price           Float    @default(0)  // monthly price in USD
+  maxStudents     Int      @default(100)
+  maxTeachers     Int      @default(10)
+  maxClasses      Int      @default(10)
+  features        Json     @default("[]") // array of feature keys enabled
+  isActive        Boolean  @default(true)
+  trialDays       Int      @default(0)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  schools         School[]
+}
+
+// A group of schools (multi-branch organization)
+model SchoolGroup {
+  id          String       @id @default(uuid())
+  name        String
+  email       String?      @unique
+  phone       String?
+  address     String?
+  isActive    Boolean      @default(true)
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+  schools     School[]
+  admins      GroupAdmin[]
+}
+
+// Owner/Administrator of a SchoolGroup
+model GroupAdmin {
+  id            String      @id @default(uuid())
+  groupId       String
+  name          String
+  email         String      @unique
+  password      String
+  role          String      @default("GROUP_ADMIN")
+  lastLogin     DateTime?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  group         SchoolGroup @relation(fields: [groupId], references: [id], onDelete: Cascade)
+}
+
+// Tenant schools registered on the platform
+model School {
+  id              String         @id @default(uuid())
+  schoolCode      String?        @unique // e.g. SKL-A1B2C3 — required for user login
+  name            String
+  email           String         @unique
+  phone           String?
+  address         String?
+  country         String?        @default("Nigeria")
+  logoUrl         String?
+  status          SchoolStatus   @default(PENDING)
+  planId          String?
+  studentCount    Int            @default(0)
+  teacherCount    Int            @default(0)
+  adminEmail      String?        // primary school admin login email
+  dbSchemaKey    String?         // namespace/tenant key if needed
+  suspendedAt     DateTime?
+  suspendReason   String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+  groupId         String?
+  group           SchoolGroup?   @relation(fields: [groupId], references: [id])
+  plan            SubscriptionPlan? @relation(fields: [planId], references: [id])
+  subscription    SchoolSubscription?
+  featureFlags    FeatureFlag[]
+  tickets         SupportTicket[]
+  auditLogs       AuditLog[]
+}
+
+// Active subscription for each school
+model SchoolSubscription {
+  id          String   @id @default(uuid())
+  schoolId    String   @unique
+  planId      String
+  startDate   DateTime @default(now())
+  endDate     DateTime?
+  isActive    Boolean  @default(true)
+  autoRenew   Boolean  @default(true)
+  amountPaid  Float    @default(0)
+  currency    String   @default("USD")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  school      School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+// Per-school feature toggles
+model FeatureFlag {
+  id        String   @id @default(uuid())
+  schoolId  String
+  feature   String   // e.g., "timetable", "sms", "finance", "analytics"
+  enabled   Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, feature])
+}
+
+// Global announcements broadcast to all schools
+model Announcement {
+  id          String        @id @default(uuid())
+  title       String
+  body        String        @db.Text
+  type        String        @default("INFO") // INFO, WARNING, MAINTENANCE
+  targetGroup String        @default("ALL")  // ALL, BASIC, PRO, ENTERPRISE
+  isPublished Boolean       @default(false)
+  publishedAt DateTime?
+  adminId     String
+  createdAt   DateTime      @default(now())
+  updatedAt   DateTime      @updatedAt
+  admin       CentralAdmin  @relation(fields: [adminId], references: [id])
+}
+
+// Support tickets submitted by school admins
+model SupportTicket {
+  id           String         @id @default(uuid())
+  schoolId     String
+  subject      String
+  description  String         @db.Text
+  status       TicketStatus   @default(OPEN)
+  priority     TicketPriority @default(MEDIUM)
+  submittedBy  String         // school admin email
+  resolvedAt   DateTime?
+  createdAt    DateTime       @default(now())
+  updatedAt    DateTime       @updatedAt
+  school       School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  replies      TicketReply[]
+}
+
+// Replies to support tickets
+model TicketReply {
+  id        String        @id @default(uuid())
+  ticketId  String
+  adminId   String
+  message   String        @db.Text
+  createdAt DateTime      @default(now())
+  ticket    SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  admin     CentralAdmin  @relation(fields: [adminId], references: [id])
+}
+
+// Audit log for every central admin action
+model AuditLog {
+  id         String       @id @default(uuid())
+  adminId    String?
+  action     String       // e.g., "CREATE_SCHOOL", "SUSPEND_SCHOOL", "UPDATE_PLAN"
+  entityType String?      // e.g., "School", "Plan", "Feature"
+  entityId   String?      // ID of the affected record
+  metadata   Json?        // extra context (old values, new values, etc.)
+  ipAddress  String?
+  createdAt  DateTime     @default(now())
+  admin      CentralAdmin? @relation(fields: [adminId], references: [id])
+  school     School?      @relation(fields: [entityId], references: [id])
+}
+
 // ─── ASSESSMENT & RESULTS ──────────────────────────────────────────────────
 
 // Stores the grading weights defined by Admin for each School Category
 model AssessmentStructure {
   id        String   @id @default(uuid())
-  category  String   @unique // e.g., 'Nursery', 'Primary', 'JSS', 'SSS', 'Arabic'
+  schoolId  String?  // tenant isolation
+  category  String   // e.g., 'Nursery', 'Primary', 'JSS', 'SSS', 'Arabic'
   parts     Json     // e.g. [{"id": "1", "name": "1st CA", "weight": 20}, {"id": "2", "name": "Exam", "weight": 60}]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, category])
 }
 
 // Stores individual subject scores per student per term
 model StudentResult {
   id               String         @id @default(uuid())
+  schoolId         String?        // tenant isolation
   studentProfileId String
   subjectId        String
   classId          String

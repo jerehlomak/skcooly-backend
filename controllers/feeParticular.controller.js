@@ -12,12 +12,13 @@ const DEFAULTS = [
 
 // GET all fees (with auto-seed on empty)
 const getFeeParticulars = async (req, res) => {
-    let fees = await prisma.feeParticular.findMany({ orderBy: { createdAt: 'asc' } })
+    let fees = await prisma.feeParticular.findMany({ where: { schoolId: req.user.schoolId }, orderBy: { createdAt: 'asc' } })
 
     if (fees.length === 0) {
         // Seed defaults
-        await prisma.feeParticular.createMany({ data: DEFAULTS })
-        fees = await prisma.feeParticular.findMany({ orderBy: { createdAt: 'asc' } })
+        const defaultsWithSchool = DEFAULTS.map(d => ({ ...d, schoolId: req.user.schoolId }));
+        await prisma.feeParticular.createMany({ data: defaultsWithSchool })
+        fees = await prisma.feeParticular.findMany({ where: { schoolId: req.user.schoolId }, orderBy: { createdAt: 'asc' } })
     }
 
     res.status(StatusCodes.OK).json({ fees, count: fees.length })
@@ -33,20 +34,21 @@ const syncFeeParticulars = async (req, res) => {
 
     // Wrap in a transaction: delete old (except fixed if needed, but we can just wipe all and insert new since IDs don't matter much for global templates until assigned to students)
     await prisma.$transaction(async (tx) => {
-        await tx.feeParticular.deleteMany()
+        await tx.feeParticular.deleteMany({ where: { schoolId: req.user.schoolId } })
 
         if (fees.length > 0) {
             const dataToInsert = fees.map(f => ({
                 label: f.label || 'Unnamed Fee',
                 amount: parseFloat(f.amount) || 0,
                 isRequired: Boolean(f.isRequired),
-                isFixed: Boolean(f.isFixed)
+                isFixed: Boolean(f.isFixed),
+                schoolId: req.user.schoolId
             }))
             await tx.feeParticular.createMany({ data: dataToInsert })
         }
     })
 
-    const updatedFees = await prisma.feeParticular.findMany({ orderBy: { createdAt: 'asc' } })
+    const updatedFees = await prisma.feeParticular.findMany({ where: { schoolId: req.user.schoolId }, orderBy: { createdAt: 'asc' } })
     res.status(StatusCodes.OK).json({ msg: 'Fees synced successfully', fees: updatedFees })
 }
 

@@ -24,7 +24,7 @@ const addTeacher = async (req, res) => {
     const currentYear = new Date().getFullYear();
 
     const lastTeacher = await prisma.teacherProfile.findFirst({
-        where: { employeeId: { startsWith: `TCH-${currentYear}-` } },
+        where: { employeeId: { startsWith: `TCH-${currentYear}-` }, schoolId: req.user.schoolId },
         orderBy: { hireDate: 'desc' }
     });
 
@@ -49,8 +49,10 @@ const addTeacher = async (req, res) => {
                 email: generatedEmail,
                 password: hashedPassword,
                 role: 'TEACHER',
+                schoolId: req.user.schoolId,
                 teacherProfile: {
                     create: {
+                        schoolId: req.user.schoolId,
                         employeeId,
                         department: department || null,
                         phone: phone || null,
@@ -81,6 +83,7 @@ const addTeacher = async (req, res) => {
 // ─── GET ALL TEACHERS ──────────────────────────────────────────────────────────
 const getAllTeachers = async (req, res) => {
     const teachers = await prisma.teacherProfile.findMany({
+        where: { schoolId: req.user.schoolId },
         include: { user: { select: { id: true, name: true, email: true, role: true } } },
         orderBy: { hireDate: 'desc' }
     });
@@ -90,8 +93,8 @@ const getAllTeachers = async (req, res) => {
 // ─── GET SINGLE TEACHER ───────────────────────────────────────────────────────
 const getTeacher = async (req, res) => {
     const { id } = req.params; // User.id
-    const user = await prisma.user.findUnique({
-        where: { id },
+    const user = await prisma.user.findFirst({
+        where: { id, schoolId: req.user.schoolId },
         include: { teacherProfile: true }
     });
     if (!user || !user.teacherProfile) {
@@ -105,28 +108,32 @@ const updateTeacher = async (req, res) => {
     const { id } = req.params; // User.id
     const { name, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
 
-    await prisma.user.update({
-        where: { id },
+    await prisma.user.updateMany({
+        where: { id, schoolId: req.user.schoolId },
         data: {
             ...(name && { name }),
-            teacherProfile: {
-                update: {
-                    ...(department !== undefined && { department }),
-                    ...(phone !== undefined && { phone }),
-                    ...(gender && { gender }),
-                    ...(status && { status }),
-                    ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
-                    ...(address !== undefined && { address }),
-                    ...(qualification !== undefined && { qualification }),
-                    ...(salary !== undefined && { salary: salary ? parseFloat(salary) : null }),
-                    ...(bankName !== undefined && { bankName }),
-                    ...(accountName !== undefined && { accountName }),
-                    ...(accountNumber !== undefined && { accountNumber }),
-                    ...(subjects !== undefined && { subjects })
-                }
-            }
         }
     });
+
+    if (department !== undefined || phone !== undefined || gender || status || dateOfBirth || address !== undefined || qualification !== undefined || salary !== undefined || bankName !== undefined || accountName !== undefined || accountNumber !== undefined || subjects !== undefined) {
+        await prisma.teacherProfile.update({
+            where: { userId: id },
+            data: {
+                ...(department !== undefined && { department }),
+                ...(phone !== undefined && { phone }),
+                ...(gender && { gender }),
+                ...(status && { status }),
+                ...(dateOfBirth && { dateOfBirth: new Date(dateOfBirth) }),
+                ...(address !== undefined && { address }),
+                ...(qualification !== undefined && { qualification }),
+                ...(salary !== undefined && { salary: salary ? parseFloat(salary) : null }),
+                ...(bankName !== undefined && { bankName }),
+                ...(accountName !== undefined && { accountName }),
+                ...(accountNumber !== undefined && { accountNumber }),
+                ...(subjects !== undefined && { subjects })
+            }
+        });
+    }
 
     res.status(StatusCodes.OK).json({ msg: 'Teacher updated successfully' });
 };
@@ -134,7 +141,7 @@ const updateTeacher = async (req, res) => {
 // ─── DELETE TEACHER ───────────────────────────────────────────────────────────
 const deleteTeacher = async (req, res) => {
     const { id } = req.params;
-    await prisma.user.delete({ where: { id } });
+    await prisma.user.deleteMany({ where: { id, schoolId: req.user.schoolId } });
     res.status(StatusCodes.OK).json({ msg: 'Teacher deleted securely' });
 };
 

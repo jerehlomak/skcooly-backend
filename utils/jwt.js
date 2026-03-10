@@ -1,5 +1,5 @@
+// utils/createTokenUser.js — not a separate file, inline in jwt.js
 const jwt = require('jsonwebtoken')
-const { StatusCodes } = require('http-status-codes')
 
 // create token
 const createJWT = ({ payload }) => {
@@ -23,11 +23,19 @@ const attachCookiesToResponse = ({ res, user }) => {
         signed: true,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
     })
-
 }
+
+// Build jwt payload from user object — includes schoolId for multi-tenancy
+const createTokenUser = (user) => ({
+    name: user.name,
+    userId: user.id,
+    role: user.role,
+    schoolId: user.schoolId || null,
+})
 
 module.exports = {
     createJWT,
     isTokenValid,
     attachCookiesToResponse,
+    createTokenUser,
 }

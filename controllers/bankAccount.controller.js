@@ -2,9 +2,8 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes')
 
-// GET all bank accounts
 const getBankAccounts = async (req, res) => {
-    const banks = await prisma.bankAccount.findMany({ orderBy: { createdAt: 'desc' } })
+    const banks = await prisma.bankAccount.findMany({ where: { schoolId: req.user.schoolId }, orderBy: { createdAt: 'desc' } })
     res.status(StatusCodes.OK).json({ banks, count: banks.length })
 }
 
@@ -22,7 +21,8 @@ const addBankAccount = async (req, res) => {
             accountNumber,
             branchAddress,
             instructions,
-            logoUrl
+            logoUrl,
+            schoolId: req.user.schoolId
         }
     })
 
@@ -33,12 +33,12 @@ const addBankAccount = async (req, res) => {
 const deleteBankAccount = async (req, res) => {
     const { id } = req.params
 
-    const bank = await prisma.bankAccount.findUnique({ where: { id } })
+    const bank = await prisma.bankAccount.findFirst({ where: { id, schoolId: req.user.schoolId } })
     if (!bank) {
-        return res.status(StatusCodes.NOT_FOUND).json({ msg: `No bank account with id: ${id}` })
+        return res.status(StatusCodes.NOT_FOUND).json({ msg: `No bank account found for this school with id: ${id}` })
     }
 
-    await prisma.bankAccount.delete({ where: { id } })
+    await prisma.bankAccount.deleteMany({ where: { id, schoolId: req.user.schoolId } })
     res.status(StatusCodes.OK).json({ msg: 'Bank Account deleted successfully' })
 }
 

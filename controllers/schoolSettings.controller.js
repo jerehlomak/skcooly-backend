@@ -45,20 +45,20 @@ const DEFAULTS = {
 
 // ─── GET SETTINGS (singleton upsert) ─────────────────────────────────────────
 const getSettings = async (req, res) => {
-    let settings = await prisma.schoolSettings.findFirst()
+    let settings = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } })
     if (!settings) {
-        settings = await prisma.schoolSettings.create({ data: {} })
+        settings = await prisma.schoolSettings.create({ data: { schoolId: req.user.schoolId } })
     }
     res.status(StatusCodes.OK).json({ settings })
 }
 
 // ─── UPDATE SETTINGS ─────────────────────────────────────────────────────────
 const updateSettings = async (req, res) => {
-    let settings = await prisma.schoolSettings.findFirst()
+    let settings = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } })
     const { schoolName, tagline, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, rulesContent } = req.body
 
     if (!settings) {
-        settings = await prisma.schoolSettings.create({ data: req.body })
+        settings = await prisma.schoolSettings.create({ data: { ...req.body, schoolId: req.user.schoolId } })
     } else {
         settings = await prisma.schoolSettings.update({
             where: { id: settings.id },

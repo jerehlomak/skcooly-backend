@@ -15,13 +15,13 @@ const getAttendanceStats = async (req, res) => {
     if (classId) where.classId = classId;
 
     const [present, absent, late, excused, allStudents] = await Promise.all([
-        prisma.attendanceRecord.count({ where: { ...where, status: 'PRESENT' } }),
-        prisma.attendanceRecord.count({ where: { ...where, status: 'ABSENT' } }),
-        prisma.attendanceRecord.count({ where: { ...where, status: 'LATE' } }),
-        prisma.attendanceRecord.count({ where: { ...where, status: 'EXCUSED' } }),
+        prisma.attendanceRecord.count({ where: { ...where, status: 'PRESENT', student: { schoolId: req.user.schoolId } } }),
+        prisma.attendanceRecord.count({ where: { ...where, status: 'ABSENT', student: { schoolId: req.user.schoolId } } }),
+        prisma.attendanceRecord.count({ where: { ...where, status: 'LATE', student: { schoolId: req.user.schoolId } } }),
+        prisma.attendanceRecord.count({ where: { ...where, status: 'EXCUSED', student: { schoolId: req.user.schoolId } } }),
         classId
-            ? prisma.studentProfile.count({ where: { classId, status: 'Active' } })
-            : prisma.studentProfile.count({ where: { status: 'Active' } }),
+            ? prisma.studentProfile.count({ where: { classId, status: 'Active', schoolId: req.user.schoolId } })
+            : prisma.studentProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } }),
     ]);
 
     res.status(StatusCodes.OK).json({
@@ -41,7 +41,7 @@ const getAttendanceRoster = async (req, res) => {
 
     // Students in this class arm
     const students = await prisma.studentProfile.findMany({
-        where: { classId, status: 'Active' },
+        where: { classId, status: 'Active', schoolId: req.user.schoolId },
         include: { user: { select: { name: true } } },
         orderBy: { admissionNo: 'asc' },
     });
@@ -113,10 +113,10 @@ const getAttendanceCalendar = async (req, res) => {
     const prefix = `${y}-${m}`;
 
     const records = await prisma.attendanceRecord.findMany({
-        where: { classId, date: { startsWith: prefix } },
+        where: { classId, date: { startsWith: prefix }, student: { schoolId: req.user.schoolId } },
     });
 
-    const totalStudents = await prisma.studentProfile.count({ where: { classId, status: 'Active' } });
+    const totalStudents = await prisma.studentProfile.count({ where: { classId, status: 'Active', schoolId: req.user.schoolId } });
 
     // Group by date
     const byDate = {};
@@ -149,7 +149,7 @@ const getStudentHistory = async (req, res) => {
     const prefix = `${y}-${m}`;
 
     const students = await prisma.studentProfile.findMany({
-        where: { classId, status: 'Active' },
+        where: { classId, status: 'Active', schoolId: req.user.schoolId },
         include: { user: { select: { name: true } }, attendanceRecords: { where: { date: { startsWith: prefix } } } },
         orderBy: { admissionNo: 'asc' },
     });
@@ -188,7 +188,7 @@ const getTimetable = async (req, res) => {
     const { classId } = req.query;
     if (!classId) throw new CustomError.BadRequestError('classId is required');
 
-    const entries = await prisma.timetableEntry.findMany({ where: { classId } });
+    const entries = await prisma.timetableEntry.findMany({ where: { classId, schoolId: req.user.schoolId } });
     res.status(StatusCodes.OK).json({ entries });
 };
 
@@ -196,7 +196,7 @@ const getTimetable = async (req, res) => {
  * Get all unique classIds that have timetable entries
  */
 const getTimetableClasses = async (req, res) => {
-    const grouped = await prisma.timetableEntry.groupBy({ by: ['classId'] });
+    const grouped = await prisma.timetableEntry.groupBy({ by: ['classId'], where: { schoolId: req.user.schoolId } });
     const classIds = grouped.map(g => g.classId);
     res.status(StatusCodes.OK).json({ classIds });
 };
@@ -213,7 +213,7 @@ const upsertTimetableSlot = async (req, res) => {
 
     const entry = await prisma.timetableEntry.upsert({
         where: { classId_day_period: { classId, day, period } },
-        create: { classId, day, period, subject, teacherName, teacherId, color: color || 'bg-blue-100 text-blue-700' },
+        create: { classId, day, period, subject, teacherName, teacherId, color: color || 'bg-blue-100 text-blue-700', schoolId: req.user.schoolId },
         update: { subject, teacherName, teacherId, color: color || 'bg-blue-100 text-blue-700' },
     });
 
@@ -243,6 +243,7 @@ const saveTimetable = async (req, res) => {
                 teacherName: s.teacherName,
                 teacherId: s.teacherId || null,
                 color: s.color || 'bg-blue-100 text-blue-700',
+                schoolId: req.user.schoolId
             })),
             skipDuplicates: true,
         });
@@ -267,7 +268,7 @@ const deleteTimetableSlot = async (req, res) => {
  */
 const getAvailableTeachers = async (req, res) => {
     const teachers = await prisma.teacherProfile.findMany({
-        where: { status: 'Active' },
+        where: { status: 'Active', schoolId: req.user.schoolId },
         include: { user: { select: { name: true } } },
         orderBy: { employeeId: 'asc' },
     });
@@ -280,7 +281,7 @@ const getAvailableTeachers = async (req, res) => {
  * Get available subjects from DB
  */
 const getAvailableSubjects = async (req, res) => {
-    const subjects = await prisma.subject.findMany({ where: { status: 'Active' }, orderBy: { name: 'asc' } });
+    const subjects = await prisma.subject.findMany({ where: { status: 'Active', schoolId: req.user.schoolId }, orderBy: { name: 'asc' } });
     res.status(StatusCodes.OK).json({ subjects: subjects.map(s => s.name) });
 };
 
@@ -324,11 +325,11 @@ const updateTimetableSetup = async (req, res) => {
         // Find all active class levels from student profile
         const activeLevels = await prisma.studentProfile.groupBy({
             by: ['classLevel'],
-            where: { status: 'Active' },
+            where: { status: 'Active', schoolId: req.user.schoolId },
         });
 
         // Also include any hardcoded classes currently in TimetableEntry just in case
-        const groupedEntries = await prisma.timetableEntry.groupBy({ by: ['classId'] });
+        const groupedEntries = await prisma.timetableEntry.groupBy({ by: ['classId'], where: { schoolId: req.user.schoolId } });
         const allClasses = Array.from(new Set([
             ...activeLevels.map(l => l.classLevel),
             ...groupedEntries.map(g => g.classId),

@@ -166,12 +166,12 @@ const getDashboardStats = async (req, res) => {
         }
 
         case 'ADMIN': {
-            // High-level admin overview
+            // High-level admin overview for this specific school
             const stats = {
-                totalStudents: await prisma.studentProfile.count(),
-                totalTeachers: await prisma.teacherProfile.count(),
-                totalParents: await prisma.parentProfile.count(),
-                totalClasses: await prisma.classLevel.count()
+                totalStudents: await prisma.studentProfile.count({ where: { schoolId: req.user.schoolId, status: 'Active' } }),
+                totalTeachers: await prisma.teacherProfile.count({ where: { schoolId: req.user.schoolId, status: 'Active' } }),
+                totalParents: await prisma.parentProfile.count({ where: { schoolId: req.user.schoolId } }),
+                totalClasses: await prisma.class.count({ where: { schoolId: req.user.schoolId, status: 'Active' } })
             }
             return res.status(StatusCodes.OK).json({ stats })
         }
