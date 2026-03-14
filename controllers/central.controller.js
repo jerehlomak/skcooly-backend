@@ -93,7 +93,7 @@ const getOverview = async (req, res) => {
         prisma.subscriptionPlan.count({ where: { isActive: true } }),
         prisma.school.findMany({
             orderBy: { createdAt: 'desc' }, take: 5,
-            include: { plan: { select: { name: true, price: true } } },
+            include: { plan: { select: { name: true, monthlyPrice: true } } },
         }),
     ])
 
@@ -198,7 +198,7 @@ const getSchools = async (req, res) => {
             where, skip, take: Number(limit),
             orderBy: { createdAt: 'desc' },
             include: {
-                plan: { select: { name: true, price: true } },
+                plan: { select: { name: true, monthlyPrice: true } },
                 subscription: { select: { isActive: true, endDate: true } },
             },
         }),
@@ -235,8 +235,8 @@ const createSchool = async (req, res) => {
 
         // Generate a unique, human-readable school code e.g. SKL-A1B2C3
         const generateSchoolCode = () => {
-            const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
-            let code = 'SKL-'
+            const chars = '0123456789'
+            let code = ''
             for (let i = 0; i < 6; i++) code += chars[Math.floor(Math.random() * chars.length)]
             return code
         }
@@ -256,7 +256,7 @@ const createSchool = async (req, res) => {
             const plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } })
             if (plan) {
                 await prisma.schoolSubscription.create({
-                    data: { schoolId: school.id, planId, amountPaid: plan.price },
+                    data: { schoolId: school.id, planId, amountPaid: plan.monthlyPrice },
                 })
             }
         }
@@ -318,7 +318,7 @@ const updateSchool = async (req, res) => {
                 studentCount: studentCount !== undefined ? Number(studentCount) : undefined,
                 teacherCount: teacherCount !== undefined ? Number(teacherCount) : undefined,
             },
-            include: { plan: { select: { name: true, price: true } } },
+            include: { plan: { select: { name: true, monthlyPrice: true } } },
         })
 
         await logAudit(req.centralAdmin.id, 'UPDATE_SCHOOL', 'School', school.id, req.body, req.ip)
@@ -417,16 +417,16 @@ const syncSchoolCounts = async (req, res) => {
 
 const getPlans = async (req, res) => {
     const plans = await prisma.subscriptionPlan.findMany({
-        orderBy: { price: 'asc' },
+        orderBy: { monthlyPrice: 'asc' },
         include: { _count: { select: { schools: true } } },
     })
     res.status(StatusCodes.OK).json({ plans })
 }
 
 const createPlan = async (req, res) => {
-    const { name, description, price, maxStudents, maxTeachers, maxClasses, features, trialDays } = req.body
+    const { name, description, monthlyPrice, yearlyPrice, maxStudents, maxTeachers, maxClasses, features, trialDays } = req.body
     const plan = await prisma.subscriptionPlan.create({
-        data: { name, description, price, maxStudents, maxTeachers, maxClasses, features: features || [], trialDays: trialDays || 0 },
+        data: { name, description, monthlyPrice: monthlyPrice || 0, yearlyPrice: yearlyPrice || 0, maxStudents, maxTeachers, maxClasses, features: features || [], trialDays: trialDays || 0 },
     })
     await logAudit(req.centralAdmin.id, 'CREATE_PLAN', 'SubscriptionPlan', plan.id, { name }, req.ip)
     res.status(StatusCodes.CREATED).json({ plan })

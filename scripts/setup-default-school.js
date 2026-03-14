@@ -13,7 +13,8 @@ async function main() {
             data: {
                 name: 'Pro',
                 description: 'Professional Plan',
-                price: 79.99,
+                monthlyPrice: 79.99,
+                yearlyPrice: 799.99,
                 maxStudents: 500,
                 maxTeachers: 50,
                 maxClasses: 30,

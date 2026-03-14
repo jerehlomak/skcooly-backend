@@ -2,8 +2,9 @@ const express = require('express');
 const router = express.Router();
 const {
     getTransactions, addTransaction,
-    getFeeInvoices, collectFee,
-    getSalaries, paySalary
+    getFeeInvoices, generateBulkInvoices, collectFee,
+    getSalaries, paySalary,
+    getMyInvoices
 } = require('../controllers/financial.controller');
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
 
@@ -17,12 +18,17 @@ router.route('/ledger')
 
 // Fees API
 router.route('/fees')
-    .get(authenticateUser, getFeeInvoices) // Allow teachers/admin to view fees
+    .get(authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getFeeInvoices) // Allow teachers/admin to view fees
     .post(...adminOnly, collectFee); // Only admin/bursar collects fees
+
+router.post('/fees/generate', ...adminOnly, generateBulkInvoices);
 
 // Salary API
 router.route('/salaries')
     .get(...adminOnly, getSalaries)
     .post(...adminOnly, paySalary);
+
+// Student/Parent API
+router.get('/my-invoices', authenticateUser, getMyInvoices);
 
 module.exports = router;

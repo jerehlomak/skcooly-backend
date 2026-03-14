@@ -1,6 +1,7 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
+const { getSmsQueue } = require('../services/sms-worker.service');
 
 // ─── INTERNAL MESSAGING ────────────────────────────────────────────────────────
 
@@ -147,7 +148,11 @@ const deleteMessage = async (req, res) => {
     const msg = await prisma.message.findFirst({ where: { id, schoolId: req.user.schoolId } });
     if (!msg) throw new CustomError.NotFoundError('Message not found');
     if (msg.senderId !== userId) throw new CustomError.UnauthorizedError('Cannot delete another user\'s message');
-    await prisma.message.deleteMany({ where: { id, schoolId: req.user.schoolId } });
+    // Soft delete the message
+    await prisma.message.updateMany({
+        where: { id, schoolId: req.user.schoolId },
+        data: { isDeleted: true, deletedAt: new Date() }
+    });
     res.status(StatusCodes.OK).json({ msg: 'Message deleted' });
 };
 
@@ -189,50 +194,41 @@ const sendSms = async (req, res) => {
         throw new CustomError.BadRequestError('Please provide message and recipientGroups');
     }
 
-    // Resolve recipient counts from real data
-    let totalCount = 0;
-    const resolvedGroups = [];
+    const smsQueue = getSmsQueue();
 
-    for (const groupId of recipientGroups) {
-        let count = 0;
-        if (groupId === 'all-parents') {
-            count = await prisma.parentProfile.count({ where: { schoolId: req.user.schoolId } });
-        } else if (groupId === 'all-students') {
-            count = await prisma.studentProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
-        } else if (groupId === 'all-teachers') {
-            count = await prisma.teacherProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
-        } else if (groupId === 'all') {
-            const p = await prisma.parentProfile.count({ where: { schoolId: req.user.schoolId } });
-            const s = await prisma.studentProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
-            const t = await prisma.teacherProfile.count({ where: { status: 'Active', schoolId: req.user.schoolId } });
-            count = p + s + t;
-        } else {
-            // class-level: count students in that class
-            const classLevel = groupId.toUpperCase().replace('-', ' '); // jss1 -> JSS 1
-            count = await prisma.studentProfile.count({ where: { classLevel: { contains: classLevel, mode: 'insensitive' }, schoolId: req.user.schoolId } });
-        }
-        totalCount += count;
-        resolvedGroups.push(groupId);
-    }
-
-    // In production: integrate actual SMS gateway (Termii, Twilio, etc.)
-    // For now we mock the send and log it
-    const logEntry = await prisma.smsLog.create({
-        data: {
+    if (smsQueue) {
+        // Enqueue the job for asynchronous processing by the worker.
+        await smsQueue.add('dispatch-batch-sms', {
             schoolId: req.user.schoolId,
-            category: category || 'Custom',
+            category,
             message,
-            recipientGroup: resolvedGroups.join(', '),
-            recipientCount: totalCount,
-            sentBy: name,
-            status: 'DELIVERED',
-        }
-    });
+            recipientGroups,
+            sentBy: name
+        });
 
-    res.status(StatusCodes.CREATED).json({
-        msg: `SMS batch sent to ${totalCount} recipients`,
-        log: logEntry
-    });
+        res.status(StatusCodes.ACCEPTED).json({
+            msg: `SMS batch has been queued for delivery to ${recipientGroups.join(', ')}`,
+        });
+    } else {
+        // Fallback or local dev mock (if Redis is disabled) 
+        // Just store the log immediately
+        const logEntry = await prisma.smsLog.create({
+            data: {
+                schoolId: req.user.schoolId,
+                category: category || 'Custom',
+                message,
+                recipientGroup: recipientGroups.join(', '),
+                recipientCount: 0, // Mocked local
+                sentBy: name,
+                status: 'DELIVERED',
+            }
+        });
+
+        res.status(StatusCodes.CREATED).json({
+            msg: `Local mock output. SMS batch sent to ${recipientGroups.join(', ')}`,
+            log: logEntry
+        });
+    }
 };
 
 /**

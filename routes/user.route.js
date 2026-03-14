@@ -6,7 +6,8 @@ const {
     getSingleUser,
     showCurrentUser,
     updateUser,
-    updateUserPassword
+    updateUserPassword,
+    adminResetPassword
 } = require('../controllers/user.conttroller')
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication')
 
@@ -17,5 +18,6 @@ router.route('/updateUser').post(updateUser)
 router.route('/updateUserPassword').post(authenticateUser, updateUserPassword)
 
 router.route('/:id').get(authenticateUser, getSingleUser)
+router.route('/:id/reset-password').post(authenticateUser, authorizePermissions('ADMIN'), adminResetPassword)
 
 module.exports = router

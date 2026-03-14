@@ -1,0 +1,48 @@
+PrismaClientValidationError: 
+Invalid `prisma.parentProfile.findUnique()` invocation in
+C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\controllers\financial.controller.js:364:55
+
+  361     if (!student) throw new CustomError.NotFoundError('Student profile not found');
+  362     targetProfileIds.push(student.id);
+  363 } else if (req.user.role === 'PARENT') {
+→ 364     const parent = await prisma.parentProfile.findUnique({
+            where: {
+              userId: undefined,
+          ?   id?: String,
+          ?   schoolId_parentId?: ParentProfileSchoolIdParentIdCompoundUniqueInput,
+          ?   AND?: ParentProfileWhereInput | ParentProfileWhereInput[],
+          ?   OR?: ParentProfileWhereInput[],
+          ?   NOT?: ParentProfileWhereInput | ParentProfileWhereInput[],
+          ?   schoolId?: StringNullableFilter | String | Null,
+          ?   parentId?: StringFilter | String,
+          ?   phone?: StringFilter | String,
+          ?   occupation?: StringNullableFilter | String | Null,
+          ?   address?: StringNullableFilter | String | Null,
+          ?   fatherEducation?: StringNullableFilter | String | Null,
+          ?   fatherName?: StringNullableFilter | String | Null,
+          ?   fatherNationalId?: StringNullableFilter | String | Null,
+          ?   fatherOccupation?: StringNullableFilter | String | Null,
+          ?   fatherPhone?: StringNullableFilter | String | Null,
+          ?   motherEducation?: StringNullableFilter | String | Null,
+          ?   motherName?: StringNullableFilter | String | Null,
+          ?   motherNationalId?: StringNullableFilter | String | Null,
+          ?   motherOccupation?: StringNullableFilter | String | Null,
+          ?   motherPhone?: StringNullableFilter | String | Null,
+          ?   isDeleted?: BoolFilter | Boolean,
+          ?   deletedAt?: DateTimeNullableFilter | DateTime | Null,
+          ?   user?: UserRelationFilter | UserWhereInput,
+          ?   students?: StudentProfileListRelationFilter,
+          ?   school?: SchoolNullableRelationFilter | SchoolWhereInput | Null
+            },
+            include: {
+              students: true
+            }
+          })
+
+Argument `where` of type ParentProfileWhereUniqueInput needs at least one of `id`, `userId` or `schoolId_parentId` arguments. Available options are marked with ?.
+    at wn (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:29:1363)
+    at $n.handleRequestError (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:121:6958)
+    at $n.handleAndLogRequestError (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:121:6623)
+    at $n.request (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:121:6307)
+    at async l (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:130:9633)
+    at async getMyInvoices (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\controllers\financial.controller.js:364:28)

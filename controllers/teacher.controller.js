@@ -3,6 +3,7 @@ const prisma = require('../db/prisma');
 const argon2 = require('argon2');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
+const { logTenantAction } = require('../services/audit-log.service')
 
 const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -15,10 +16,18 @@ const generateRandomPassword = () => {
 
 // ─── ADD TEACHER ───────────────────────────────────────────────────────────────
 const addTeacher = async (req, res) => {
-    const { name, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
+    const { name, email, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
 
-    if (!name || !gender) {
-        throw new CustomError.BadRequestError('Please provide name and gender');
+    if (!name || !gender || !email) {
+        throw new CustomError.BadRequestError('Please provide name, email, and gender');
+    }
+
+    const emailAlreadyExist = await prisma.user.findUnique({
+        where: { email },
+    });
+
+    if (emailAlreadyExist) {
+        throw new CustomError.BadRequestError(`User with email "${email}" already exists. Please choose a different email.`);
     }
 
     const currentYear = new Date().getFullYear();
@@ -37,8 +46,7 @@ const addTeacher = async (req, res) => {
     const formattedSeq = sequence.toString().padStart(4, '0');
     const employeeId = `TCH-${currentYear}-${formattedSeq}`;
 
-    const safeName = name.toLowerCase().replace(/\s+/g, '.');
-    const generatedEmail = `${safeName}.t${formattedSeq}@skooly.employee`;
+    // Auto-generate password securely
     const generatedPassword = generateRandomPassword();
     const hashedPassword = await argon2.hash(generatedPassword);
 
@@ -46,7 +54,7 @@ const addTeacher = async (req, res) => {
         return await tx.user.create({
             data: {
                 name,
-                email: generatedEmail,
+                email, // Use provided email
                 password: hashedPassword,
                 role: 'TEACHER',
                 schoolId: req.user.schoolId,
@@ -76,14 +84,14 @@ const addTeacher = async (req, res) => {
     res.status(StatusCodes.CREATED).json({
         msg: 'Teacher account created securely',
         teacher: newTeacher,
-        credentials: { employeeId, loginEmail: generatedEmail, generatedPassword }
+        credentials: { employeeId, loginEmail: email, generatedPassword }
     });
 };
 
 // ─── GET ALL TEACHERS ──────────────────────────────────────────────────────────
 const getAllTeachers = async (req, res) => {
     const teachers = await prisma.teacherProfile.findMany({
-        where: { schoolId: req.user.schoolId },
+        where: { schoolId: req.user.schoolId, isDeleted: false },
         include: { user: { select: { id: true, name: true, email: true, role: true } } },
         orderBy: { hireDate: 'desc' }
     });
@@ -94,7 +102,7 @@ const getAllTeachers = async (req, res) => {
 const getTeacher = async (req, res) => {
     const { id } = req.params; // User.id
     const user = await prisma.user.findFirst({
-        where: { id, schoolId: req.user.schoolId },
+        where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: { teacherProfile: true }
     });
     if (!user || !user.teacherProfile) {
@@ -106,12 +114,22 @@ const getTeacher = async (req, res) => {
 // ─── UPDATE TEACHER ───────────────────────────────────────────────────────────
 const updateTeacher = async (req, res) => {
     const { id } = req.params; // User.id
-    const { name, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
+    const { name, email, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
+
+    if (email) {
+        const existingEmailUser = await prisma.user.findFirst({
+            where: { email, id: { not: id } }
+        });
+        if (existingEmailUser) {
+            throw new CustomError.BadRequestError(`Email "${email}" is already taken by another user.`);
+        }
+    }
 
     await prisma.user.updateMany({
         where: { id, schoolId: req.user.schoolId },
         data: {
             ...(name && { name }),
+            ...(email && { email }),
         }
     });
 
@@ -141,7 +159,29 @@ const updateTeacher = async (req, res) => {
 // ─── DELETE TEACHER ───────────────────────────────────────────────────────────
 const deleteTeacher = async (req, res) => {
     const { id } = req.params;
-    await prisma.user.deleteMany({ where: { id, schoolId: req.user.schoolId } });
+
+    // Soft Delete User & Teacher Profile
+    await prisma.$transaction([
+        prisma.user.updateMany({
+            where: { id, schoolId: req.user.schoolId },
+            data: { isDeleted: true, deletedAt: new Date() }
+        }),
+        prisma.teacherProfile.update({
+            where: { userId: id },
+            data: { isDeleted: true, deletedAt: new Date(), status: 'Deleted' }
+        })
+    ]);
+
+    // Log the deletion action
+    await logTenantAction({
+        schoolId: req.user.schoolId,
+        userId: req.user.userId,
+        action: 'DELETE_TEACHER',
+        entityType: 'User/TeacherProfile',
+        entityId: id,
+        ipAddress: req.ip
+    });
+
     res.status(StatusCodes.OK).json({ msg: 'Teacher deleted securely' });
 };
 

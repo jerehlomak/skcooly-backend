@@ -34,7 +34,8 @@ async function main() {
             {
                 name: 'Basic',
                 description: 'Perfect for small schools getting started',
-                price: 29,
+                monthlyPrice: 29,
+                yearlyPrice: 290,
                 maxStudents: 300,
                 maxTeachers: 20,
                 maxClasses: 15,
@@ -44,7 +45,8 @@ async function main() {
             {
                 name: 'Pro',
                 description: 'For growing schools with advanced needs',
-                price: 79,
+                monthlyPrice: 79,
+                yearlyPrice: 790,
                 maxStudents: 1000,
                 maxTeachers: 60,
                 maxClasses: 40,
@@ -54,7 +56,8 @@ async function main() {
             {
                 name: 'Enterprise',
                 description: 'Unlimited power for large institutions',
-                price: 199,
+                monthlyPrice: 199,
+                yearlyPrice: 1990,
                 maxStudents: 10000,
                 maxTeachers: 500,
                 maxClasses: 200,

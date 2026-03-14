@@ -2,6 +2,7 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
+const { logTenantAction } = require('../services/audit-log.service')
 
 // ─── CREATE SUBJECT ───────────────────────────────────────────────────────────
 const addSubject = async (req, res) => {
@@ -36,6 +37,7 @@ const getAllSubjects = async (req, res) => {
     const subjects = await prisma.subject.findMany({
         where: {
             schoolId: req.user.schoolId,
+            isDeleted: false,
             ...(stream && stream !== 'all' ? { stream } : {}),
             ...(category && category !== 'all' ? { category } : {})
         },
@@ -52,7 +54,7 @@ const getAllSubjects = async (req, res) => {
 const getSubject = async (req, res) => {
     const { id } = req.params
     const subject = await prisma.subject.findFirst({
-        where: { id, schoolId: req.user.schoolId },
+        where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: {
             classes: { include: { class: true } },
             teacher: { include: { user: { select: { name: true, email: true } } } }
@@ -98,7 +100,23 @@ const updateSubject = async (req, res) => {
 // ─── DELETE SUBJECT ───────────────────────────────────────────────────────────
 const deleteSubject = async (req, res) => {
     const { id } = req.params
-    await prisma.subject.deleteMany({ where: { id, schoolId: req.user.schoolId } })
+
+    // Soft Delete the subject
+    await prisma.subject.updateMany({
+        where: { id, schoolId: req.user.schoolId },
+        data: { isDeleted: true, deletedAt: new Date(), status: 'Deleted' }
+    })
+
+    // Log the deletion action
+    await logTenantAction({
+        schoolId: req.user.schoolId,
+        userId: req.user.userId,
+        action: 'DELETE_SUBJECT',
+        entityType: 'Subject',
+        entityId: id,
+        ipAddress: req.ip
+    })
+
     res.status(StatusCodes.OK).json({ msg: 'Subject deleted successfully' })
 }
 

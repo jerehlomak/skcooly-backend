@@ -2,8 +2,8 @@ require('dotenv').config()
 require('express-async-errors')
 
 const prisma = require('./db/prisma');
-
-
+const { startBillingCron } = require('./services/billing-cron.service');
+const { initSmsWorker } = require('./services/sms-worker.service'); 
 const express = require('express')
 
 const app = express()
@@ -36,6 +36,13 @@ const attendanceRouter = require('./routes/attendance.route')
 const assessmentRouter = require('./routes/assessment.route')
 const centralRouter = require('./routes/central.route')
 const groupAdminRouter = require('./routes/groupAdmin.route')
+const webhookRouter = require('./routes/webhook.route')
+const reportTemplateRouter = require('./routes/reportTemplate.route')
+const resultRouter = require('./routes/result.route')
+const cbtRouter = require('./routes/cbt.route')
+const lmsRouter = require('./routes/lms.route')
+const feeRouter = require('./routes/fee.route')
+const paymentRouter = require('./routes/payment.route')
 
 // middleware 
 const notFoundMiddleware = require('./middleware/not-found')
@@ -89,12 +96,18 @@ app.use('/api/v1/bank-accounts', bankAccountRouter)
 app.use('/api/v1/dashboard', dashboardRouter)
 app.use('/api/v1/roles', roleRouter)
 app.use('/api/v1/finance', financialRouter)
+app.use('/api/v1/payments', paymentRouter)
 app.use('/api/v1/communicate', messagingRouter)
 app.use('/api/v1/school', attendanceRouter)
 app.use('/api/v1/assessments', assessmentRouter)
 app.use('/api/v1/central', centralRouter)
 app.use('/api/v1/group-admin', groupAdminRouter)
-
+app.use('/api/v1/webhooks', webhookRouter)
+app.use('/api/v1/report-templates', reportTemplateRouter)
+app.use('/api/v1/results', resultRouter)
+app.use('/api/v1/cbt', cbtRouter)
+app.use('/api/v1/lms', lmsRouter)
+app.use('/api/v1/fee', feeRouter)
 
 app.use(notFoundMiddleware)
 app.use(errorHnadlerMiddleware)
@@ -105,6 +118,8 @@ const start = async () => {
     try {
         await prisma.$connect()
         console.log('Successfully connected to the PostgreSQL database via Prisma')
+        startBillingCron()
+        initSmsWorker()
         app.listen(PORT, () => console.log(`Server is listening at port ${PORT}`))
     } catch (error) {
         console.log('Failed to connect to the database:', error)
@@ -123,3 +138,7 @@ process.on('SIGTERM', async () => {
     await prisma.$disconnect()
     process.exit(0)
 })
+
+// Trigger nodemon restart
+
+// Trigger restart

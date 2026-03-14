@@ -23,6 +23,42 @@ const getTransactions = async (req, res) => {
     });
 };
 
+const getFinanceAnalytics = async (req, res) => {
+    // Analytics for the admin dashboard: total grouped by Term/Year
+    const invoices = await prisma.feeInvoice.findMany({
+        where: { schoolId: req.user.schoolId, isDeleted: false },
+        include: { student: { include: { classArm: true } } }
+    });
+
+    const totalBilled = invoices.reduce((sum, inv) => sum + inv.totalAmount, 0);
+    const totalCollected = invoices.reduce((sum, inv) => sum + inv.amountPaid, 0);
+    const totalOutstanding = totalBilled - totalCollected;
+
+    // Group revenue by term
+    const revenueByTerm = invoices.reduce((acc, inv) => {
+        const key = `${inv.term} ${inv.year}`;
+        if (!acc[key]) acc[key] = { billed: 0, collected: 0 };
+        acc[key].billed += inv.totalAmount;
+        acc[key].collected += inv.amountPaid;
+        return acc;
+    }, {});
+
+    // Group revenue by class
+    const revenueByClass = invoices.reduce((acc, inv) => {
+        const className = inv.student?.classArm?.name || 'Unassigned';
+        if (!acc[className]) acc[className] = { billed: 0, collected: 0 };
+        acc[className].billed += inv.totalAmount;
+        acc[className].collected += inv.amountPaid;
+        return acc;
+    }, {});
+
+    res.status(StatusCodes.OK).json({
+        kpis: { totalBilled, totalCollected, totalOutstanding },
+        revenueByTerm,
+        revenueByClass
+    });
+};
+
 const addTransaction = async (req, res) => {
     const { description, category, amount, type, gateway } = req.body;
 
@@ -50,52 +86,98 @@ const addTransaction = async (req, res) => {
 
 // ─── FEES COLLECTION ────────────────────────────────────────────────────────
 
-// Fetch all student fee invoices (mocked or from db)
 const getFeeInvoices = async (req, res) => {
-    // We grab all active students and their latest invoice. 
-    // If no invoice exists, we simulate one generated for "First Term 2024/2025"
-    let students = await prisma.studentProfile.findMany({
-        where: { schoolId: req.user.schoolId },
+    const { term, year, classId, status } = req.query;
+
+    let whereClause = { schoolId: req.user.schoolId };
+    if (term) whereClause.term = term;
+    if (year) whereClause.year = year;
+    if (status) whereClause.status = status;
+    
+    // To filter by classId, we have to look up the student relation
+    if (classId) {
+        whereClause.student = { classId };
+    }
+
+    const invoices = await prisma.feeInvoice.findMany({
+        where: whereClause,
         include: {
-            user: true,
-            feeInvoices: true
-        }
+            student: {
+                select: {
+                    id: true,
+                    admissionNo: true,
+                    classLevel: true,
+                    user: { select: { name: true } }
+                }
+            }
+        },
+        orderBy: { createdAt: 'desc' }
     });
 
-    // Auto-generate missing invoices for demonstration purposes
-    const processedStudents = await Promise.all(students.map(async (student) => {
-        let invoice = student.feeInvoices[0];
-        if (!invoice) {
-            // Calculate a dummy total fee based on class level loosely
-            const isSenior = student.classLevel.startsWith('SS');
-            const total = isSenior ? 125000 : 101000;
+    const formatted = invoices.map(invoice => ({
+        id: invoice.id,
+        studentId: invoice.studentProfileId,
+        admNo: invoice.student.admissionNo,
+        name: invoice.student.user?.name,
+        classLevel: invoice.student.classLevel,
+        term: invoice.term,
+        year: invoice.year,
+        totalFee: invoice.totalAmount,
+        amountPaid: invoice.amountPaid,
+        status: invoice.status.toLowerCase(), // paid, partial, unpaid
+        lastPayment: invoice.lastPaymentDate ? invoice.lastPaymentDate.toISOString().split('T')[0] : null,
+        dueDate: invoice.dueDate ? invoice.dueDate.toISOString().split('T')[0] : null
+    }));
 
-            invoice = await prisma.feeInvoice.create({
+    res.status(StatusCodes.OK).json({ fees: formatted, count: formatted.length });
+};
+
+const generateBulkInvoices = async (req, res) => {
+    const { classId, term, year, totalAmount, dueDate } = req.body;
+
+    if (!classId || !term || !year || !totalAmount) {
+        throw new CustomError.BadRequestError('Please provide classId, term, year, and totalAmount');
+    }
+
+    // Find all active students in the selected class
+    const students = await prisma.studentProfile.findMany({
+        where: { schoolId: req.user.schoolId, classId, status: 'Active' }
+    });
+
+    if (students.length === 0) {
+        return res.status(StatusCodes.OK).json({ msg: 'No active students found in this class', count: 0 });
+    }
+
+    let createdCount = 0;
+    
+    // Create an invoice for each student if one doesn't already exist for the term/year
+    for (const student of students) {
+        const existingInvoice = await prisma.feeInvoice.findFirst({
+            where: {
+                studentProfileId: student.id,
+                term,
+                year
+            }
+        });
+
+        if (!existingInvoice) {
+            await prisma.feeInvoice.create({
                 data: {
+                    schoolId: req.user.schoolId,
                     studentProfileId: student.id,
-                    term: 'First Term',
-                    year: '2024/2025',
-                    totalAmount: total,
+                    term,
+                    year,
+                    totalAmount: Number(totalAmount),
+                    dueDate: dueDate ? new Date(dueDate) : null,
                     amountPaid: 0,
                     status: 'Unpaid'
                 }
             });
+            createdCount++;
         }
+    }
 
-        return {
-            id: invoice.id,
-            studentId: student.id,
-            admNo: student.admissionNo,
-            name: student.user.name,
-            classLevel: student.classLevel,
-            totalFee: invoice.totalAmount,
-            amountPaid: invoice.amountPaid,
-            status: invoice.status.toLowerCase(), // paid, partial, unpaid
-            lastPayment: invoice.lastPaymentDate ? invoice.lastPaymentDate.toISOString().split('T')[0] : null,
-        };
-    }));
-
-    res.status(StatusCodes.OK).json({ fees: processedStudents });
+    res.status(StatusCodes.CREATED).json({ msg: `Successfully generated ${createdCount} invoices.`, count: createdCount });
 };
 
 const collectFee = async (req, res) => {
@@ -108,50 +190,66 @@ const collectFee = async (req, res) => {
         throw new CustomError.BadRequestError('Invalid payment amount');
     }
 
-    // Step 1: If using a payment gateway, trigger the flow
-    let paymentLink = null;
-    let rrr = null;
+    // Store the installment as a manual cash payment locally or trigger a webhook.
+    // In production, parent UI hits a different route like /payments/initialize
+    // so this is strictly the Bursar's manual entry panel endpoint.
 
-    if (paymentMethod === 'Flutterwave') {
-        const fwReq = await flutterwave.initializePayment(amount, invoice.student.user.email || 'parent@example.com', invoice.student.user.name, `FEE-${invoiceId.substring(0, 8)}`);
-        paymentLink = fwReq.data.link; // The frontend would normally redirect here
-    } else if (paymentMethod === 'Remita') {
-        const rmReq = await remita.generateRRR(amount, invoice.student.user.name, invoice.student.user.email || 'parent@example.com', `FEE-${invoiceId.substring(0, 8)}`);
-        rrr = rmReq.RRR; // The frontend would print this for the parent to take to bank
-    }
+    // Use a transaction to securely update balances and logs
+    const result = await prisma.$transaction(async (tx) => {
+        const newPaid = invoice.amountPaid + Number(amount);
+        const newStatus = newPaid >= invoice.totalAmount ? 'Paid' : 'Partial';
 
-    // Step 2: Since we are mocking the success flow, we instantly process the payment.
-    // In production, you would await a Webhook from Flutterwave/Remita to do Step 2.
+        const updatedInvoice = await tx.feeInvoice.update({
+            where: { id: invoiceId },
+            data: {
+                amountPaid: newPaid,
+                status: newStatus,
+                lastPaymentDate: new Date()
+            }
+        });
 
-    const newPaid = invoice.amountPaid + Number(amount);
-    const newStatus = newPaid >= invoice.totalAmount ? 'Paid' : 'Partial';
+        // Automatically add to school-level transaction
+        const schoolTx = await tx.transaction.create({
+            data: {
+                description: `Fee Collection - ${invoice.student.user.name}`,
+                category: 'Fees',
+                amount: Number(amount),
+                type: 'income',
+                gateway: paymentMethod || 'Cash',
+                reference: `FEE-${invoiceId.substring(0, 6)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
+                schoolId: req.user.schoolId,
+                feeInvoiceId: invoice.id,
+                studentProfileId: invoice.student.id
+            }
+        });
 
-    const updatedInvoice = await prisma.feeInvoice.update({
-        where: { id: invoiceId },
-        data: {
-            amountPaid: newPaid,
-            status: newStatus,
-            lastPaymentDate: new Date()
-        }
-    });
-
-    // Automatically add to financial ledger
-    await prisma.transaction.create({
-        data: {
-            description: `Fee Collection - ${invoice.student.user.name}`,
-            category: 'Fees',
-            amount: Number(amount),
-            type: 'income',
-            gateway: paymentMethod || 'Cash',
-            reference: `FEE-${invoiceId.substring(0, 6)}-${crypto.randomBytes(2).toString('hex').toUpperCase()}`,
-            schoolId: req.user.schoolId
-        }
+        // Generate Student Ledger Entry (CREDIT)
+        const lastLedger = await tx.studentLedger.findFirst({
+            where: { studentProfileId: invoice.student.id },
+            orderBy: { createdAt: 'desc' }
+        });
+        const currentBalance = lastLedger ? lastLedger.balanceAfter : 0;
+        
+        await tx.studentLedger.create({
+            data: {
+                schoolId: invoice.schoolId,
+                studentProfileId: invoice.student.id,
+                type: 'CREDIT',
+                category: 'Payment',
+                description: `Manual Payment (${paymentMethod || 'Cash'})`,
+                amount: Number(amount),
+                balanceAfter: currentBalance - Number(amount), // Credit decreases debt balance
+                feeInvoiceId: invoice.id,
+                transactionId: schoolTx.id
+            }
+        });
+        
+        return updatedInvoice;
     });
 
     res.status(StatusCodes.OK).json({
         msg: 'Payment processed',
-        invoice: updatedInvoice,
-        gatewayData: { paymentLink, rrr }
+        invoice: result
     });
 };
 
@@ -251,11 +349,83 @@ const paySalary = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Salary paid via ' + (gateway || 'Cash'), slip: updatedSlip });
 };
 
+// ─── GET MY INVOICES (STUDENT/PARENT) ───────────────────────────────────────
+const getMyInvoices = async (req, res) => {
+    try {
+        let targetProfileIds = [];
+
+        if (req.user.role === 'STUDENT') {
+            const student = await prisma.studentProfile.findUnique({
+                where: { userId: req.user.userId }
+            });
+            if (!student) throw new CustomError.NotFoundError('Student profile not found');
+            targetProfileIds.push(student.id);
+        } else if (req.user.role === 'PARENT') {
+            const parent = await prisma.parentProfile.findUnique({
+                where: { userId: req.user.userId },
+                include: { students: true }
+            });
+            if (!parent) throw new CustomError.NotFoundError('Parent profile not found');
+            targetProfileIds = parent.students.map(c => c.id);
+        } else {
+            throw new CustomError.UnauthorizedError('Only Students and Parents can access this endpoint directly');
+        }
+
+        if (targetProfileIds.length === 0) {
+            return res.status(StatusCodes.OK).json({ fees: [] });
+        }
+
+        const invoices = await prisma.feeInvoice.findMany({
+            where: {
+                schoolId: req.user.schoolId,
+                studentProfileId: { in: targetProfileIds }
+            },
+            include: {
+                items: true,
+                ledgerEntries: { orderBy: { createdAt: 'desc' } },
+                student: {
+                    select: {
+                        admissionNo: true,
+                        classLevel: true,
+                        user: { select: { name: true } }
+                    }
+                }
+            },
+            orderBy: { createdAt: 'desc' }
+        });
+
+        const formatted = invoices.map(invoice => ({
+            id: invoice.id,
+            studentId: invoice.studentProfileId,
+            admNo: invoice.student.admissionNo,
+            name: invoice.student.user.name,
+            classLevel: invoice.student.classLevel,
+            totalFee: invoice.totalAmount,
+            amountPaid: invoice.amountPaid,
+            status: invoice.status ? invoice.status.toLowerCase() : 'unpaid',
+            lastPayment: invoice.lastPaymentDate ? invoice.lastPaymentDate.toISOString().split('T')[0] : null,
+            term: invoice.term,
+            year: invoice.year,
+            items: invoice.items,
+            ledgerEntries: invoice.ledgerEntries
+        }));
+
+        res.status(StatusCodes.OK).json({ fees: formatted });
+    } catch (error) {
+        require('fs').writeFileSync('debug-error.txt', error.stack || error.message);
+        console.error("CRITICAL ERROR IN getMyInvoices:", error);
+        res.status(500).json({ msg: error.message, stack: error.stack });
+    }
+};
+
 module.exports = {
     getTransactions,
     addTransaction,
     getFeeInvoices,
+    generateBulkInvoices,
     collectFee,
     getSalaries,
-    paySalary
+    paySalary,
+    getMyInvoices,
+    getFinanceAnalytics
 };

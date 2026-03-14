@@ -2,6 +2,7 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
+const { getCache, setCache, invalidateCache } = require('../services/redis.service')
 
 // ─── SEED DEFAULTS ─────────────────────────────────────────────────────────────
 const DEFAULTS = {
@@ -43,13 +44,26 @@ const DEFAULTS = {
     ],
 }
 
-// ─── GET SETTINGS (singleton upsert) ─────────────────────────────────────────
+// ─── GET SETTINGS (singleton upsert with Cache) ──────────────────────────────
 const getSettings = async (req, res) => {
+    const cacheKey = `tenant_${req.user.schoolId}_settings`;
+
+    // 1. Try Cache
+    const cachedSettings = await getCache(cacheKey);
+    if (cachedSettings) {
+        return res.status(StatusCodes.OK).json({ settings: cachedSettings, source: 'cache' });
+    }
+
+    // 2. Fallback to DB
     let settings = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } })
     if (!settings) {
         settings = await prisma.schoolSettings.create({ data: { schoolId: req.user.schoolId } })
     }
-    res.status(StatusCodes.OK).json({ settings })
+
+    // 3. Set Cache
+    await setCache(cacheKey, settings, 3600); // 1 hour TTL
+
+    res.status(StatusCodes.OK).json({ settings, source: 'db' })
 }
 
 // ─── UPDATE SETTINGS ─────────────────────────────────────────────────────────
@@ -79,6 +93,10 @@ const updateSettings = async (req, res) => {
             }
         })
     }
+
+    // Invalidate Cache so the next fetch hits DB
+    await invalidateCache(`tenant_${req.user.schoolId}_settings`);
+
     res.status(StatusCodes.OK).json({ msg: 'Settings updated', settings })
 }
 

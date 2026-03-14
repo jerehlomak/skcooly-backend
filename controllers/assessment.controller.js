@@ -1,6 +1,7 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
+const { publishEvent, EVENTS } = require('../services/event-bus.service');
 
 // ─── GET ASSESSMENT STRUCTURES ──────────────────────────────────────────────
 const getAssessmentStructures = async (req, res) => {
@@ -32,12 +33,21 @@ const updateAssessmentStructures = async (req, res) => {
         throw new CustomError.BadRequestError('Total weight must equal 100%');
     }
 
-    const structure = await prisma.assessmentStructure.upsert({
-        where: { category },
-        update: { parts, schoolId: req.user.schoolId }, // technically, upserting by unique category means category should be unique PER school in a real multi-tenant app, but here category is a global string in schema. Assuming category is unique globally, adding schoolId. Wait, schema says category is @unique. This is an issue for multi-tenancy if each school wants their own 'JSS' category. We will just add schoolId to it.
-        // For now, let's just supply schoolId.
-        create: { category, parts, schoolId: req.user.schoolId }
+    const existing = await prisma.assessmentStructure.findFirst({
+        where: { category, schoolId: req.user.schoolId }
     });
+
+    let structure;
+    if (existing) {
+        structure = await prisma.assessmentStructure.update({
+            where: { id: existing.id },
+            data: { parts }
+        });
+    } else {
+        structure = await prisma.assessmentStructure.create({
+            data: { category, parts, schoolId: req.user.schoolId }
+        });
+    }
 
     res.status(StatusCodes.OK).json({ msg: 'Assessment structure updated', structure });
 };
@@ -58,23 +68,8 @@ const getScoresRoster = async (req, res) => {
 
     if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${classId}`);
 
-    // Map Class "level" strings to "category" strings based on the frontend predefined categories
-    let category = 'JSS (Junior Secondary)'; // default fallback
-    const levelStr = cls.level.toUpperCase();
-
-    if (levelStr.includes('NURSERY') || levelStr.includes('PRE')) {
-        category = 'Nursery';
-    } else if (levelStr.includes('PRIMARY') || levelStr.includes('PRY')) {
-        category = 'Primary';
-    } else if (levelStr.includes('JSS') || levelStr.includes('JUNIOR')) {
-        category = 'JSS (Junior Secondary)';
-    } else if (levelStr.includes('SSS') || levelStr.includes('SS ') || levelStr.includes('SENIOR')) {
-        category = 'SSS (Senior Secondary)';
-    } else if (levelStr.includes('ARABIC')) {
-        category = 'Arabic';
-    }
-
-    // Find the current assessment structure
+    // Find the current assessment structure based directly on the class level name
+    const category = cls.level;
     const structureRecord = await prisma.assessmentStructure.findFirst({
         where: { category, schoolId: req.user.schoolId }
     });
@@ -171,12 +166,75 @@ const saveScores = async (req, res) => {
 
     await prisma.$transaction(upsertPromises);
 
+    // Dispatch the Result Added event
+    publishEvent(EVENTS.RESULT_ADDED, {
+        schoolId: req.user.schoolId,
+        term,
+        academicYear,
+        subjectId,
+        classId,
+        studentCount: scoresData.length
+    });
+
     res.status(StatusCodes.OK).json({ msg: 'Scores saved successfully' });
+};
+
+// ─── GET MY RESULTS (STUDENT/PARENT) ────────────────────────────────────────
+const getMyResults = async (req, res) => {
+    const { term, academicYear, studentProfileId } = req.query;
+
+    let targetStudentId = studentProfileId;
+
+    if (req.user.role === 'STUDENT') {
+        // Students can only see their own results
+        const studentProfile = await prisma.studentProfile.findUnique({
+            where: { userId: req.user.id }
+        });
+        if (!studentProfile) throw new CustomError.NotFoundError('Student profile not found');
+        targetStudentId = studentProfile.id;
+    } else if (req.user.role === 'PARENT') {
+        // Parents can see results for their children
+        if (!targetStudentId) throw new CustomError.BadRequestError('studentProfileId query parameter is required for parents');
+        
+        const parentProfile = await prisma.parentProfile.findUnique({
+            where: { userId: req.user.id },
+            include: { students: true }
+        });
+        
+        if (!parentProfile) throw new CustomError.NotFoundError('Parent profile not found');
+        
+        const isMyChild = parentProfile.students.some(child => child.id === targetStudentId);
+        if (!isMyChild) {
+            throw new CustomError.UnauthorizedError('You are not authorized to view results for this student');
+        }
+    } else {
+        throw new CustomError.UnauthorizedError('Only Students and Parents can access this endpoint directly');
+    }
+
+    const whereClause = {
+        studentProfileId: targetStudentId,
+        schoolId: req.user.schoolId
+    };
+
+    if (term) whereClause.term = term;
+    if (academicYear) whereClause.academicYear = academicYear;
+
+    const results = await prisma.studentResult.findMany({
+        where: whereClause,
+        include: {
+            subject: { select: { name: true, code: true } },
+            teacher: { select: { user: { select: { name: true } } } }
+        },
+        orderBy: { subject: { name: 'asc' } }
+    });
+
+    res.status(StatusCodes.OK).json({ results });
 };
 
 module.exports = {
     getAssessmentStructures,
     updateAssessmentStructures,
     getScoresRoster,
-    saveScores
+    saveScores,
+    getMyResults
 };

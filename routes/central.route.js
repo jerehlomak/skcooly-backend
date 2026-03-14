@@ -1,6 +1,8 @@
 const express = require('express')
 const router = express.Router()
 
+const billingRouter = require('./billing.route')
+
 const {
     login, getMe, logout, setupFirstAdmin,
     getOverview,
@@ -67,5 +69,8 @@ router.post('/tickets/:id/reply', replyToTicket)
 
 // ─── Audit Logs ────────────────────────────────────────────────────────────
 router.get('/audit-logs', getAuditLogs)
+
+// ─── Billing ───────────────────────────────────────────────────────────────
+router.use('/billing', billingRouter)
 
 module.exports = router

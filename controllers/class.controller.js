@@ -2,6 +2,7 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
+const { logTenantAction } = require('../services/audit-log.service')
 
 // ─── CREATE CLASS ─────────────────────────────────────────────────────────────
 const addClass = async (req, res) => {
@@ -34,6 +35,7 @@ const getAllClasses = async (req, res) => {
     const classes = await prisma.class.findMany({
         where: {
             schoolId,
+            isDeleted: false,
             NOT: { schoolId: null }  // safety guard: never return null-schoolId orphans
         },
         include: {
@@ -54,7 +56,7 @@ const getAllClasses = async (req, res) => {
 const getClass = async (req, res) => {
     const { id } = req.params
     const cls = await prisma.class.findFirst({
-        where: { id, schoolId: req.user.schoolId },
+        where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: {
             subjects: {
                 include: {
@@ -123,7 +125,23 @@ const assignSubjectTeacher = async (req, res) => {
 // ─── DELETE CLASS ─────────────────────────────────────────────────────────────
 const deleteClass = async (req, res) => {
     const { id } = req.params
-    await prisma.class.deleteMany({ where: { id, schoolId: req.user.schoolId } })
+
+    // Soft Delete the class
+    await prisma.class.updateMany({
+        where: { id, schoolId: req.user.schoolId },
+        data: { isDeleted: true, deletedAt: new Date(), status: 'Deleted' }
+    })
+
+    // Log the deletion action
+    await logTenantAction({
+        schoolId: req.user.schoolId,
+        userId: req.user.userId,
+        action: 'DELETE_CLASS',
+        entityType: 'Class',
+        entityId: id,
+        ipAddress: req.ip
+    })
+
     res.status(StatusCodes.OK).json({ msg: 'Class deleted successfully' })
 }
 

@@ -169,6 +169,55 @@ const getStudentHistory = async (req, res) => {
 };
 
 /**
+ * Get personal attendance history for Student/Parent
+ */
+const getMyAttendance = async (req, res) => {
+    const { month, year, studentProfileId } = req.query;
+
+    let targetStudentId = studentProfileId;
+
+    if (req.user.role === 'STUDENT') {
+        const student = await prisma.studentProfile.findUnique({
+            where: { userId: req.user.id }
+        });
+        if (!student) throw new CustomError.NotFoundError('Student profile not found');
+        targetStudentId = student.id;
+    } else if (req.user.role === 'PARENT') {
+        if (!targetStudentId) throw new CustomError.BadRequestError('studentProfileId query parameter is required for parents');
+        const parent = await prisma.parentProfile.findUnique({
+            where: { userId: req.user.id },
+            include: { students: true }
+        });
+        if (!parent) throw new CustomError.NotFoundError('Parent profile not found');
+        const isMyChild = parent.students.some(c => c.id === targetStudentId);
+        if (!isMyChild) throw new CustomError.UnauthorizedError('Not authorized to view this student');
+    } else {
+        throw new CustomError.UnauthorizedError('Only Students and Parents can access this endpoint directly');
+    }
+
+    const m = month || (new Date().getMonth() + 1).toString().padStart(2, '0');
+    const y = year || new Date().getFullYear().toString();
+    const prefix = `${y}-${m}`;
+
+    const records = await prisma.attendanceRecord.findMany({
+        where: {
+            studentProfileId: targetStudentId,
+            date: { startsWith: prefix }
+        },
+        orderBy: { date: 'asc' }
+    });
+
+    const summary = {
+        present: records.filter(r => r.status === 'PRESENT').length,
+        absent: records.filter(r => r.status === 'ABSENT').length,
+        late: records.filter(r => r.status === 'LATE').length,
+        excused: records.filter(r => r.status === 'EXCUSED').length,
+    };
+
+    res.status(StatusCodes.OK).json({ records, summary });
+};
+
+/**
  * Get unique class levels from active students (for the class selector dropdown)
  */
 /**
@@ -231,7 +280,10 @@ const saveTimetable = async (req, res) => {
     }
 
     // Delete existing for this class and re-insert
-    await prisma.timetableEntry.deleteMany({ where: { classId } });
+    await prisma.timetableEntry.updateMany({
+        where: { classId },
+        data: { isDeleted: true, deletedAt: new Date() }
+    });
 
     if (slots.length > 0) {
         await prisma.timetableEntry.createMany({
@@ -259,7 +311,10 @@ const deleteTimetableSlot = async (req, res) => {
     const { classId, day, period } = req.body;
     if (!classId || !day || !period) throw new CustomError.BadRequestError('classId, day, and period are required');
 
-    await prisma.timetableEntry.deleteMany({ where: { classId, day, period } });
+    await prisma.timetableEntry.updateMany({
+        where: { classId, day, period },
+        data: { isDeleted: true, deletedAt: new Date() }
+    });
     res.status(StatusCodes.OK).json({ msg: 'Slot deleted' });
 };
 
@@ -376,4 +431,5 @@ module.exports = {
     deleteTimetableSlot,
     getAvailableTeachers,
     getAvailableSubjects,
+    getMyAttendance,
 };

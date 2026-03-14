@@ -9,8 +9,8 @@ const { authenticateUser, authorizePermissions } = require('../middleware/authen
 
 const admin = [authenticateUser, authorizePermissions('ADMIN')]
 
-// School settings singleton
-router.route('/').get(...admin, getSettings).patch(...admin, updateSettings)
+// School settings singleton - Readable by any logged in tenant user, Update requires Admin
+router.route('/').get(authenticateUser, getSettings).patch(...admin, updateSettings)
 
 // Class levels
 router.route('/class-levels').get(authenticateUser, getClassLevels).post(...admin, addClassLevel)

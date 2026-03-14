@@ -38,7 +38,10 @@ const deleteBankAccount = async (req, res) => {
         return res.status(StatusCodes.NOT_FOUND).json({ msg: `No bank account found for this school with id: ${id}` })
     }
 
-    await prisma.bankAccount.deleteMany({ where: { id, schoolId: req.user.schoolId } })
+    await prisma.bankAccount.updateMany({
+        where: { id, schoolId: req.user.schoolId },
+        data: { isDeleted: true, deletedAt: new Date(), isActive: false }
+    })
     res.status(StatusCodes.OK).json({ msg: 'Bank Account deleted successfully' })
 }
 

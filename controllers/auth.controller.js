@@ -62,24 +62,24 @@ const login = async (req, res) => {
 
     if (role === 'ADMIN') {
         user = await prisma.user.findFirst({
-            where: { email: loginId, schoolId: school.id },
+            where: { email: loginId, schoolId: school.id, isDeleted: false },
             include: { studentProfile: true, teacherProfile: true, parentProfile: true }
         })
     } else if (role === 'STUDENT') {
         const profile = await prisma.studentProfile.findFirst({
-            where: { admissionNo: loginId, schoolId: school.id },
+            where: { admissionNo: loginId, schoolId: school.id, isDeleted: false },
             include: { user: { include: { studentProfile: true, teacherProfile: true, parentProfile: true } } }
         })
         user = profile ? profile.user : null;
     } else if (role === 'TEACHER') {
         const profile = await prisma.teacherProfile.findFirst({
-            where: { employeeId: loginId, schoolId: school.id },
+            where: { employeeId: loginId, schoolId: school.id, isDeleted: false },
             include: { user: { include: { studentProfile: true, teacherProfile: true, parentProfile: true } } }
         })
         user = profile ? profile.user : null;
     } else if (role === 'PARENT') {
         const profile = await prisma.parentProfile.findFirst({
-            where: { parentId: loginId, schoolId: school.id },
+            where: { parentId: loginId, schoolId: school.id, isDeleted: false },
             include: { user: { include: { studentProfile: true, teacherProfile: true, parentProfile: true } } }
         })
         user = profile ? profile.user : null;

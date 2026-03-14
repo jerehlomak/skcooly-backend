@@ -3,6 +3,8 @@ const prisma = require('../db/prisma');
 const argon2 = require('argon2')
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
+const { logTenantAction } = require('../services/audit-log.service')
+const { publishEvent, EVENTS } = require('../services/event-bus.service')
 
 // Helper function to generate a random readable 8 character password
 const generateRandomPassword = () => {
@@ -100,6 +102,14 @@ const addStudent = async (req, res) => {
         })
     })
 
+    // Emit domain event for decoupling downstream effects
+    publishEvent(EVENTS.STUDENT_CREATED, {
+        schoolId: req.user.schoolId,
+        studentId: newStudent.id,
+        admissionNo, 
+        email: generatedEmail
+    });
+
     res.status(StatusCodes.CREATED).json({
         msg: 'Student created successfully',
         student: newStudent,
@@ -117,6 +127,7 @@ const getAllStudents = async (req, res) => {
     const students = await prisma.studentProfile.findMany({
         where: {
             schoolId,          // only this school
+            isDeleted: false,  // soft delete check
             NOT: { schoolId: null }  // safety guard: never return null-schoolId orphans
         },
         include: {
@@ -136,7 +147,7 @@ const getStudent = async (req, res) => {
     const { id } = req.params // This is the User.id
 
     const user = await prisma.user.findFirst({
-        where: { id, schoolId: req.user.schoolId },
+        where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: {
             studentProfile: {
                 include: {
@@ -209,8 +220,29 @@ const updateStudent = async (req, res) => {
 // ─── DELETE STUDENT ────────────────────────────────────────────────────────────
 const deleteStudent = async (req, res) => {
     const { id } = req.params
-    // Cascade via Prisma schema — deleting User deletes StudentProfile too
-    await prisma.user.deleteMany({ where: { id, schoolId: req.user.schoolId } })
+
+    // Soft Delete User & Profile
+    await prisma.$transaction([
+        prisma.user.updateMany({
+            where: { id, schoolId: req.user.schoolId },
+            data: { isDeleted: true, deletedAt: new Date() }
+        }),
+        prisma.studentProfile.update({
+            where: { userId: id },
+            data: { isDeleted: true, deletedAt: new Date(), status: 'Deleted' }
+        })
+    ])
+
+    // Log the deletion action
+    await logTenantAction({
+        schoolId: req.user.schoolId,
+        userId: req.user.userId,
+        action: 'DELETE_STUDENT',
+        entityType: 'User/StudentProfile',
+        entityId: id,
+        ipAddress: req.ip
+    })
+
     res.status(StatusCodes.OK).json({ msg: 'Student deleted successfully' })
 }
 

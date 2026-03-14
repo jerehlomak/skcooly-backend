@@ -61,17 +61,17 @@ const getOverview = async (req, res) => {
 
     // Real DB counts across all branches
     const [totalStudents, totalTeachers, totalParents] = await Promise.all([
-        prisma.studentProfile.count({ where: { schoolId: { in: schoolIds }, NOT: { schoolId: null } } }),
-        prisma.teacherProfile.count({ where: { schoolId: { in: schoolIds }, NOT: { schoolId: null } } }),
-        prisma.parentProfile.count({ where: { schoolId: { in: schoolIds }, NOT: { schoolId: null } } }),
+        prisma.studentProfile.count({ where: { schoolId: { in: schoolIds }, isDeleted: false, NOT: { schoolId: null } } }),
+        prisma.teacherProfile.count({ where: { schoolId: { in: schoolIds }, isDeleted: false, NOT: { schoolId: null } } }),
+        prisma.parentProfile.count({ where: { schoolId: { in: schoolIds }, isDeleted: false, NOT: { schoolId: null } } }),
     ]);
 
     // Per-branch breakdown
     const branches = await Promise.all(group.schools.map(async (school) => {
         const [students, teachers, parents] = await Promise.all([
-            prisma.studentProfile.count({ where: { schoolId: school.id } }),
-            prisma.teacherProfile.count({ where: { schoolId: school.id } }),
-            prisma.parentProfile.count({ where: { schoolId: school.id } }),
+            prisma.studentProfile.count({ where: { schoolId: school.id, isDeleted: false } }),
+            prisma.teacherProfile.count({ where: { schoolId: school.id, isDeleted: false } }),
+            prisma.parentProfile.count({ where: { schoolId: school.id, isDeleted: false } }),
         ]);
         return {
             id: school.id,

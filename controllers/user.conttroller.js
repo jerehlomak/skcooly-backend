@@ -141,10 +141,47 @@ const updateUserPassword = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Successfully updated password' })
 }
 
+const adminResetPassword = async (req, res) => {
+    const { id: targetUserId } = req.params;
+    const { newPassword } = req.body;
+
+    if (!newPassword || newPassword.length < 6) {
+        throw new CustomError.BadRequestError('Please provide a valid newPassword (min 6 characters)');
+    }
+
+    // Ensure the target user belongs to the same school as the admin
+    const targetUser = await prisma.user.findUnique({
+        where: { id: targetUserId }
+    });
+
+    if (!targetUser) {
+        throw new CustomError.NotFoundError(`No user found with id: ${targetUserId}`);
+    }
+
+    if (targetUser.schoolId !== req.user.schoolId) {
+        throw new CustomError.UnauthorizedError('You are not authorized to reset the password for this user');
+    }
+
+    // Do not allow resetting SUPER_ADMIN or GROUP_ADMIN passwords via this standard School Admin route
+    if (['SUPER_ADMIN', 'GROUP_ADMIN'].includes(targetUser.role)) {
+        throw new CustomError.UnauthorizedError('Cannot reset password for super admins or group admins');
+    }
+
+    const hashedPassword = await argon2.hash(newPassword);
+
+    await prisma.user.update({
+        where: { id: targetUserId },
+        data: { password: hashedPassword }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: 'User password has been successfully reset' });
+}
+
 module.exports = {
     getAllUsers,
     getSingleUser,
     showCurrentUser,
     updateUser,
-    updateUserPassword
+    updateUserPassword,
+    adminResetPassword
 }

@@ -17,25 +17,32 @@ const {
     getAvailableSubjects,
     getTimetableSetup,
     updateTimetableSetup,
+    getMyAttendance
 } = require('../controllers/attendance.controller');
 
-// Attendance routes
-router.get('/attendance/stats', authenticateUser, getAttendanceStats);
-router.get('/attendance/roster', authenticateUser, getAttendanceRoster);
-router.post('/attendance/mark', authenticateUser, markAttendance);
-router.get('/attendance/calendar', authenticateUser, getAttendanceCalendar);
-router.get('/attendance/history', authenticateUser, getStudentHistory);
-router.get('/attendance/class-levels', authenticateUser, getClassLevels);
+const adminTeacher = authorizePermissions('ADMIN', 'TEACHER');
+const adminOnly = authorizePermissions('ADMIN');
+
+// Attendance routes (Staff only)
+router.get('/attendance/stats', authenticateUser, adminTeacher, getAttendanceStats);
+router.get('/attendance/roster', authenticateUser, adminTeacher, getAttendanceRoster);
+router.post('/attendance/mark', authenticateUser, adminTeacher, markAttendance);
+router.get('/attendance/calendar', authenticateUser, adminTeacher, getAttendanceCalendar);
+router.get('/attendance/history', authenticateUser, adminTeacher, getStudentHistory);
+router.get('/attendance/class-levels', authenticateUser, adminTeacher, getClassLevels);
+
+// Student/Parent API
+router.get('/my-attendance', authenticateUser, getMyAttendance);
 
 // Timetable routes
-router.get('/timetable', authenticateUser, getTimetable);
-router.get('/timetable/setup', authenticateUser, getTimetableSetup);
-router.patch('/timetable/setup', authenticateUser, updateTimetableSetup);
+router.get('/timetable', authenticateUser, getTimetable); // Everyone can view
+router.get('/timetable/setup', authenticateUser, getTimetableSetup); // Everyone can view
+router.patch('/timetable/setup', authenticateUser, adminOnly, updateTimetableSetup);
 router.get('/timetable/classes', authenticateUser, getTimetableClasses);
-router.post('/timetable/slot', authenticateUser, upsertTimetableSlot);
-router.post('/timetable/save', authenticateUser, saveTimetable);
-router.delete('/timetable/slot', authenticateUser, deleteTimetableSlot);
-router.get('/timetable/teachers', authenticateUser, getAvailableTeachers);
-router.get('/timetable/subjects', authenticateUser, getAvailableSubjects);
+router.post('/timetable/slot', authenticateUser, adminOnly, upsertTimetableSlot);
+router.post('/timetable/save', authenticateUser, adminOnly, saveTimetable);
+router.delete('/timetable/slot', authenticateUser, adminOnly, deleteTimetableSlot);
+router.get('/timetable/teachers', authenticateUser, adminTeacher, getAvailableTeachers);
+router.get('/timetable/subjects', authenticateUser, adminTeacher, getAvailableSubjects);
 
 module.exports = router;
