@@ -2,6 +2,7 @@ const { StatusCodes } = require('http-status-codes');
 const { Prisma } = require('@prisma/client');
 
 const errorHandlerMiddleware = (err, req, res, next) => {
+  console.error("FATAL ERROR CAUGHT:", err);
   let customError = {
     // set default
     statusCode: err.statusCode || StatusCodes.INTERNAL_SERVER_ERROR,

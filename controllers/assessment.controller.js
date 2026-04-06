@@ -119,6 +119,31 @@ const saveScores = async (req, res) => {
         if (teacherProfile) teacherId = teacherProfile.id;
     }
 
+    // Fetch Grading Scale for this category
+    const gradingRecord = await prisma.gradingScale.findFirst({
+        where: { schoolId: req.user.schoolId, category }
+    });
+
+    let scales = [];
+    if (gradingRecord && gradingRecord.grades) {
+        scales = gradingRecord.grades;
+    } else {
+        const fallback = await prisma.gradingScale.findFirst({
+            where: { schoolId: req.user.schoolId, category: "ALL" }
+        });
+        if (fallback && fallback.grades) scales = fallback.grades;
+    }
+
+    if (!scales.length) {
+        scales = [
+            { minScore: 70, maxScore: 100, grade: 'A', status: 'PASS' },
+            { minScore: 60, maxScore: 69, grade: 'B', status: 'PASS' },
+            { minScore: 50, maxScore: 59, grade: 'C', status: 'PASS' },
+            { minScore: 40, maxScore: 49, grade: 'D', status: 'PASS' },
+            { minScore: 0, maxScore: 39, grade: 'F', status: 'FAIL' },
+        ];
+    }
+
     const upsertPromises = scoresData.map(data => {
         // Calculate Total
         let totalScore = 0;
@@ -126,12 +151,13 @@ const saveScores = async (req, res) => {
             totalScore += Number(val) || 0;
         }
 
-        // Very basic grading logic placeholder - you could inject MarksGrading lookup here
-        let grade = 'F';
-        if (totalScore >= 75) grade = 'A';
-        else if (totalScore >= 60) grade = 'B';
-        else if (totalScore >= 50) grade = 'C';
-        else if (totalScore >= 40) grade = 'D';
+        let grade = '-';
+        for (const g of scales) {
+            if (totalScore >= Number(g.minScore) && totalScore <= Number(g.maxScore)) {
+                grade = g.grade;
+                break;
+            }
+        }
 
         return prisma.studentResult.upsert({
             where: {

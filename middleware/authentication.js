@@ -25,12 +25,24 @@ const authenticateUser = async (req, res, next) => {
             }
         }
 
+        let activeBranchId = payload.branchId || null;
+
+        // Phase 2: Super Admin Context Switching
+        if (payload.role === 'SCHOOL_SUPER_ADMIN') {
+            const requestedBranch = req.headers['x-active-branch'];
+            if (requestedBranch && requestedBranch !== 'all') {
+                activeBranchId = requestedBranch;
+            }
+        }
+
         req.user = {
             name: payload.name,
             userId: payload.userId,
             role: payload.role,
             schoolId: payload.schoolId || null,
-            groupId: payload.groupId || null
+            groupId: payload.groupId || null,
+            branchId: payload.branchId || null, // Phase 1: assigned branch
+            activeBranchId: activeBranchId      // Phase 2: viewed branch
         }
         next()
     } catch (error) {

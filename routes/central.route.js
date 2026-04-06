@@ -8,13 +8,20 @@ const {
     getOverview,
     getSchools, getSchool, createSchool, updateSchool, suspendSchool, activateSchool, deleteSchool,
     getPlans, createPlan, updatePlan, deletePlan,
-    getAnalytics,
+    getAnalytics, getFinancialAnalytics,
     getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags,
     getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
     getTickets, getTicket, replyToTicket, createTicket,
     getAuditLogs, getSchoolCredentials, resetSchoolCredentials, syncSchoolCounts,
-    getGroups, createGroup
+    getGroups, createGroup,
+    createInvoice, getInvoices, getInvoice, updateInvoice, deleteInvoice,
+    sendInvoice, recordInvoicePayment, sendInvoiceReminder,
 } = require('../controllers/central.controller')
+
+const { getSchoolWalletAdmin, topUpWallet, setWalletStatus } = require('../controllers/wallet.controller')
+const { getStaffMembers, addStaffMember, updateStaffMember, deleteStaffMember } = require('../controllers/companyStaff.controller')
+const { generatePins, getPinBatches, getPins, assignBatch } = require('../controllers/pin.controller')
+const { getTransactions, addTransaction, deleteTransaction } = require('../controllers/platformLedger.controller')
 
 const { authenticateCentralAdmin, requireSuperAdmin } = require('../middleware/centralAuth')
 
@@ -31,7 +38,7 @@ router.post('/auth/logout', logout)
 // ─── Overview ──────────────────────────────────────────────────────────────
 router.get('/overview', getOverview)
 
-// ─── Groups ───────────────────────────────────────────────────────────────
+// ─── Groups ────────────────────────────────────────────────────────────────
 router.route('/groups').get(getGroups).post(createGroup)
 
 // ─── Schools ───────────────────────────────────────────────────────────────
@@ -52,6 +59,7 @@ router.route('/plans/:id').put(requireSuperAdmin, updatePlan).delete(requireSupe
 
 // ─── Analytics ─────────────────────────────────────────────────────────────
 router.get('/analytics', getAnalytics)
+router.get('/analytics/financials', getFinancialAnalytics)
 
 // ─── Feature Flags ─────────────────────────────────────────────────────────
 router.get('/features/:schoolId', getFeatureFlags)
@@ -69,6 +77,35 @@ router.post('/tickets/:id/reply', replyToTicket)
 
 // ─── Audit Logs ────────────────────────────────────────────────────────────
 router.get('/audit-logs', getAuditLogs)
+
+// ─── Company Staff ─────────────────────────────────────────────────────────
+router.route('/staff')
+    .get(requireSuperAdmin, getStaffMembers)
+    .post(requireSuperAdmin, addStaffMember)
+router.route('/staff/:id')
+    .put(requireSuperAdmin, updateStaffMember)
+    .delete(requireSuperAdmin, deleteStaffMember)
+
+// ─── PIN Management ────────────────────────────────────────────────────────
+router.route('/pins/batches').get(getPinBatches).post(generatePins)
+router.post('/pins/batches/:batchId/assign', assignBatch)
+router.get('/pins', getPins)
+
+// ─── Platform Ledger ───────────────────────────────────────────────────────
+router.route('/ledger').get(getTransactions).post(addTransaction)
+router.delete('/ledger/:id', requireSuperAdmin, deleteTransaction)
+
+// ─── Invoice Management (Phase 10) ────────────────────────────────────────
+router.route('/invoices').get(getInvoices).post(createInvoice)
+router.route('/invoices/:id').get(getInvoice).put(updateInvoice).delete(deleteInvoice)
+router.post('/invoices/:id/send', sendInvoice)
+router.post('/invoices/:id/payment', recordInvoicePayment)
+router.post('/invoices/:id/reminder', sendInvoiceReminder)
+
+// ─── Wallet Admin (Phase 6) ───────────────────────────────────────────────
+router.get('/wallet/:schoolId', getSchoolWalletAdmin)
+router.post('/wallet/:schoolId/topup', topUpWallet)
+router.patch('/wallet/:schoolId/status', setWalletStatus)
 
 // ─── Billing ───────────────────────────────────────────────────────────────
 router.use('/billing', billingRouter)

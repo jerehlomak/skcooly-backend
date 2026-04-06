@@ -24,52 +24,62 @@ model SchoolSettings {
   currency         String?    @default("NGN")
   rulesContent     String?    @db.Text
   formTeacherTitle String?    @default("Form Teacher")
-  createdAt        DateTime   @default(now())
-  updatedAt        DateTime   @updatedAt
+
+  // Result Module settings
+  resultSubjectPosition   Boolean @default(false)
+  resultClassPosition     Boolean @default(true)
+  resultShowBorder        Boolean @default(true)
+  resultShowSignature     Boolean @default(true)
+  resultShowNextTermFees  Boolean @default(false)
+  resultAutomaticComments Boolean @default(false)
+  parentResultAccessMode  String  @default("DIRECT") // DIRECT | PIN
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 model FeeParticular {
-  id             String   @id @default(uuid())
-  schoolId       String? // tenant isolation
-  label          String
-  amount         Float    @default(0)
-  isRequired     Boolean  @default(false)
-  isFixed        Boolean  @default(false)
+  id                 String   @id @default(uuid())
+  schoolId           String? // tenant isolation
+  label              String
+  amount             Float    @default(0)
+  isRequired         Boolean  @default(false)
+  isFixed            Boolean  @default(false)
   // New assignment targeting fields
-  assignToType   String   @default("ALL") // "ALL", "CLASS_LEVEL", "CLASS", "STUDENT"
-  assignToLevels String[] // e.g. ["JSS", "SSS"]
-  assignToClassIds String[] // e.g. ["class-id-1", "class-id-2"] 
+  assignToType       String   @default("ALL") // "ALL", "CLASS_LEVEL", "CLASS", "STUDENT"
+  assignToLevels     String[] // e.g. ["JSS", "SSS"]
+  assignToClassIds   String[] // e.g. ["class-id-1", "class-id-2"] 
   assignToStudentIds String[] // e.g. ["student-id-1"]
 
-  createdAt  DateTime @default(now())
-  updatedAt  DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
-  items     FeeInvoiceItem[]
+  items FeeInvoiceItem[]
 
   @@index([schoolId, isDeleted])
 }
 
 model Transaction {
-  id          String    @id @default(uuid())
-  schoolId    String? // tenant isolation
-  description String
-  category    String
-  amount      Float
-  type        TransType
-  date        DateTime  @default(now())
-  reference    String      @unique
-  gateway      String      @default("Manual") // e.g., Cash, Flutterwave, Remita
-  status       String      @default("Completed") // e.g., Pending, Completed, Failed
-  feeInvoiceId String?
-  feeInvoice   FeeInvoice? @relation(fields: [feeInvoiceId], references: [id])
+  id               String          @id @default(uuid())
+  schoolId         String? // tenant isolation
+  description      String
+  category         String
+  amount           Float
+  type             TransType
+  date             DateTime        @default(now())
+  reference        String          @unique
+  gateway          String          @default("Manual") // e.g., Cash, Flutterwave, Remita
+  status           String          @default("Completed") // e.g., Pending, Completed, Failed
+  feeInvoiceId     String?
+  feeInvoice       FeeInvoice?     @relation(fields: [feeInvoiceId], references: [id])
   studentProfileId String?
-  student      StudentProfile? @relation(fields: [studentProfileId], references: [id])
-  ledgerEntries StudentLedger[]
-  createdAt    DateTime    @default(now())
-  updatedAt    DateTime    @updatedAt
+  student          StudentProfile? @relation(fields: [studentProfileId], references: [id])
+  ledgerEntries    StudentLedger[]
+  createdAt        DateTime        @default(now())
+  updatedAt        DateTime        @updatedAt
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -78,19 +88,19 @@ model Transaction {
 }
 
 model FeeInvoice {
-  id               String         @id @default(uuid())
+  id               String                  @id @default(uuid())
   schoolId         String? // tenant isolation
   studentProfileId String
   term             String
   year             String
   totalAmount      Float
-  amountPaid       Float          @default(0)
-  status           String         @default("Unpaid") // Unpaid, Partial, Paid
+  amountPaid       Float                   @default(0)
+  status           String                  @default("Unpaid") // Unpaid, Partial, Paid
   dueDate          DateTime?
   lastPaymentDate  DateTime?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  student          StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+  student          StudentProfile          @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
   items            FeeInvoiceItem[]
   installments     FeePaymentInstallment[]
   transactions     Transaction[]
@@ -103,19 +113,19 @@ model FeeInvoice {
 }
 
 model FeePaymentInstallment {
-  id             String     @id @default(uuid())
+  id             String   @id @default(uuid())
   schoolId       String?
   feeInvoiceId   String
   amountPaid     Float
-  paymentDate    DateTime   @default(now())
-  gateway        String     @default("Manual") // Stripe, Flutterwave, Remita, Manual
-  transactionRef String?    @unique
-  status         String     @default("Completed")
-  createdAt      DateTime   @default(now())
-  updatedAt      DateTime   @updatedAt
+  paymentDate    DateTime @default(now())
+  gateway        String   @default("Manual") // Stripe, Flutterwave, Remita, Manual
+  transactionRef String?  @unique
+  status         String   @default("Completed")
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
-  feeInvoice     FeeInvoice @relation(fields: [feeInvoiceId], references: [id], onDelete: Cascade)
-  ledgerEntries  StudentLedger[]
+  feeInvoice    FeeInvoice      @relation(fields: [feeInvoiceId], references: [id], onDelete: Cascade)
+  ledgerEntries StudentLedger[]
 
   @@index([schoolId, feeInvoiceId])
 }
@@ -126,45 +136,45 @@ model GatewayLog {
   event     String
   payload   Json
   createdAt DateTime @default(now())
-  
+
   @@index([schoolId])
 }
 
 model FeeInvoiceItem {
-  id              String         @id @default(uuid())
+  id              String   @id @default(uuid())
   feeInvoiceId    String
   feeParticularId String?
   label           String
   amount          Float
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
-  feeInvoice      FeeInvoice     @relation(fields: [feeInvoiceId], references: [id], onDelete: Cascade)
-  feeParticular   FeeParticular? @relation(fields: [feeParticularId], references: [id], onDelete: SetNull)
+  feeInvoice    FeeInvoice     @relation(fields: [feeInvoiceId], references: [id], onDelete: Cascade)
+  feeParticular FeeParticular? @relation(fields: [feeParticularId], references: [id], onDelete: SetNull)
 
   @@index([feeInvoiceId])
 }
 
 model StudentLedger {
-  id               String                 @id @default(uuid())
-  schoolId         String? 
+  id               String   @id @default(uuid())
+  schoolId         String?
   studentProfileId String
-  date             DateTime               @default(now())
-  type             String                 // "DEBIT" (fee assigned) or "CREDIT" (payment made)
-  category         String                 @default("Fee Assignment") // e.g. "Payment", "Refund"
+  date             DateTime @default(now())
+  type             String // "DEBIT" (fee assigned) or "CREDIT" (payment made)
+  category         String   @default("Fee Assignment") // e.g. "Payment", "Refund"
   description      String
   amount           Float
-  balanceAfter     Float                  // computed snapshot of running balance after this entry
+  balanceAfter     Float // computed snapshot of running balance after this entry
   feeInvoiceId     String?
   transactionId    String?
   installmentId    String?
 
-  student          StudentProfile         @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
-  feeInvoice       FeeInvoice?            @relation(fields: [feeInvoiceId], references: [id], onDelete: SetNull)
-  transaction      Transaction?           @relation(fields: [transactionId], references: [id], onDelete: SetNull)
-  installment      FeePaymentInstallment? @relation(fields: [installmentId], references: [id], onDelete: SetNull)
+  student     StudentProfile         @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  feeInvoice  FeeInvoice?            @relation(fields: [feeInvoiceId], references: [id], onDelete: SetNull)
+  transaction Transaction?           @relation(fields: [transactionId], references: [id], onDelete: SetNull)
+  installment FeePaymentInstallment? @relation(fields: [installmentId], references: [id], onDelete: SetNull)
 
-  createdAt        DateTime               @default(now())
+  createdAt DateTime @default(now())
 
   @@index([schoolId, studentProfileId])
   @@index([createdAt])
@@ -234,6 +244,7 @@ model CustomRole {
 model User {
   id             String           @id @default(uuid())
   schoolId       String? // tenant isolation — links to School.id in central admin
+  branchId       String? // null = school-scope user; set = branch-restricted user
   name           String
   email          String           @unique
   password       String
@@ -247,11 +258,13 @@ model User {
   teacherProfile TeacherProfile?
   tenantAuditLog TenantAuditLog[]
   school         School?          @relation(fields: [schoolId], references: [id])
+  branch         Branch?          @relation(fields: [branchId], references: [id])
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
   @@index([schoolId, isDeleted])
+  @@index([branchId])
 }
 
 model StudentProfile {
@@ -285,10 +298,18 @@ model StudentProfile {
   classArm              Class?                 @relation("ClassStudents", fields: [classId], references: [id])
   school                School?                @relation(fields: [schoolId], references: [id])
 
-  isDeleted            Boolean                @default(false)
-  deletedAt            DateTime?
-  CBTResult            CBTResult[]
-  AssignmentSubmission AssignmentSubmission[]
+  isDeleted                  Boolean                      @default(false)
+  deletedAt                  DateTime?
+  CBTResult                  CBTResult[]
+  AssignmentSubmission       AssignmentSubmission[]
+  schoolPins                 SchoolPin[]
+  StudentFeeAssignment       StudentFeeAssignment[]
+  StudentTransportAssignment StudentTransportAssignment[]
+  StudentWallet              StudentWallet?
+  FinanceInvoice             FinanceInvoice[]
+  PaymentTransaction         PaymentTransaction[]
+  TransferSubmission         TransferSubmission[]
+  FinanceReceipt             FinanceReceipt[]
 
   @@unique([schoolId, admissionNo])
   @@index([schoolId, isDeleted])
@@ -571,6 +592,10 @@ enum Role {
   TEACHER
   STUDENT
   PARENT
+  SCHOOL_SUPER_ADMIN // school-wide admin, can switch branch context without logging out
+  SCHOOL_ADMIN // school-level admin
+  BRANCH_ADMIN // restricted to own branch only
+  BRANCH_STAFF // restricted to own branch only
 }
 
 enum SubjectCategory {
@@ -597,6 +622,7 @@ enum TransType {
 enum CentralAdminRole {
   SUPER_ADMIN
   SUPPORT
+  STAFF // company-level staff with granular permissions
 }
 
 enum SchoolStatus {
@@ -622,18 +648,21 @@ enum TicketPriority {
 
 // Central admin users (platform owner & support staff)
 model CentralAdmin {
-  id            String           @id @default(uuid())
+  id            String                @id @default(uuid())
   name          String
-  email         String           @unique
+  email         String                @unique
   password      String
-  role          CentralAdminRole @default(SUPPORT)
-  isActive      Boolean          @default(true)
+  role          CentralAdminRole      @default(SUPPORT)
+  isActive      Boolean               @default(true)
   lastLogin     DateTime?
-  createdAt     DateTime         @default(now())
-  updatedAt     DateTime         @updatedAt
+  permissions   Json? // granular permission list e.g. ["manage_schools","generate_pins"]
+  createdAt     DateTime              @default(now())
+  updatedAt     DateTime              @updatedAt
   auditLogs     AuditLog[]
   announcements Announcement[]
   ticketReplies TicketReply[]
+  pinBatches    SchoolPinBatch[]
+  platformTx    PlatformTransaction[]
 }
 
 // Subscription plans available on the platform
@@ -687,40 +716,92 @@ model GroupAdmin {
 
 // Tenant schools registered on the platform
 model School {
-  id              String              @id @default(uuid())
-  schoolCode      String?             @unique // e.g. SKL-A1B2C3 — required for user login
-  name            String
-  email           String              @unique
-  phone           String?
-  address         String?
-  country         String?             @default("Nigeria")
-  logoUrl         String?
-  status          SchoolStatus        @default(PENDING)
-  planId          String?
-  studentCount    Int                 @default(0)
-  teacherCount    Int                 @default(0)
-  adminEmail      String? // primary school admin login email
-  dbSchemaKey     String? // namespace/tenant key if needed
-  suspendedAt     DateTime?
-  suspendReason   String?
-  createdAt       DateTime            @default(now())
-  updatedAt       DateTime            @updatedAt
-  groupId         String?
-  group           SchoolGroup?        @relation(fields: [groupId], references: [id])
-  plan            SubscriptionPlan?   @relation(fields: [planId], references: [id])
-  subscription    SchoolSubscription?
-  featureFlags    FeatureFlag[]
-  tickets         SupportTicket[]
-  auditLogs       AuditLog[]
-  usageMetrics    UsageMetric[]
-  invoices        Invoice[]
-  payments        Payment[]
-  billingEvents   BillingEvent[]
-  tenantAuditLogs TenantAuditLog[]    @relation("TenantAuditLogs")
-  users           User[]
-  students        StudentProfile[]
-  teachers        TeacherProfile[]
-  parents         ParentProfile[]
+  id                         String                       @id @default(uuid())
+  schoolCode                 String?                      @unique // e.g. SKL-A1B2C3 — required for user login
+  name                       String
+  email                      String                       @unique
+  phone                      String?
+  address                    String?
+  country                    String?                      @default("Nigeria")
+  logoUrl                    String?
+  status                     SchoolStatus                 @default(PENDING)
+  planId                     String?
+  studentCount               Int                          @default(0)
+  teacherCount               Int                          @default(0)
+  adminEmail                 String? // primary school admin login email
+  dbSchemaKey                String? // namespace/tenant key if needed
+  suspendedAt                DateTime?
+  suspendReason              String?
+  createdAt                  DateTime                     @default(now())
+  updatedAt                  DateTime                     @updatedAt
+  groupId                    String?
+  group                      SchoolGroup?                 @relation(fields: [groupId], references: [id])
+  plan                       SubscriptionPlan?            @relation(fields: [planId], references: [id])
+  subscription               SchoolSubscription?
+  featureFlags               FeatureFlag[]
+  tickets                    SupportTicket[]
+  auditLogs                  AuditLog[]
+  usageMetrics               UsageMetric[]
+  invoices                   Invoice[]
+  payments                   Payment[]
+  billingEvents              BillingEvent[]
+  tenantAuditLogs            TenantAuditLog[]             @relation("TenantAuditLogs")
+  users                      User[]
+  students                   StudentProfile[]
+  teachers                   TeacherProfile[]
+  parents                    ParentProfile[]
+  branches                   Branch[] // Phase 1: one school → many branches
+  pinBatches                 SchoolPinBatch[]
+  schoolPins                 SchoolPin[]
+  platformTx                 PlatformTransaction[]
+  wallet                     SchoolWallet? // Phase 6: school wallet
+  billingProfile             SchoolBillingProfile? // Phase 5: billing contact
+  walletTx                   WalletTransaction[] // Phase 6: wallet transactions
+  conversations              SchoolConversation[] // Phase 7: messaging
+  FinanceSettings            FinanceSettings?
+  FeeDefinition              FeeDefinition[]
+  StudentFeeAssignment       StudentFeeAssignment[]
+  TransportRoute             TransportRoute[]
+  StudentTransportAssignment StudentTransportAssignment[]
+  StudentWallet              StudentWallet[]
+  StudentWalletTransaction   StudentWalletTransaction[]
+  FinanceInvoice             FinanceInvoice[]
+  SchoolPaymentSettings      SchoolPaymentSettings?
+  SchoolBankAccount          SchoolBankAccount[]
+  PaymentTransaction         PaymentTransaction[]
+  PaymentAllocation          PaymentAllocation[]
+  TransferSubmission         TransferSubmission[]
+  FinanceReceipt             FinanceReceipt[]
+  FinanceNotificationLog     FinanceNotificationLog[]
+}
+
+// ─── BRANCHES (Phase 1) ──────────────────────────────────────────────────────
+
+// A branch belongs to exactly one school. Branch users are restricted to their branch.
+// school_super_admin has branchId = null (school-wide scope) and can switch branch context.
+model Branch {
+  id        String   @id @default(uuid())
+  schoolId  String
+  name      String
+  code      String?
+  address   String?
+  status    String   @default("ACTIVE") // ACTIVE, SUSPENDED, INACTIVE
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school                   School                     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  users                    User[]
+  FeeDefinition            FeeDefinition[]
+  TransportRoute           TransportRoute[]
+  StudentWalletTransaction StudentWalletTransaction[]
+  FinanceInvoice           FinanceInvoice[]
+  StudentWallet            StudentWallet[]
+  SchoolBankAccount        SchoolBankAccount[]
+  PaymentTransaction       PaymentTransaction[]
+  TransferSubmission       TransferSubmission[]
+  FinanceReceipt           FinanceReceipt[]
+
+  @@index([schoolId])
 }
 
 // Active subscription for each school
@@ -905,16 +986,21 @@ enum BillingCycle {
 
 enum InvoiceStatus {
   DRAFT
+  SENT
   OPEN
+  PARTIALLY_PAID
   PAID
+  OVERDUE
   VOID
   FAILED
+  CANCELLED
 }
 
 enum PaymentMethod {
   CARD
   BANK_TRANSFER
   PAYSTACK
+  REMITA
   FLUTTERWAVE
   STRIPE
 }
@@ -954,42 +1040,126 @@ model UsageMetric {
   @@index([schoolId, isDeleted])
 }
 
-// Invoices for subscriptions
+// Invoices issued by platform to schools
 model Invoice {
-  id             String        @id @default(uuid())
-  schoolId       String
-  subscriptionId String
-  invoiceNumber  String        @unique
-  amount         Float
-  currency       String        @default("USD")
-  taxAmount      Float         @default(0)
-  totalAmount    Float
-  dueDate        DateTime
-  status         InvoiceStatus @default(DRAFT)
-  createdAt      DateTime      @default(now())
-  updatedAt      DateTime      @updatedAt
+  id               String        @id @default(uuid())
+  schoolId         String
+  subscriptionId   String?
+  invoiceNumber    String        @unique
+  title            String        @default("Platform Invoice")
+  description      String?       @db.Text
+  amount           Float
+  currency         String        @default("NGN")
+  taxAmount        Float         @default(0)
+  discountAmount   Float         @default(0)
+  totalAmount      Float
+  amountPaid       Float         @default(0)
+  amountDue        Float?
+  dueDate          DateTime
+  issuedAt         DateTime      @default(now())
+  sentAt           DateTime?
+  status           InvoiceStatus @default(DRAFT)
+  createdByAdminId String?
+  paidFromWallet   Boolean       @default(false)
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
 
-  school       School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  subscription SchoolSubscription @relation(fields: [subscriptionId], references: [id], onDelete: Cascade)
+  school       School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  subscription SchoolSubscription? @relation(fields: [subscriptionId], references: [id], onDelete: SetNull)
   items        InvoiceItem[]
   payments     Payment[]
+  reminders    InvoiceReminder[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
   @@index([schoolId, isDeleted])
+  @@index([status])
 }
 
 // Line items for invoices
 model InvoiceItem {
-  id          String @id @default(uuid())
+  id          String  @id @default(uuid())
   invoiceId   String
-  description String
-  quantity    Int    @default(1)
+  itemName    String
+  description String?
+  quantity    Int     @default(1)
   unitPrice   Float
   total       Float
 
   invoice Invoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// Invoice payment reminders
+model InvoiceReminder {
+  id             String   @id @default(uuid())
+  invoiceId      String
+  reminderType   String   @default("MANUAL") // MANUAL | DUE_SOON | OVERDUE
+  message        String?  @db.Text
+  sentByAdminId  String?
+  sentAt         DateTime @default(now())
+  deliveryStatus String   @default("SENT") // SENT | FAILED | PENDING
+  createdAt      DateTime @default(now())
+  invoice        Invoice  @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([invoiceId])
+}
+
+// ─── SCHOOL WALLET SYSTEM (Phase 6) ──────────────────────────────────────────
+
+model SchoolWallet {
+  id        String   @id @default(uuid())
+  schoolId  String   @unique
+  balance   Float    @default(0)
+  currency  String   @default("NGN")
+  status    String   @default("ACTIVE") // ACTIVE | FROZEN
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school       School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  transactions WalletTransaction[]
+
+  @@index([schoolId])
+}
+
+model WalletTransaction {
+  id                    String   @id @default(uuid())
+  walletId              String
+  schoolId              String
+  type                  String // CREDIT | DEBIT
+  source                String // TOPUP | INVOICE_PAYMENT | ADJUSTMENT | REFUND
+  sourceId              String? // invoiceId if source = INVOICE_PAYMENT
+  amount                Float
+  balanceBefore         Float
+  balanceAfter          Float
+  reference             String   @unique
+  description           String?
+  createdByAdminId      String?
+  createdBySchoolUserId String?
+  createdAt             DateTime @default(now())
+
+  wallet SchoolWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  school School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([walletId])
+  @@index([schoolId])
+}
+
+// ─── SCHOOL BILLING PROFILE (Phase 5 gap) ────────────────────────────────────
+
+model SchoolBillingProfile {
+  id                 String   @id @default(uuid())
+  schoolId           String   @unique
+  billingEmail       String?
+  billingPhone       String?
+  billingContactName String?
+  billingAddress     String?
+  taxId              String?
+  preferredCurrency  String   @default("NGN")
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 }
 
 // Payments for invoices
@@ -1027,6 +1197,40 @@ model Coupon {
   isActive      Boolean      @default(true)
   createdAt     DateTime     @default(now())
   updatedAt     DateTime     @updatedAt
+}
+
+// ─── MESSAGING CENTER (Phase 7) ──────────────────────────────────────────────
+
+model SchoolConversation {
+  id            String   @id @default(uuid())
+  schoolId      String
+  subject       String   @default("General Inquiry")
+  lastMessageAt DateTime @default(now())
+  isClosed      Boolean  @default(false)
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  school   School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  messages SchoolMessage[]
+
+  @@index([schoolId])
+  @@index([lastMessageAt(sort: Desc)])
+}
+
+model SchoolMessage {
+  id             String    @id @default(uuid())
+  conversationId String
+  senderType     String // "ADMIN" | "SCHOOL"
+  senderId       String // CentralAdmin.id or User.id
+  senderName     String // snapshot for display
+  content        String    @db.Text
+  readAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  conversation SchoolConversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+
+  @@index([conversationId])
+  @@index([conversationId, createdAt(sort: Asc)])
 }
 
 // Lifecycle events
@@ -1076,14 +1280,17 @@ model TemplateClassAssignment {
   @@unique([schoolId, classId])
 }
 
-// Persistent grading scale per school
+// Persistent grading scale per school section
 model GradingScale {
   id        String   @id @default(uuid())
-  schoolId  String   @unique
+  schoolId  String
+  category  String?  @default("ALL") // Primary, JSS, SSS, ALL
   passMark  Float    @default(40)
   grades    Json // [{grade, minScore, maxScore, remark, status}]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, category])
 }
 
 // Per-student, per-term comments from teacher / head teacher / principal
@@ -1233,4 +1440,548 @@ model LessonResource {
   teacher TeacherProfile? @relation(fields: [teacherId], references: [id])
 
   @@index([schoolId, classId])
+}
+
+// ─── PIN MANAGEMENT SYSTEM (PHASE 3) ───────────────────────────────────────
+
+model SchoolPinBatch {
+  id          String   @id @default(uuid())
+  batchNumber String   @unique // e.g. BATCH-2025-001
+  pinType     String   @default("RESULT_CHECKING") // RESULT_CHECKING, ADMISSION_APPLICATION, EMPLOYMENT
+  schoolId    String? // If pre-assigned to a school
+  quantity    Int
+  pricePerPin Float    @default(0)
+  currency    String   @default("NGN")
+  status      String   @default("ACTIVE") // ACTIVE, DEPLETED, CANCELLED
+  adminId     String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school School?       @relation(fields: [schoolId], references: [id], onDelete: SetNull)
+  admin  CentralAdmin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
+  pins   SchoolPin[]
+}
+
+model SchoolPin {
+  id           String    @id @default(uuid())
+  pinCode      String    @unique
+  serialNumber String    @unique
+  pinType      String    @default("RESULT_CHECKING") // RESULT_CHECKING, ADMISSION_APPLICATION, EMPLOYMENT
+  batchId      String
+  schoolId     String?
+  studentId    String?
+  usageCount   Int       @default(0)
+  maxUsage     Int       @default(5)
+  status       String    @default("ACTIVE") // ACTIVE, USED, EXPIRED
+  expiresAt    DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  batch     SchoolPinBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  school    School?         @relation(fields: [schoolId], references: [id])
+  student   StudentProfile? @relation(fields: [studentId], references: [id])
+  usageLogs PinUsageLog[]
+
+  @@index([batchId])
+  @@index([schoolId])
+}
+
+model PinUsageLog {
+  id               String   @id @default(uuid())
+  pinId            String
+  usageContext     String // e.g. "RESULT_VERIFICATION", "ADMISSION_FORM"
+  action           String // e.g. "VIEWED_TERM_RESULT"
+  metadata         Json? // e.g. { term: "First Term", year: "2024/2025" }
+  usedByIdentifier String? // e.g. student ID or Admission No
+  createdAt        DateTime @default(now())
+
+  pin SchoolPin @relation(fields: [pinId], references: [id], onDelete: Cascade)
+
+  @@index([pinId])
+}
+
+// ─── PLATFORM COMPANY LEDGER (PHASE 3) ───────────────────────────────────────
+model PlatformTransaction {
+  id          String   @id @default(uuid())
+  reference   String   @unique
+  type        String // INCOME, EXPENSE
+  category    String // SUBSCRIPTION, PIN_SALES, HOSTING, MARKETING, SALARY, OTHER
+  amount      Float
+  currency    String   @default("USD") // Central Admin base currency
+  description String?
+  schoolId    String? // Optional relation if it came from a school
+  adminId     String?
+  date        DateTime @default(now())
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  school School?       @relation(fields: [schoolId], references: [id])
+  admin  CentralAdmin? @relation(fields: [adminId], references: [id])
+
+  @@index([type])
+  @@index([schoolId])
+}
+
+// ─── FINANCE MODULE (V2 PHASE 1) ─────────────────────────────────────────────
+
+model FinanceSettings {
+  id                   String  @id @default(uuid())
+  schoolId             String  @unique
+  currencySymbol       String  @default("₦")
+  invoicePrefix        String  @default("INV-")
+  receiptPrefix        String  @default("REC-")
+  allowPartialPayment  Boolean @default(true)
+  allowOverpayment     Boolean @default(false)
+  autoApplyWallet      Boolean @default(false)
+  showOptionalFees     Boolean @default(true)
+  financeBranding      Json?
+  enableTransport      Boolean @default(false)
+  financeModuleToggles Json?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+enum FeeType {
+  FEE
+  ITEM
+}
+
+enum FeeCategory {
+  TUITION
+  EXAM
+  DEVELOPMENT
+  TRANSPORT
+  BOOKS
+  UNIFORM
+  HOSTEL
+  LUNCH
+  ACTIVITY
+  CUSTOM
+}
+
+enum StudentTypeScope {
+  NEW_INTAKE
+  RETURNING
+  BOTH
+}
+
+enum TermScope {
+  FIRST_TERM
+  SECOND_TERM
+  THIRD_TERM
+  ANNUAL
+}
+
+enum FeeScopeChoice {
+  WHOLE_SCHOOL
+  SECTION
+  CLASS
+  STUDENTS
+}
+
+model FeeDefinition {
+  id               String           @id @default(uuid())
+  schoolId         String
+  branchId         String?
+  name             String
+  code             String?
+  type             FeeType          @default(FEE)
+  category         FeeCategory      @default(TUITION)
+  amount           Float            @default(0)
+  quantity         Int?
+  studentType      StudentTypeScope @default(BOTH)
+  scope            FeeScopeChoice   @default(WHOLE_SCHOOL)
+  termScope        TermScope        @default(ANNUAL)
+  isCompulsory     Boolean          @default(true)
+  showOnPortal     Boolean          @default(true)
+  allowInstallment Boolean          @default(false)
+  dueDate          DateTime?
+  lateFeeRule      Json?
+  discountRule     Json?
+  isActive         Boolean          @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
+
+  school      School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch      Branch?                @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignments StudentFeeAssignment[]
+}
+
+model StudentFeeAssignment {
+  id              String   @id @default(uuid())
+  schoolId        String
+  studentId       String
+  feeDefinitionId String
+  amount          Float
+  status          String   @default("ACTIVE")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student       StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  feeDefinition FeeDefinition  @relation(fields: [feeDefinitionId], references: [id], onDelete: Cascade)
+}
+
+enum TransportBillingMode {
+  TERMLY
+  MONTHLY
+}
+
+model TransportRoute {
+  id          String               @id @default(uuid())
+  schoolId    String
+  branchId    String?
+  routeName   String
+  pickupZone  String?
+  priceOneWay Float
+  priceReturn Float
+  billingMode TransportBillingMode @default(TERMLY)
+  isActive    Boolean              @default(true)
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  deletedBy String?
+
+  school      School                       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch      Branch?                      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignments StudentTransportAssignment[]
+}
+
+model StudentTransportAssignment {
+  id            String  @id @default(uuid())
+  schoolId      String
+  studentId     String
+  routeId       String
+  transportMode String // "ONE_WAY" or "RETURN"
+  customPrice   Float?
+  isActive      Boolean @default(true)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school  School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  route   TransportRoute @relation(fields: [routeId], references: [id], onDelete: Cascade)
+}
+
+model StudentWallet {
+  id        String  @id @default(uuid())
+  schoolId  String
+  branchId  String?
+  studentId String  @unique
+  balance   Float   @default(0)
+  status    String  @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school       School                     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch       Branch?                    @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  student      StudentProfile             @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  transactions StudentWalletTransaction[]
+}
+
+enum StudentWalletTxType {
+  DEPOSIT
+  INVOICE_APPLICATION
+  ADJUSTMENT
+  CARRY_FORWARD
+  OVERPAYMENT_CREDIT
+}
+
+model StudentWalletTransaction {
+  id            String              @id @default(uuid())
+  walletId      String
+  schoolId      String
+  branchId      String?
+  type          StudentWalletTxType
+  amount        Float
+  balanceBefore Float
+  balanceAfter  Float
+  reference     String              @unique
+  description   String?
+  auditMetadata Json?
+
+  createdAt DateTime @default(now())
+
+  wallet StudentWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  school School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
+}
+
+model FinanceInvoice {
+  id              String        @id @default(uuid())
+  schoolId        String
+  branchId        String?
+  studentId       String
+  term            String?
+  academicYear    String?
+  invoiceNumber   String        @unique
+  subTotal        Float         @default(0)
+  discountTotal   Float         @default(0)
+  taxTotal        Float         @default(0)
+  walletDeduction Float         @default(0)
+  totalAmount     Float
+  amountPaid      Float         @default(0)
+  balanceDue      Float
+  status          InvoiceStatus @default(DRAFT)
+  dueDate         DateTime?
+
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  school            School               @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch            Branch?              @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  student           StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  items             FinanceInvoiceItem[]
+  PaymentAllocation PaymentAllocation[]
+}
+
+model FinanceInvoiceItem {
+  id          String  @id @default(uuid())
+  invoiceId   String
+  type        String // "FEE", "TRANSPORT", "ITEM", "DISCOUNT"
+  referenceId String?
+  label       String
+  quantity    Int     @default(1)
+  unitPrice   Float
+  amount      Float
+
+  createdAt DateTime @default(now())
+
+  invoice FinanceInvoice @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+}
+
+// ─── FINANCE MODULE (V2 PHASE 2) ─────────────────────────────────────────────
+
+enum PaymentEnv {
+  TEST
+  LIVE
+}
+
+enum PaymentTxStatus {
+  PENDING
+  PROCESSING
+  SUCCESSFUL
+  FAILED
+  CANCELLED
+  UNDER_REVIEW
+  REVERSED
+}
+
+enum PaymentTxMethod {
+  PAYSTACK
+  REMITA
+  BANK_TRANSFER
+  CASH
+  POS
+  WALLET
+  MANUAL_ADJUSTMENT
+}
+
+enum TransferSubmissionStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  CLARIFICATION_NEEDED
+}
+
+model SchoolPaymentSettings {
+  id                       String     @id @default(uuid())
+  schoolId                 String     @unique
+  paystackPublicKey        String?
+  paystackSecretEnc        String?
+  paystackWebhookSecret    String?
+  paystackEnv              PaymentEnv @default(TEST)
+  paystackEnabled          Boolean    @default(false)
+  
+  remitaPublicKey          String?
+  remitaSecretEnc          String?
+  remitaMerchantId         String?
+  remitaWebhookSecret      String?
+  remitaEnabled            Boolean    @default(false)
+
+  merchantDisplayName      String?
+  bankTransferEnabled      Boolean    @default(true)
+  transferEvidenceRequired Boolean    @default(true)
+  allowPartialPayment      Boolean    @default(true)
+  allowOverpayment         Boolean    @default(false)
+  autoApplyWallet          Boolean    @default(false)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+model SchoolBankAccount {
+  id                  String  @id @default(uuid())
+  schoolId            String
+  branchId            String?
+  bankName            String
+  accountName         String
+  accountNumber       String
+  accountType         String?
+  notes               String?
+  displayInstructions String? @db.Text
+  isDefault           Boolean @default(false)
+  isActive            Boolean @default(true)
+  sortOrder           Int     @default(0)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId])
+}
+
+model PaymentTransaction {
+  id              String          @id @default(uuid())
+  schoolId        String
+  branchId        String?
+  studentId       String
+  reference       String          @unique
+  amount          Float
+  currency        String          @default("NGN")
+  status          PaymentTxStatus @default(PENDING)
+  method          PaymentTxMethod
+  gatewayRef      String?
+  gatewayResponse Json?
+  paidAt          DateTime?
+  reversedAt      DateTime?
+  reversalReason  String?
+  initiatedBy     String?
+  note            String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school      School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch      Branch?             @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  student     StudentProfile      @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  allocations PaymentAllocation[]
+  transfer    TransferSubmission?
+  receipt     FinanceReceipt?
+
+  @@index([schoolId, studentId])
+  @@index([reference])
+  @@index([status])
+}
+
+model PaymentAllocation {
+  id                   String  @id @default(uuid())
+  schoolId             String
+  paymentTransactionId String
+  invoiceId            String
+  allocatedAmount      Float
+  note                 String?
+
+  createdAt DateTime @default(now())
+
+  school      School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  transaction PaymentTransaction @relation(fields: [paymentTransactionId], references: [id], onDelete: Cascade)
+  invoice     FinanceInvoice     @relation(fields: [invoiceId], references: [id], onDelete: Cascade)
+
+  @@index([paymentTransactionId])
+  @@index([invoiceId])
+}
+
+model TransferSubmission {
+  id                   String                   @id @default(uuid())
+  schoolId             String
+  branchId             String?
+  studentId            String
+  paymentTransactionId String                   @unique
+  amount               Float
+  transferDate         DateTime
+  senderName           String
+  senderBank           String?
+  transferReference    String?
+  note                 String?
+  evidenceUrl          String?
+  evidencePublicId     String?
+  status               TransferSubmissionStatus @default(PENDING)
+  reviewedBy           String?
+  reviewedAt           DateTime?
+  reviewNote           String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school      School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch      Branch?            @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  student     StudentProfile     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  transaction PaymentTransaction @relation(fields: [paymentTransactionId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, status])
+}
+
+model FinanceReceipt {
+  id                    String          @id @default(uuid())
+  schoolId              String
+  branchId              String?
+  studentId             String
+  paymentTransactionId  String          @unique
+  receiptNumber         String          @unique
+  amountPaid            Float
+  method                PaymentTxMethod
+  invoiceNumbers        String[]
+  walletBalanceAfter    Float?
+  remainingBalanceAfter Float?
+  metadata              Json?
+
+  createdAt DateTime @default(now())
+
+  school      School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch      Branch?            @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  student     StudentProfile     @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  transaction PaymentTransaction @relation(fields: [paymentTransactionId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+  @@index([studentId])
+}
+
+model PaystackWebhookLog {
+  id             String  @id @default(uuid())
+  schoolId       String?
+  event          String
+  reference      String?
+  payload        Json
+  verified       Boolean @default(false)
+  processed      Boolean @default(false)
+  processingNote String?
+
+  createdAt DateTime @default(now())
+
+  @@index([reference])
+  @@index([schoolId])
+}
+
+model FinanceNotificationLog {
+  id        String  @id @default(uuid())
+  schoolId  String
+  studentId String?
+  type      String
+  recipient String?
+  status    String  @default("SENT")
+  metadata  Json?
+
+  createdAt DateTime @default(now())
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
 }

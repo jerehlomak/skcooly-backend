@@ -3,7 +3,7 @@ const router = express.Router()
 const {
     getSettings, updateSettings,
     getClassLevels, addClassLevel, updateClassLevel, deleteClassLevel,
-    seedClassLevels
+    seedClassLevels, reorderClassLevels
 } = require('../controllers/schoolSettings.controller')
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication')
 
@@ -15,6 +15,7 @@ router.route('/').get(authenticateUser, getSettings).patch(...admin, updateSetti
 // Class levels
 router.route('/class-levels').get(authenticateUser, getClassLevels).post(...admin, addClassLevel)
 router.route('/class-levels/seed').post(...admin, seedClassLevels)
+router.route('/class-levels/reorder').patch(...admin, reorderClassLevels)
 router.route('/class-levels/:id').patch(...admin, updateClassLevel).delete(...admin, deleteClassLevel)
 
 module.exports = router

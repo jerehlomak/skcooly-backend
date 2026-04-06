@@ -100,13 +100,24 @@ const getOverview = async (req, res) => {
     const studentTotal = await prisma.school.aggregate({ _sum: { studentCount: true } })
     const teacherTotal = await prisma.school.aggregate({ _sum: { teacherCount: true } })
 
-    // Revenue: sum of all active subscriptions' amountPaid
-    const revenue = await prisma.schoolSubscription.aggregate({
-        _sum: { amountPaid: true },
-        where: { isActive: true },
-    })
+    // Extended Financial Metrics (Sprint D)
+    const thirtyDaysAgo = new Date()
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30)
 
-    const openTickets = await prisma.supportTicket.count({ where: { status: 'OPEN' } })
+    const [receivablesAgg, walletAgg, revenueAgg, openTickets] = await Promise.all([
+        prisma.invoice.aggregate({
+            _sum: { amountDue: true },
+            where: { status: { in: ['SENT', 'OPEN', 'PARTIALLY_PAID', 'OVERDUE'] }, isDeleted: false }
+        }),
+        prisma.schoolWallet.aggregate({
+            _sum: { balance: true }
+        }),
+        prisma.payment.aggregate({
+            _sum: { amount: true },
+            where: { paidAt: { gte: thirtyDaysAgo }, status: 'COMPLETED', isDeleted: false }
+        }),
+        prisma.supportTicket.count({ where: { status: 'OPEN' } })
+    ])
 
     res.status(StatusCodes.OK).json({
         stats: {
@@ -116,7 +127,9 @@ const getOverview = async (req, res) => {
             totalStudents: studentTotal._sum.studentCount || 0,
             totalTeachers: teacherTotal._sum.teacherCount || 0,
             totalPlans,
-            monthlyRevenue: revenue._sum.amountPaid || 0,
+            monthlyRevenue: revenueAgg._sum.amount || 0,
+            totalReceivables: receivablesAgg._sum.amountDue || 0,
+            walletLiabilities: walletAgg._sum.balance || 0,
             openTickets,
         },
         recentSchools,
@@ -305,7 +318,7 @@ const createSchool = async (req, res) => {
 
 const updateSchool = async (req, res) => {
     const { id } = req.params
-    const { name, email, phone, address, country, planId, adminEmail, studentCount, teacherCount, groupId } = req.body
+    const { name, email, phone, address, country, planId, adminEmail, studentCount, teacherCount, groupId, schoolCode } = req.body
 
     try {
         const school = await prisma.school.update({
@@ -315,6 +328,7 @@ const updateSchool = async (req, res) => {
                 planId: planId || null,
                 groupId: groupId || null,
                 adminEmail,
+                schoolCode: schoolCode || undefined,
                 studentCount: studentCount !== undefined ? Number(studentCount) : undefined,
                 teacherCount: teacherCount !== undefined ? Number(teacherCount) : undefined,
             },
@@ -492,6 +506,58 @@ const getAnalytics = async (req, res) => {
     res.status(StatusCodes.OK).json({ monthlyData, planDistribution })
 }
 
+const getFinancialAnalytics = async (req, res) => {
+    const { months = 6 } = req.query
+    const monthCount = Number(months)
+    const now = new Date()
+
+    const monthlyData = []
+    for (let i = monthCount - 1; i >= 0; i--) {
+        const start = new Date(now.getFullYear(), now.getMonth() - i, 1)
+        const end = new Date(now.getFullYear(), now.getMonth() - i + 1, 1)
+        const label = start.toLocaleString('en-US', { month: 'short', year: '2-digit' })
+
+        const revenue = await prisma.payment.aggregate({
+            _sum: { amount: true },
+            where: { paidAt: { gte: start, lt: end }, status: 'COMPLETED', isDeleted: false },
+        })
+
+        monthlyData.push({
+            month: label,
+            revenue: revenue._sum.amount || 0,
+        })
+    }
+
+    // Debtors (Schools with unpaid or partially paid invoices)
+    const debtorSchoolsRaw = await prisma.invoice.groupBy({
+        by: ['schoolId'],
+        _sum: { amountDue: true },
+        where: { status: { in: ['SENT', 'OPEN', 'PARTIALLY_PAID', 'OVERDUE'] }, isDeleted: false },
+        orderBy: { _sum: { amountDue: 'desc' } },
+        take: 20
+    })
+
+    const schoolIds = debtorSchoolsRaw.map(d => d.schoolId)
+    const schoolsData = await prisma.school.findMany({
+        where: { id: { in: schoolIds } },
+        select: { id: true, name: true, email: true, phone: true }
+    })
+
+    // Map the aggregated sum to the school details
+    const debtorSchools = debtorSchoolsRaw.map(d => {
+        const s = schoolsData.find(sch => sch.id === d.schoolId)
+        return {
+            id: d.schoolId,
+            name: s?.name || 'Unknown',
+            email: s?.email || '',
+            phone: s?.phone || '',
+            amountDue: d._sum.amountDue || 0
+        }
+    })
+
+    res.status(StatusCodes.OK).json({ monthlyData, debtorSchools })
+}
+
 // ─── FEATURE FLAGS ───────────────────────────────────────────────────────────
 
 const getFeatureFlags = async (req, res) => {
@@ -653,7 +719,7 @@ const createTicket = async (req, res) => {
     res.status(StatusCodes.CREATED).json({ ticket })
 }
 
-// ─── AUDIT LOGS ──────────────────────────────────────────────────────────────
+// --- AUDIT LOGS ---------------------------------------------------------------
 
 const getAuditLogs = async (req, res) => {
     const { adminId, action, entityType, page = 1, limit = 50 } = req.query
@@ -674,6 +740,230 @@ const getAuditLogs = async (req, res) => {
     res.status(StatusCodes.OK).json({ logs, total, page: Number(page), limit: Number(limit) })
 }
 
+// --- INVOICE MANAGEMENT (Phase 5 / Phase 10) ----------------------------------
+
+const createInvoice = async (req, res) => {
+    const { schoolId, title, description, items, dueDate, taxAmount = 0, discountAmount = 0, currency = 'NGN' } = req.body
+    const adminId = req.centralAdmin.id
+
+    if (!schoolId || !items || items.length === 0 || !dueDate) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'schoolId, items, and dueDate are required.' })
+    }
+
+    const count = await prisma.invoice.count()
+    const invoiceNumber = `INV-${new Date().getFullYear()}-${String(count + 1).padStart(5, '0')}`
+    const subtotal = items.reduce((sum, item) => sum + item.quantity * item.unitPrice, 0)
+    const totalAmount = subtotal + Number(taxAmount) - Number(discountAmount)
+
+    const invoice = await prisma.invoice.create({
+        data: {
+            schoolId, invoiceNumber,
+            title: title || 'Platform Invoice',
+            description, currency,
+            taxAmount: Number(taxAmount),
+            discountAmount: Number(discountAmount),
+            amount: subtotal, totalAmount,
+            amountDue: totalAmount,
+            dueDate: new Date(dueDate),
+            status: 'DRAFT',
+            createdByAdminId: adminId,
+            items: {
+                create: items.map(i => ({
+                    itemName: i.itemName || i.description || 'Service',
+                    description: i.description || null,
+                    quantity: i.quantity,
+                    unitPrice: i.unitPrice,
+                    total: i.quantity * i.unitPrice,
+                }))
+            }
+        },
+        include: { items: true }
+    })
+
+    res.status(StatusCodes.CREATED).json({ invoice })
+}
+
+const getInvoices = async (req, res) => {
+    const { schoolId, status, page = 1, limit = 50 } = req.query
+    const skip = (Number(page) - 1) * Number(limit)
+    const where = { isDeleted: false }
+    if (schoolId) where.schoolId = schoolId
+    if (status) where.status = status
+
+    const [invoices, total] = await Promise.all([
+        prisma.invoice.findMany({
+            where, skip, take: Number(limit),
+            orderBy: { createdAt: 'desc' },
+            include: {
+                school: { select: { name: true, email: true } },
+                items: true,
+                reminders: { orderBy: { sentAt: 'desc' }, take: 1 }
+            }
+        }),
+        prisma.invoice.count({ where })
+    ])
+
+    res.status(StatusCodes.OK).json({ invoices, total, page: Number(page), limit: Number(limit) })
+}
+
+const getInvoice = async (req, res) => {
+    const { id } = req.params
+    const invoice = await prisma.invoice.findUnique({
+        where: { id },
+        include: {
+            school: { select: { name: true, email: true } },
+            items: true,
+            payments: true,
+            reminders: { orderBy: { sentAt: 'desc' } }
+        }
+    })
+    if (!invoice || invoice.isDeleted) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Invoice not found' })
+    res.status(StatusCodes.OK).json({ invoice })
+}
+
+const updateInvoice = async (req, res) => {
+    const { id } = req.params
+    const invoice = await prisma.invoice.findUnique({ where: { id } })
+    if (!invoice || invoice.isDeleted) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Invoice not found' })
+    if (invoice.status !== 'DRAFT') {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Only DRAFT invoices can be edited.' })
+    }
+    const { title, description, dueDate, taxAmount, discountAmount } = req.body
+    const updated = await prisma.invoice.update({
+        where: { id },
+        data: {
+            ...(title && { title }),
+            ...(description !== undefined && { description }),
+            ...(dueDate && { dueDate: new Date(dueDate) }),
+            ...(taxAmount !== undefined && { taxAmount: Number(taxAmount) }),
+            ...(discountAmount !== undefined && { discountAmount: Number(discountAmount) }),
+        }
+    })
+    res.status(StatusCodes.OK).json({ invoice: updated })
+}
+
+const deleteInvoice = async (req, res) => {
+    const { id } = req.params
+    await prisma.invoice.update({ where: { id }, data: { isDeleted: true, deletedAt: new Date() } })
+    res.status(StatusCodes.OK).json({ message: 'Invoice deleted.' })
+}
+
+const sendInvoice = async (req, res) => {
+    const { id } = req.params
+    const invoice = await prisma.invoice.findUnique({ where: { id } })
+    if (!invoice || invoice.isDeleted) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Invoice not found' })
+    if (invoice.status === 'PAID') return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Invoice already paid.' })
+
+    const updated = await prisma.invoice.update({
+        where: { id },
+        data: { status: 'SENT', sentAt: new Date() }
+    })
+    res.status(StatusCodes.OK).json({ invoice: updated, message: 'Invoice marked as sent.' })
+}
+
+const recordInvoicePayment = async (req, res) => {
+    const { id } = req.params
+    const { amount, method = 'BANK_TRANSFER' } = req.body
+
+    if (!amount || amount <= 0) return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Valid amount required.' })
+
+    const invoice = await prisma.invoice.findUnique({ where: { id } })
+    if (!invoice || invoice.isDeleted) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Invoice not found' })
+    if (invoice.status === 'PAID') return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Invoice already fully paid.' })
+
+    const newAmountPaid = invoice.amountPaid + Number(amount)
+    const newAmountDue = Math.max(0, invoice.totalAmount - newAmountPaid)
+    const newStatus = newAmountDue <= 0 ? 'PAID' : 'PARTIALLY_PAID'
+
+    const [updated] = await prisma.$transaction([
+        prisma.invoice.update({
+            where: { id },
+            data: { amountPaid: newAmountPaid, amountDue: newAmountDue, status: newStatus }
+        }),
+        prisma.payment.create({
+            data: {
+                invoiceId: id,
+                schoolId: invoice.schoolId,
+                paymentMethod: method,
+                amount: Number(amount),
+                currency: invoice.currency,
+                status: 'COMPLETED',
+                paidAt: new Date(),
+            }
+        })
+    ])
+
+    res.status(StatusCodes.OK).json({ invoice: updated, message: `Payment of ${amount} recorded.` })
+}
+
+const sendInvoiceReminder = async (req, res) => {
+    const { id } = req.params
+    const { message, reminderType = 'MANUAL' } = req.body
+    const adminId = req.centralAdmin.id
+
+    const invoice = await prisma.invoice.findUnique({ where: { id } })
+    if (!invoice) return res.status(StatusCodes.NOT_FOUND).json({ message: 'Invoice not found' })
+
+    const reminder = await prisma.invoiceReminder.create({
+        data: {
+            invoiceId: id, reminderType,
+            message: message || `Reminder: Invoice #${invoice.invoiceNumber} payment is due.`,
+            sentByAdminId: adminId,
+            deliveryStatus: 'SENT',
+        }
+    })
+    res.status(StatusCodes.CREATED).json({ reminder, message: 'Reminder sent.' })
+}
+
+// --- SCHOOL-FACING: View Own Invoices -----------------------------------------
+
+const getMyInvoices = async (req, res) => {
+    const { schoolId } = req.user
+    const { status } = req.query
+    const where = { schoolId, isDeleted: false }
+    if (status) where.status = status
+
+    const invoices = await prisma.invoice.findMany({
+        where,
+        orderBy: { createdAt: 'desc' },
+        include: { items: true, reminders: { orderBy: { sentAt: 'desc' }, take: 1 } }
+    })
+
+    res.status(StatusCodes.OK).json({ invoices })
+}
+
+const getMyInvoice = async (req, res) => {
+    const { schoolId } = req.user
+    const { id } = req.params
+    const invoice = await prisma.invoice.findUnique({
+        where: { id },
+        include: { items: true, payments: true, reminders: { orderBy: { sentAt: 'desc' } } }
+    })
+    if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) {
+        return res.status(StatusCodes.NOT_FOUND).json({ message: 'Invoice not found' })
+    }
+    res.status(StatusCodes.OK).json({ invoice })
+}
+
+// --- BILLING PROFILE ----------------------------------------------------------
+
+const getBillingProfile = async (req, res) => {
+    const { schoolId } = req.user
+    let profile = await prisma.schoolBillingProfile.findUnique({ where: { schoolId } })
+    if (!profile) profile = await prisma.schoolBillingProfile.create({ data: { schoolId } })
+    res.status(StatusCodes.OK).json({ profile })
+}
+
+const updateBillingProfile = async (req, res) => {
+    const { schoolId } = req.user
+    const profile = await prisma.schoolBillingProfile.upsert({
+        where: { schoolId },
+        update: req.body,
+        create: { schoolId, ...req.body }
+    })
+    res.status(StatusCodes.OK).json({ profile })
+}
+
 module.exports = {
     login, getMe, logout, setupFirstAdmin,
     getOverview,
@@ -681,8 +971,13 @@ module.exports = {
     getSchoolCredentials, resetSchoolCredentials, syncSchoolCounts,
     getPlans, createPlan, updatePlan, deletePlan,
     getAnalytics,
+    getFinancialAnalytics,
     getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags,
     getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
     getTickets, getTicket, replyToTicket, createTicket,
-    getAuditLogs, getGroups, createGroup
+    getAuditLogs, getGroups, createGroup,
+    createInvoice, getInvoices, getInvoice, updateInvoice, deleteInvoice,
+    sendInvoice, recordInvoicePayment, sendInvoiceReminder,
+    getMyInvoices, getMyInvoice, getBillingProfile, updateBillingProfile,
 }
+

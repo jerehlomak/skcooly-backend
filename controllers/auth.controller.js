@@ -60,7 +60,14 @@ const login = async (req, res) => {
 
     let user = null;
 
-    if (role === 'ADMIN') {
+    if (role === 'ADMIN' || role === 'SCHOOL_SUPER_ADMIN' || role === 'SCHOOL_ADMIN') {
+        // All school-level admin roles log in by email
+        user = await prisma.user.findFirst({
+            where: { email: loginId, schoolId: school.id, isDeleted: false },
+            include: { studentProfile: true, teacherProfile: true, parentProfile: true }
+        })
+    } else if (role === 'BRANCH_ADMIN' || role === 'BRANCH_STAFF') {
+        // Branch-level staff also log in by email
         user = await prisma.user.findFirst({
             where: { email: loginId, schoolId: school.id, isDeleted: false },
             include: { studentProfile: true, teacherProfile: true, parentProfile: true }
@@ -106,6 +113,7 @@ const login = async (req, res) => {
         email: user.email,
         role: user.role,
         schoolId: user.schoolId || null,
+        branchId: user.branchId || null, // Phase 1: null for school-scope, set for branch users
         school: school,
         studentProfile: user.studentProfile,
         teacherProfile: user.teacherProfile,

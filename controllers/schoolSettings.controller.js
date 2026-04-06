@@ -69,7 +69,10 @@ const getSettings = async (req, res) => {
 // ─── UPDATE SETTINGS ─────────────────────────────────────────────────────────
 const updateSettings = async (req, res) => {
     let settings = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } })
-    const { schoolName, tagline, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, rulesContent } = req.body
+    const { 
+        schoolName, tagline, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, rulesContent,
+        resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode
+    } = req.body
 
     if (!settings) {
         settings = await prisma.schoolSettings.create({ data: { ...req.body, schoolId: req.user.schoolId } })
@@ -90,6 +93,13 @@ const updateSettings = async (req, res) => {
                 ...(currency !== undefined && { currency }),
                 ...(rulesContent !== undefined && { rulesContent }),
                 ...(formTeacherTitle !== undefined && { formTeacherTitle }),
+                ...(resultSubjectPosition !== undefined && { resultSubjectPosition }),
+                ...(resultClassPosition !== undefined && { resultClassPosition }),
+                ...(resultShowBorder !== undefined && { resultShowBorder }),
+                ...(resultShowSignature !== undefined && { resultShowSignature }),
+                ...(resultShowNextTermFees !== undefined && { resultShowNextTermFees }),
+                ...(resultAutomaticComments !== undefined && { resultAutomaticComments }),
+                ...(parentResultAccessMode !== undefined && { parentResultAccessMode }),
             }
         })
     }
@@ -164,4 +174,22 @@ const seedClassLevels = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: `Seeded ${created.length} class levels for ${schoolType}`, levels: created })
 }
 
-module.exports = { getSettings, updateSettings, getClassLevels, addClassLevel, updateClassLevel, deleteClassLevel, seedClassLevels }
+// ─── REORDER CLASS LEVELS ─────────────────────────────────────────────────────
+const reorderClassLevels = async (req, res) => {
+    const { classLevels } = req.body
+    if (!classLevels || !Array.isArray(classLevels)) {
+        throw new CustomError.BadRequestError('Invalid class levels data provided')
+    }
+
+    // Run updates in a transaction
+    await prisma.$transaction(
+        classLevels.map((lvl) => prisma.classLevel.update({
+            where: { id: lvl.id },
+            data: { order: lvl.order }
+        }))
+    )
+
+    res.status(StatusCodes.OK).json({ msg: 'Class levels reordered successfully' })
+}
+
+module.exports = { getSettings, updateSettings, getClassLevels, addClassLevel, updateClassLevel, deleteClassLevel, seedClassLevels, reorderClassLevels }

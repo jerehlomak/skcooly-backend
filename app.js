@@ -43,6 +43,13 @@ const cbtRouter = require('./routes/cbt.route')
 const lmsRouter = require('./routes/lms.route')
 const feeRouter = require('./routes/fee.route')
 const paymentRouter = require('./routes/payment.route')
+const branchRouter = require('./routes/branch.route')  // Phase 1
+const schoolPinRouter = require('./routes/schoolPin.route') // Phase 4
+const walletRouter = require('./routes/wallet.route')       // Phase 6
+const schoolMessagingRouter = require('./routes/schoolMessaging.route') // Phase 7
+const financeV2Router = require('./routes/financev2.route') // Phase 1 Base (Finance Unified)
+const financePaymentRouter = require('./routes/financePayment.route') // Phase 2: payments, invoices, transfers
+
 
 // middleware 
 const notFoundMiddleware = require('./middleware/not-found')
@@ -67,6 +74,17 @@ app.use(cors({
 }))
 
 app.use(morgan('tiny'))
+
+// ─── GAP 1 FIX: Paystack webhook needs the RAW body for HMAC verification ────
+// Mount BEFORE express.json() so this route receives Buffer, not parsed object.
+// All other routes still use JSON.
+const { handlePaystackWebhook } = require('./controllers/financePayment.controller');
+app.post(
+    '/api/v1/finance-v2/webhook/paystack',
+    express.raw({ type: 'application/json' }),
+    handlePaystackWebhook
+);
+
 app.use(express.json())
 app.use(cookieParser(process.env.JWT_SECRET))
 
@@ -108,6 +126,37 @@ app.use('/api/v1/results', resultRouter)
 app.use('/api/v1/cbt', cbtRouter)
 app.use('/api/v1/lms', lmsRouter)
 app.use('/api/v1/fee', feeRouter)
+app.use('/api/v1/branches', branchRouter)  // Phase 1: branch management
+app.use('/api/v1/pins', schoolPinRouter)   // Phase 4: PIN usage
+app.use('/api/v1/wallet', walletRouter)    // Phase 6: school wallet
+app.use('/api/v1/messaging', schoolMessagingRouter) // Phase 7: messaging center
+app.use('/api/v1/finance-v2', financeV2Router) // Phase 1: base finance unified
+app.use('/api/v1/finance-v2', financePaymentRouter) // Phase 2: payments, invoices, transfers, receipts
+
+const {
+    getMyInvoices, getMyInvoice,
+    getBillingProfile, updateBillingProfile
+} = require('./controllers/central.controller')
+const { authenticateUser, authorizePermissions } = require('./middleware/authentication')
+
+// School-facing invoice inbox (Phase 10)
+app.get('/api/v1/my-invoices', authenticateUser,
+    authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'),
+    getMyInvoices
+)
+app.get('/api/v1/my-invoices/:id', authenticateUser,
+    authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'),
+    getMyInvoice
+)
+// School billing profile
+app.get('/api/v1/billing-profile', authenticateUser,
+    authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'),
+    getBillingProfile
+)
+app.put('/api/v1/billing-profile', authenticateUser,
+    authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'),
+    updateBillingProfile
+)
 
 app.use(notFoundMiddleware)
 app.use(errorHnadlerMiddleware)
