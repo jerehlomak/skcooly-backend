@@ -49,6 +49,7 @@ const walletRouter = require('./routes/wallet.route')       // Phase 6
 const schoolMessagingRouter = require('./routes/schoolMessaging.route') // Phase 7
 const financeV2Router = require('./routes/financev2.route') // Phase 1 Base (Finance Unified)
 const financePaymentRouter = require('./routes/financePayment.route') // Phase 2: payments, invoices, transfers
+const setupRouter = require('./routes/setup.route') // Admin setup endpoint
 
 
 // middleware 
@@ -132,6 +133,7 @@ app.use('/api/v1/wallet', walletRouter)    // Phase 6: school wallet
 app.use('/api/v1/messaging', schoolMessagingRouter) // Phase 7: messaging center
 app.use('/api/v1/finance-v2', financeV2Router) // Phase 1: base finance unified
 app.use('/api/v1/finance-v2', financePaymentRouter) // Phase 2: payments, invoices, transfers, receipts
+app.use('/api/v1/setup', setupRouter)               // One-time admin setup (protected by ADMIN_SETUP_SECRET)
 
 const {
     getMyInvoices, getMyInvoice,

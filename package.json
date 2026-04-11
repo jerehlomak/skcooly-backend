@@ -6,7 +6,9 @@
   "scripts": {
     "start": "node app.js",
     "dev": "nodemon app.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "create-admin": "node scripts/create-admin.js",
+    "seed": "node scripts/seed.js"
   },
   "author": "",
   "license": "ISC",
