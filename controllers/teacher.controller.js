@@ -45,6 +45,7 @@ const addTeacher = async (req, res) => {
 
     const formattedSeq = sequence.toString().padStart(4, '0');
     const employeeId = `TCH-${currentYear}-${formattedSeq}`;
+    const publicId = `STF-TCH-${formattedSeq}`;
 
     // Auto-generate password securely
     const generatedPassword = generateRandomPassword();
@@ -62,6 +63,7 @@ const addTeacher = async (req, res) => {
                     create: {
                         schoolId: req.user.schoolId,
                         employeeId,
+                        publicId,
                         department: department || null,
                         phone: phone || null,
                         gender,

@@ -60,6 +60,7 @@ const addStudent = async (req, res) => {
 
     const formattedSequence = sequence.toString().padStart(4, '0')
     const admissionNo = `SKL-${currentYear}-${formattedSequence}`
+    const publicId = `STU-${currentYear}-${formattedSequence}`
 
     // Auto-generate credentials — email is globally unique thanks to schoolTag
     const safeName = name.toLowerCase().replace(/\s+/g, '.')
@@ -91,7 +92,8 @@ const addStudent = async (req, res) => {
                         bloodGroup: bloodGroup || null,
                         address: address || null,
                         previousSchool: previousSchool || null,
-                        parentProfileId: parentProfileId || null
+                        parentProfileId: parentProfileId || null,
+                        publicId
                     }
                 }
             },

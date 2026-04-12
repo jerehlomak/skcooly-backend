@@ -120,4 +120,36 @@ const deleteSubject = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Subject deleted successfully' })
 }
 
-module.exports = { addSubject, getAllSubjects, getSubject, updateSubject, deleteSubject }
+// ─── GET MY SUBJECTS (Student Portal) ───────────────────────────────────────
+// Returns all subjects that are assigned to the authenticated student's class arm
+const getMySubjects = async (req, res) => {
+    // Resolve the student's class from their profile
+    const profile = await prisma.studentProfile.findFirst({
+        where: { schoolId: req.user.schoolId, isDeleted: false, user: { id: req.user.userId } },
+        select: { id: true, classId: true, classLevel: true }
+    });
+
+    if (!profile) throw new CustomError.NotFoundError('Student profile not found');
+    if (!profile.classId) {
+        return res.status(StatusCodes.OK).json({ subjects: [], count: 0, message: 'No class assigned yet' });
+    }
+
+    // Get all subjects linked to this class arm via SubjectClass join table
+    const subjects = await prisma.subject.findMany({
+        where: {
+            schoolId: req.user.schoolId,
+            isDeleted: false,
+            classes: {
+                some: { classId: profile.classId }
+            }
+        },
+        include: {
+            teacher: { include: { user: { select: { name: true } } } }
+        },
+        orderBy: { name: 'asc' }
+    });
+
+    res.status(StatusCodes.OK).json({ subjects, count: subjects.length });
+};
+
+module.exports = { addSubject, getAllSubjects, getSubject, updateSubject, deleteSubject, getMySubjects }

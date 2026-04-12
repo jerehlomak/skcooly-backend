@@ -281,6 +281,7 @@ model StudentProfile {
   admissionDate         DateTime               @default(now())
   bloodGroup            String?
   dateOfBirth           DateTime?
+  publicId              String?                @unique
   orphan                Boolean                @default(false)
   parentProfileId       String?
   previousSchool        String?
@@ -320,6 +321,7 @@ model TeacherProfile {
   id               String         @id @default(uuid())
   schoolId         String? // tenant isolation
   userId           String         @unique
+  publicId         String?        @unique
   department       String?
   employeeId       String
   gender           String
@@ -342,11 +344,12 @@ model TeacherProfile {
   user             User           @relation(fields: [userId], references: [id])
   school           School?        @relation(fields: [schoolId], references: [id])
 
-  isDeleted      Boolean          @default(false)
-  deletedAt      DateTime?
-  QuestionBank   QuestionBank[]
-  Assignment     Assignment[]
-  LessonResource LessonResource[]
+  isDeleted       Boolean           @default(false)
+  deletedAt       DateTime?
+  QuestionBank    QuestionBank[]
+  Assignment      Assignment[]
+  LessonResource  LessonResource[]
+  StaffAttendance StaffAttendance[]
 
   @@unique([schoolId, employeeId])
   @@index([schoolId, isDeleted])
@@ -773,6 +776,11 @@ model School {
   TransferSubmission         TransferSubmission[]
   FinanceReceipt             FinanceReceipt[]
   FinanceNotificationLog     FinanceNotificationLog[]
+  QRCode                     QRCode[]
+  StaffAttendance            StaffAttendance[]
+  AttendanceScanLog          AttendanceScanLog[]
+  AttendanceSettings         AttendanceSettings?
+  ScannerDevice              ScannerDevice[]
 }
 
 // ─── BRANCHES (Phase 1) ──────────────────────────────────────────────────────
@@ -1798,26 +1806,26 @@ enum TransferSubmissionStatus {
 }
 
 model SchoolPaymentSettings {
-  id                       String     @id @default(uuid())
-  schoolId                 String     @unique
-  paystackPublicKey        String?
-  paystackSecretEnc        String?
-  paystackWebhookSecret    String?
-  paystackEnv              PaymentEnv @default(TEST)
-  paystackEnabled          Boolean    @default(false)
-  
-  remitaPublicKey          String?
-  remitaSecretEnc          String?
-  remitaMerchantId         String?
-  remitaWebhookSecret      String?
-  remitaEnabled            Boolean    @default(false)
+  id                    String     @id @default(uuid())
+  schoolId              String     @unique
+  paystackPublicKey     String?
+  paystackSecretEnc     String?
+  paystackWebhookSecret String?
+  paystackEnv           PaymentEnv @default(TEST)
+  paystackEnabled       Boolean    @default(false)
+
+  remitaPublicKey     String?
+  remitaSecretEnc     String?
+  remitaMerchantId    String?
+  remitaWebhookSecret String?
+  remitaEnabled       Boolean @default(false)
 
   merchantDisplayName      String?
-  bankTransferEnabled      Boolean    @default(true)
-  transferEvidenceRequired Boolean    @default(true)
-  allowPartialPayment      Boolean    @default(true)
-  allowOverpayment         Boolean    @default(false)
-  autoApplyWallet          Boolean    @default(false)
+  bankTransferEnabled      Boolean @default(true)
+  transferEvidenceRequired Boolean @default(true)
+  allowPartialPayment      Boolean @default(true)
+  allowOverpayment         Boolean @default(false)
+  autoApplyWallet          Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1984,4 +1992,109 @@ model FinanceNotificationLog {
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
   @@index([schoolId])
+}
+
+// ─── QR-BASED ATTENDANCE MODULE ──────────────────────────────────────────────
+
+/// QR code record for a student or staff member.
+/// The qrToken is a signed JWT — raw IDs are never exposed.
+model QRCode {
+  id        String   @id @default(uuid())
+  schoolId  String
+  branchId  String?
+  userType  String // "student" | "staff"
+  userId    String // StudentProfile.id or TeacherProfile.id
+  qrToken   String   @unique // signed JWT, opaque to client
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school   School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  scanLogs AttendanceScanLog[]
+
+  @@index([schoolId, userType, userId])
+  @@index([qrToken])
+}
+
+/// Daily staff check-in / check-out record.
+model StaffAttendance {
+  id           String                @id @default(uuid())
+  schoolId     String
+  branchId     String?
+  staffId      String // TeacherProfile.id
+  date         String // "YYYY-MM-DD"
+  checkInTime  DateTime?
+  checkOutTime DateTime?
+  status       StaffAttendanceStatus @default(ABSENT)
+  markedBy     String                @default("QR") // "QR" | "MANUAL" | "ADMIN_OVERRIDE"
+  note         String?
+  createdAt    DateTime              @default(now())
+  updatedAt    DateTime              @updatedAt
+
+  staff  TeacherProfile @relation(fields: [staffId], references: [id], onDelete: Cascade)
+  school School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([staffId, date])
+  @@index([schoolId, date])
+  @@index([branchId])
+}
+
+/// Audit log for every QR scan attempt (success or failure).
+model AttendanceScanLog {
+  id         String   @id @default(uuid())
+  schoolId   String
+  qrCodeId   String?
+  userId     String // userId for audit trail
+  userType   String // "student" | "staff"
+  scanTime   DateTime @default(now())
+  deviceInfo String?
+  result     String // "SUCCESS" | "DUPLICATE" | "INVALID" | "CROSS_SCHOOL" | "INACTIVE"
+  reason     String?
+
+  qrCode QRCode? @relation(fields: [qrCodeId], references: [id], onDelete: SetNull)
+  school School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, scanTime])
+  @@index([qrCodeId])
+}
+
+/// Registered hardware/browser scanners
+model ScannerDevice {
+  id        String   @id @default(uuid())
+  schoolId  String
+  branchId  String?
+  name      String
+  token     String   @unique
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId])
+}
+
+/// Per-school attendance configuration.
+model AttendanceSettings {
+  id                    String   @id @default(uuid())
+  schoolId              String   @unique
+  schoolStartTime       String   @default("08:00")
+  lateThresholdTime     String   @default("08:30")
+  allowMultipleScan     Boolean  @default(false)
+  qrEnabled             Boolean  @default(true)
+  manualEnabled         Boolean  @default(true)
+  autoCloseTime         String?  @default("17:00")
+  staffCheckOutRequired Boolean  @default(true)
+  timezone              String   @default("Africa/Lagos")
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+enum StaffAttendanceStatus {
+  PRESENT
+  LATE
+  HALF_DAY
+  ABSENT
 }
