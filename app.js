@@ -72,6 +72,8 @@ app.use(cors({
         process.env.CENTRAL_ADMIN_URL || 'http://localhost:3000',
         'https://central-admin-skcooly.netlify.app', // Deployed Central Admin (Netlify)
         'https://skooly-central-admin.vercel.app',   // Deployed Central Admin (Vercel)
+        'https://skcooly-frontend.vercel.app',       // Deployed Frontend (Vercel - primary)
+        'https://skcooly.vercel.app',              // Possible alias
     ],
     credentials: true,
 }))
