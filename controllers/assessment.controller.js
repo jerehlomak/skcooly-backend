@@ -102,107 +102,126 @@ const getScoresRoster = async (req, res) => {
 
 // ─── SAVE SCORE (BULK OR SINGLE) ────────────────────────────────────────────
 const saveScores = async (req, res) => {
-    const { classId, subjectId, term, academicYear, scoresData, category } = req.body;
+    try {
+        const { classId, subjectId, term, academicYear, scoresData, category } = req.body;
 
-    // scoresData is an array of items: { studentProfileId, scores (Json object object mapping test to int) }
-    if (!classId || !subjectId || !term || !academicYear || !scoresData) {
-        throw new CustomError.BadRequestError('Missing required fields for saving scores');
-    }
-
-    // Resolve actual teacher ID from the logged in user
-    let teacherId = null;
-    if (req.user && req.user.role === 'TEACHER') {
-        const teacherProfile = await prisma.teacherProfile.findFirst({
-            where: { userId: req.user.id, schoolId: req.user.schoolId },
-            select: { id: true }
-        });
-        if (teacherProfile) teacherId = teacherProfile.id;
-    }
-
-    // Fetch Grading Scale for this category
-    const gradingRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId, category }
-    });
-
-    let scales = [];
-    if (gradingRecord && gradingRecord.grades) {
-        scales = gradingRecord.grades;
-    } else {
-        const fallback = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: "ALL" }
-        });
-        if (fallback && fallback.grades) scales = fallback.grades;
-    }
-
-    if (!scales.length) {
-        scales = [
-            { minScore: 70, maxScore: 100, grade: 'A', status: 'PASS' },
-            { minScore: 60, maxScore: 69, grade: 'B', status: 'PASS' },
-            { minScore: 50, maxScore: 59, grade: 'C', status: 'PASS' },
-            { minScore: 40, maxScore: 49, grade: 'D', status: 'PASS' },
-            { minScore: 0, maxScore: 39, grade: 'F', status: 'FAIL' },
-        ];
-    }
-
-    const upsertPromises = scoresData.map(data => {
-        // Calculate Total
-        let totalScore = 0;
-        for (const val of Object.values(data.scores)) {
-            totalScore += Number(val) || 0;
+        // scoresData is an array of items: { studentProfileId, scores (Json object object mapping test to int) }
+        if (!classId || !subjectId || !term || !academicYear || !scoresData) {
+            throw new CustomError.BadRequestError('Missing required fields for saving scores');
         }
 
-        let grade = '-';
-        for (const g of scales) {
-            if (totalScore >= Number(g.minScore) && totalScore <= Number(g.maxScore)) {
-                grade = g.grade;
-                break;
+        // Resolve actual teacher ID from the logged in user
+        let teacherId = null;
+        if (req.user && req.user.role === 'TEACHER') {
+            const teacherProfile = await prisma.teacherProfile.findFirst({
+                where: { userId: req.user.id, schoolId: req.user.schoolId },
+                select: { id: true }
+            });
+            if (teacherProfile) teacherId = teacherProfile.id;
+        }
+
+        // Resolve category if not provided
+        let resolvedCategory = category;
+        if (!resolvedCategory) {
+            const cls = await prisma.class.findFirst({
+                where: { id: classId, schoolId: req.user.schoolId },
+                select: { level: true }
+            });
+            if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${classId}`);
+            resolvedCategory = cls.level;
+        }
+
+        // Fetch Grading Scale for this category
+        const gradingRecord = await prisma.gradingScale.findFirst({
+            where: { schoolId: req.user.schoolId, category: resolvedCategory }
+        });
+
+        let scales = [];
+        if (gradingRecord && gradingRecord.grades) {
+            scales = gradingRecord.grades;
+        } else {
+            const fallback = await prisma.gradingScale.findFirst({
+                where: { schoolId: req.user.schoolId, category: "ALL" }
+            });
+            if (fallback && fallback.grades) scales = fallback.grades;
+        }
+
+        if (!scales.length) {
+            scales = [
+                { minScore: 70, maxScore: 100, grade: 'A', status: 'PASS' },
+                { minScore: 60, maxScore: 69, grade: 'B', status: 'PASS' },
+                { minScore: 50, maxScore: 59, grade: 'C', status: 'PASS' },
+                { minScore: 40, maxScore: 49, grade: 'D', status: 'PASS' },
+                { minScore: 0, maxScore: 39, grade: 'F', status: 'FAIL' },
+            ];
+        }
+
+        const upsertPromises = scoresData.map(data => {
+            // Calculate Total
+            let totalScore = 0;
+            for (const val of Object.values(data.scores)) {
+                totalScore += Number(val) || 0;
             }
-        }
 
-        return prisma.studentResult.upsert({
-            where: {
-                studentProfileId_subjectId_term_academicYear: {
+            let grade = '-';
+            for (const g of scales) {
+                if (totalScore >= Number(g.minScore) && totalScore <= Number(g.maxScore)) {
+                    grade = g.grade;
+                    break;
+                }
+            }
+
+            return prisma.studentResult.upsert({
+                where: {
+                    studentProfileId_subjectId_term_academicYear: {
+                        studentProfileId: data.studentProfileId,
+                        subjectId,
+                        term,
+                        academicYear
+                    }
+                },
+                update: {
+                    scores: data.scores,
+                    totalScore,
+                    grade,
+                    teacherId
+                },
+                create: {
                     studentProfileId: data.studentProfileId,
                     subjectId,
+                    classId,
                     term,
-                    academicYear
+                    academicYear,
+                    category: resolvedCategory,
+                    scores: data.scores,
+                    totalScore,
+                    grade,
+                    teacherId,
+                    schoolId: req.user.schoolId
                 }
-            },
-            update: {
-                scores: data.scores,
-                totalScore,
-                grade,
-                teacherId
-            },
-            create: {
-                studentProfileId: data.studentProfileId,
-                subjectId,
-                classId,
-                term,
-                academicYear,
-                category,
-                scores: data.scores,
-                totalScore,
-                grade,
-                teacherId,
-                schoolId: req.user.schoolId
-            }
+            });
         });
-    });
 
-    await prisma.$transaction(upsertPromises);
+        await prisma.$transaction(upsertPromises);
 
-    // Dispatch the Result Added event
-    publishEvent(EVENTS.RESULT_ADDED, {
-        schoolId: req.user.schoolId,
-        term,
-        academicYear,
-        subjectId,
-        classId,
-        studentCount: scoresData.length
-    });
+        // Dispatch the Result Added event
+        publishEvent(EVENTS.RESULT_ADDED, {
+            schoolId: req.user.schoolId,
+            term,
+            academicYear,
+            subjectId,
+            classId,
+            studentCount: scoresData.length
+        });
 
-    res.status(StatusCodes.OK).json({ msg: 'Scores saved successfully' });
+        res.status(StatusCodes.OK).json({ msg: 'Scores saved successfully' });
+    } catch (error) {
+        console.error('Error in saveScores:', error);
+        res.status(error.statusCode || StatusCodes.INTERNAL_SERVER_ERROR).json({
+            msg: error.message || 'Internal Server Error',
+            error: error.message
+        });
+    }
 };
 
 // ─── GET MY RESULTS (STUDENT/PARENT) ────────────────────────────────────────

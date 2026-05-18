@@ -72,6 +72,7 @@ const showCurrentUser = async (req, res) => {
             studentProfile: true,
             teacherProfile: true,
             parentProfile: true,
+            customRole: true,
             branch: { select: { id: true, name: true, code: true } } // Phase 2: include bound branch data
         }
     })

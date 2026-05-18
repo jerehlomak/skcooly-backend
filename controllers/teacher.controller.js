@@ -16,7 +16,7 @@ const generateRandomPassword = () => {
 
 // ─── ADD TEACHER ───────────────────────────────────────────────────────────────
 const addTeacher = async (req, res) => {
-    const { name, email, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
+    const { name, email, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber, arabicName } = req.body;
 
     if (!name || !gender || !email) {
         throw new CustomError.BadRequestError('Please provide name, email, and gender');
@@ -32,24 +32,42 @@ const addTeacher = async (req, res) => {
 
     const currentYear = new Date().getFullYear();
 
-    const lastTeacher = await prisma.teacherProfile.findFirst({
-        where: { employeeId: { startsWith: `TCH-${currentYear}-` }, schoolId: req.user.schoolId },
-        orderBy: { hireDate: 'desc' }
-    });
+    let employeeId = req.body.employeeId;
+    let publicId = '';
 
-    let sequence = 1;
-    if (lastTeacher && lastTeacher.employeeId) {
-        const parts = lastTeacher.employeeId.split('-');
-        if (parts.length === 3) sequence = parseInt(parts[2]) + 1;
+    if (!employeeId) {
+        const lastTeacher = await prisma.teacherProfile.findFirst({
+            where: { employeeId: { startsWith: `TCH-${currentYear}-` }, schoolId: req.user.schoolId },
+            orderBy: { hireDate: 'desc' }
+        });
+
+        let sequence = 1;
+        if (lastTeacher && lastTeacher.employeeId) {
+            const parts = lastTeacher.employeeId.split('-');
+            if (parts.length === 3) sequence = parseInt(parts[2]) + 1;
+        }
+
+        const formattedSeq = sequence.toString().padStart(4, '0');
+        employeeId = `TCH-${currentYear}-${formattedSeq}`;
+        publicId = `STF-TCH-${formattedSeq}`;
+    } else {
+        publicId = `STF-${employeeId}`;
     }
-
-    const formattedSeq = sequence.toString().padStart(4, '0');
-    const employeeId = `TCH-${currentYear}-${formattedSeq}`;
-    const publicId = `STF-TCH-${formattedSeq}`;
 
     // Auto-generate password securely
     const generatedPassword = generateRandomPassword();
     const hashedPassword = await argon2.hash(generatedPassword);
+
+    const { uploadProfilePhoto } = require('../services/cloudinary-upload.service');
+    let photoUrl = req.body.photoUrl || null;
+    if (req.files && req.files.photo) {
+        try {
+            const uploadResult = await uploadProfilePhoto(req.files.photo, req.user.schoolId, 'staff');
+            photoUrl = uploadResult.secure_url;
+        } catch (error) {
+            throw new CustomError.BadRequestError(`Photo upload failed: ${error.message}`);
+        }
+    }
 
     const newTeacher = await prisma.$transaction(async (tx) => {
         return await tx.user.create({
@@ -57,13 +75,16 @@ const addTeacher = async (req, res) => {
                 name,
                 email, // Use provided email
                 password: hashedPassword,
-                role: 'TEACHER',
+                role: req.body.staffType === 'ADMIN' ? 'ADMIN' : 'TEACHER',
                 schoolId: req.user.schoolId,
+                customRoleId: req.body.customRoleId || null,
                 teacherProfile: {
                     create: {
                         schoolId: req.user.schoolId,
                         employeeId,
                         publicId,
+                        staffType: req.body.staffType || 'TEACHER',
+                        photoUrl: photoUrl,
                         department: department || null,
                         phone: phone || null,
                         gender,
@@ -75,11 +96,12 @@ const addTeacher = async (req, res) => {
                         bankName: bankName || null,
                         accountName: accountName || null,
                         accountNumber: accountNumber || null,
-                        subjectsTaught: subjects || null
+                        subjectsTaught: subjects || null,
+                        arabicName: arabicName || null
                     }
                 }
             },
-            select: { id: true, name: true, email: true, role: true, teacherProfile: true }
+            select: { id: true, name: true, email: true, role: true, customRoleId: true, teacherProfile: true }
         });
     });
 
@@ -116,7 +138,7 @@ const getTeacher = async (req, res) => {
 // ─── UPDATE TEACHER ───────────────────────────────────────────────────────────
 const updateTeacher = async (req, res) => {
     const { id } = req.params; // User.id
-    const { name, email, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
+    const { name, email, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber, staffType, photoUrl, arabicName } = req.body;
 
     if (email) {
         const existingEmailUser = await prisma.user.findFirst({
@@ -127,15 +149,28 @@ const updateTeacher = async (req, res) => {
         }
     }
 
+    const { uploadProfilePhoto } = require('../services/cloudinary-upload.service');
+    let photoUrlUpdate = photoUrl;
+    if (req.files && req.files.photo) {
+        try {
+            const uploadResult = await uploadProfilePhoto(req.files.photo, req.user.schoolId, 'staff');
+            photoUrlUpdate = uploadResult.secure_url;
+        } catch (error) {
+            throw new CustomError.BadRequestError(`Photo upload failed: ${error.message}`);
+        }
+    }
+
     await prisma.user.updateMany({
         where: { id, schoolId: req.user.schoolId },
         data: {
             ...(name && { name }),
             ...(email && { email }),
+            ...(staffType && { role: staffType === 'ADMIN' ? 'ADMIN' : 'TEACHER' }),
+            ...(req.body.customRoleId !== undefined && { customRoleId: req.body.customRoleId || null }),
         }
     });
 
-    if (department !== undefined || phone !== undefined || gender || status || dateOfBirth || address !== undefined || qualification !== undefined || salary !== undefined || bankName !== undefined || accountName !== undefined || accountNumber !== undefined || subjects !== undefined) {
+    if (department !== undefined || phone !== undefined || gender || status || dateOfBirth || address !== undefined || qualification !== undefined || salary !== undefined || bankName !== undefined || accountName !== undefined || accountNumber !== undefined || subjects !== undefined || staffType !== undefined || photoUrlUpdate !== undefined || arabicName !== undefined) {
         await prisma.teacherProfile.update({
             where: { userId: id },
             data: {
@@ -150,12 +185,15 @@ const updateTeacher = async (req, res) => {
                 ...(bankName !== undefined && { bankName }),
                 ...(accountName !== undefined && { accountName }),
                 ...(accountNumber !== undefined && { accountNumber }),
-                ...(subjects !== undefined && { subjects })
+                ...(subjects !== undefined && { subjects }),
+                ...(staffType !== undefined && { staffType }),
+                ...(photoUrlUpdate !== undefined && { photoUrl: photoUrlUpdate }),
+                ...(arabicName !== undefined && { arabicName })
             }
         });
     }
 
-    res.status(StatusCodes.OK).json({ msg: 'Teacher updated successfully' });
+    res.status(StatusCodes.OK).json({ msg: 'Staff updated successfully' });
 };
 
 // ─── DELETE TEACHER ───────────────────────────────────────────────────────────

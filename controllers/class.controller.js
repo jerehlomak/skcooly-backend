@@ -6,8 +6,22 @@ const { logTenantAction } = require('../services/audit-log.service')
 
 // ─── CREATE CLASS ─────────────────────────────────────────────────────────────
 const addClass = async (req, res) => {
-    const { name, level, section, capacity } = req.body
+    const { name, level, arms, sessionId, arabicName, section } = req.body
     if (!name || !level) throw new CustomError.BadRequestError('Class name and level are required')
+
+    if (arms && Array.isArray(arms) && arms.length > 0) {
+        const classesToCreate = arms.map(arm => ({
+            name: `${name} ${arm}`.trim().toUpperCase(),
+            level: level.trim().toUpperCase(),
+            section: arm.trim(),
+            sessionId: sessionId || null,
+            arabicName: arabicName || null,
+            status: 'Active',
+            schoolId: req.user.schoolId
+        }))
+        const newClasses = await prisma.$transaction(classesToCreate.map(data => prisma.class.create({ data })))
+        return res.status(StatusCodes.CREATED).json({ msg: 'Classes created successfully', classes: newClasses })
+    }
 
     const existing = await prisma.class.findFirst({ where: { name, schoolId: req.user.schoolId } })
     if (existing) throw new CustomError.BadRequestError(`A class named "${name}" already exists for this school`)
@@ -17,7 +31,8 @@ const addClass = async (req, res) => {
             name: name.trim().toUpperCase(),
             level: level.trim().toUpperCase(),
             section: section?.trim() || null,
-            capacity: capacity ? parseInt(capacity) : 40,
+            sessionId: sessionId || null,
+            arabicName: arabicName || null,
             status: 'Active',
             schoolId: req.user.schoolId
         }
@@ -74,14 +89,15 @@ const getClass = async (req, res) => {
 // ─── UPDATE CLASS ─────────────────────────────────────────────────────────────
 const updateClass = async (req, res) => {
     const { id } = req.params
-    const { name, level, section, capacity, status } = req.body
+    const { name, level, section, sessionId, arabicName, status } = req.body
     await prisma.class.updateMany({
         where: { id, schoolId: req.user.schoolId },
         data: {
             ...(name && { name: name.trim().toUpperCase() }),
             ...(level && { level: level.trim().toUpperCase() }),
             ...(section !== undefined && { section }),
-            ...(capacity && { capacity: parseInt(capacity) }),
+            ...(sessionId !== undefined && { sessionId }),
+            ...(arabicName !== undefined && { arabicName }),
             ...(status && { status })
         }
     })
@@ -146,3 +162,4 @@ const deleteClass = async (req, res) => {
 }
 
 module.exports = { addClass, getAllClasses, getClass, updateClass, deleteClass, assignFormTeacher, assignSubjectTeacher }
+

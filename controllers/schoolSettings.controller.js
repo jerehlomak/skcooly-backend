@@ -70,7 +70,7 @@ const getSettings = async (req, res) => {
 const updateSettings = async (req, res) => {
     let settings = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } })
     const { 
-        schoolName, tagline, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, rulesContent,
+        schoolName, arabicName, tagline, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, rulesContent,
         resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode
     } = req.body
 
@@ -81,6 +81,7 @@ const updateSettings = async (req, res) => {
             where: { id: settings.id },
             data: {
                 ...(schoolName !== undefined && { schoolName }),
+                ...(arabicName !== undefined && { arabicName }),
                 ...(tagline !== undefined && { tagline }),
                 ...(phone !== undefined && { phone }),
                 ...(email !== undefined && { email }),

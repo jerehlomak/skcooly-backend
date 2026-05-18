@@ -1,15 +1,21 @@
 const express = require('express');
 const router = express.Router();
-const { addParent, getAllParents, getParent, updateParent, deleteParent, getMyChildrenAcademics } = require('../controllers/parent.controller');
+const { addParent, getAllParents, getParent, updateParent, deleteParent, getMyChildrenAcademics, assignChildToParent } = require('../controllers/parent.controller');
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
 
-router.route('/all').get(authenticateUser, authorizePermissions('ADMIN'), getAllParents)
-router.route('/add').post(authenticateUser, authorizePermissions('ADMIN'), addParent)
-router.route('/my-children/academics').get(authenticateUser, authorizePermissions('PARENT'), getMyChildrenAcademics)
+const ADMIN_ROLES = ['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'];
+
+router.route('/all').get(authenticateUser, authorizePermissions(...ADMIN_ROLES), getAllParents);
+router.route('/add').post(authenticateUser, authorizePermissions(...ADMIN_ROLES), addParent);
+router.route('/my-children/academics').get(authenticateUser, authorizePermissions('PARENT'), getMyChildrenAcademics);
+
+// Dedicated assign-child endpoint (can be called standalone or during edit)
+router.post('/:id/assign-child', authenticateUser, authorizePermissions(...ADMIN_ROLES), assignChildToParent);
 
 router.route('/:id')
-    .get(authenticateUser, authorizePermissions('ADMIN'), getParent)
-    .patch(authenticateUser, authorizePermissions('ADMIN'), updateParent)
-    .delete(authenticateUser, authorizePermissions('ADMIN'), deleteParent)
+    .get(authenticateUser, authorizePermissions(...ADMIN_ROLES), getParent)
+    .patch(authenticateUser, authorizePermissions(...ADMIN_ROLES), updateParent)
+    .delete(authenticateUser, authorizePermissions(...ADMIN_ROLES), deleteParent);
 
 module.exports = router;
+

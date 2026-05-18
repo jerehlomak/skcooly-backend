@@ -165,9 +165,84 @@ const registerAdmin = async (req, res) => {
     res.status(StatusCodes.CREATED).json({ user: tokenUser })
 }
 
+const resetPasswordWithKey = async (req, res) => {
+    const { loginId, role, schoolCode, recoveryKey, newPassword } = req.body;
+
+    if (!loginId || !role || !schoolCode || !recoveryKey || !newPassword) {
+        throw new CustomError.BadRequestError('Please provide all required fields');
+    }
+
+    // Find the school by schoolCode
+    const school = await prisma.school.findUnique({
+        where: { schoolCode: schoolCode.toUpperCase().trim() }
+    });
+
+    if (!school) {
+        throw new CustomError.UnauthenticatedError('Invalid School ID');
+    }
+
+    if (school.status === 'SUSPENDED') {
+        throw new CustomError.UnauthenticatedError('This school account has been suspended. Please contact platform support.');
+    }
+
+    let user = null;
+
+    if (role === 'ADMIN' || role === 'SCHOOL_SUPER_ADMIN' || role === 'SCHOOL_ADMIN' || role === 'BRANCH_ADMIN' || role === 'BRANCH_STAFF') {
+        user = await prisma.user.findFirst({
+            where: { email: loginId, schoolId: school.id, isDeleted: false }
+        });
+    } else if (role === 'STUDENT') {
+        const profile = await prisma.studentProfile.findFirst({
+            where: { admissionNo: loginId, schoolId: school.id, isDeleted: false },
+            include: { user: true }
+        });
+        user = profile ? profile.user : null;
+    } else if (role === 'TEACHER') {
+        const profile = await prisma.teacherProfile.findFirst({
+            where: { employeeId: loginId, schoolId: school.id, isDeleted: false },
+            include: { user: true }
+        });
+        user = profile ? profile.user : null;
+    } else if (role === 'PARENT') {
+        const profile = await prisma.parentProfile.findFirst({
+            where: { parentId: loginId, schoolId: school.id, isDeleted: false },
+            include: { user: true }
+        });
+        user = profile ? profile.user : null;
+    } else {
+        throw new CustomError.BadRequestError('Invalid role specified');
+    }
+
+    if (!user) {
+        throw new CustomError.UnauthenticatedError('Invalid User details');
+    }
+
+    if (!user.recoveryKey || user.recoveryKey !== recoveryKey) {
+        throw new CustomError.UnauthenticatedError('Invalid Recovery Key');
+    }
+
+    if (user.recoveryKeyExpires && new Date() > user.recoveryKeyExpires) {
+        throw new CustomError.UnauthenticatedError('Recovery Key has expired');
+    }
+
+    const hashedPassword = await argon2.hash(newPassword);
+
+    await prisma.user.update({
+        where: { id: user.id },
+        data: {
+            password: hashedPassword,
+            recoveryKey: null,
+            recoveryKeyExpires: null
+        }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: 'Password reset successfully' });
+};
+
 module.exports = {
     register,
     login,
     logout,
-    registerAdmin
+    registerAdmin,
+    resetPasswordWithKey
 }

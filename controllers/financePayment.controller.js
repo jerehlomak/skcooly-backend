@@ -158,7 +158,8 @@ async function createReceipt(tx, {
 }) {
     const receiptPrefix = financeSettings?.receiptPrefix || 'REC-';
     const receiptNumber = generateReceiptNo(receiptPrefix);
-    return await tx.financeReceipt.create({
+    
+    const receipt = await tx.financeReceipt.create({
         data: {
             schoolId,
             branchId: branchId || null,
@@ -176,6 +177,40 @@ async function createReceipt(tx, {
             }
         }
     });
+
+    // ─── AUTO-INCOME LEDGER ──────────────────────────────────────────────────
+    // Do not double-count income when applying a prepaid wallet balance
+    if (method !== 'WALLET') {
+        let feeCategory = await tx.financeCategory.findFirst({
+            where: { schoolId, name: 'School Fees', type: 'INCOME' }
+        });
+        if (!feeCategory) {
+            feeCategory = await tx.financeCategory.create({
+                data: { schoolId, name: 'School Fees', type: 'INCOME' }
+            });
+        }
+
+        let desc = 'Automated fee collection';
+        if (invoiceNumbers && invoiceNumbers.length > 0) {
+            desc = `Invoice payment: ${invoiceNumbers.join(', ')}`;
+        } else {
+            desc = `Online wallet top-up / unallocated payment`;
+        }
+
+        await tx.incomeRecord.create({
+            data: {
+                schoolId,
+                categoryId: feeCategory.id,
+                description: desc,
+                amount: amountPaid,
+                date: new Date(),
+                source: 'AUTO',
+                referenceId: paymentTransactionId
+            }
+        });
+    }
+
+    return receipt;
 }
 
 // ─── PAYMENT SETTINGS ───────────────────────────────────────────────────────
@@ -427,6 +462,99 @@ const initializePaystackPayment = async (req, res) => {
   }
 };
 
+// ─── PHASE 8: PAYSTACK WALLET DEPOSIT INIT ─────────────────────────────────
+const initializePaystackWalletDeposit = async (req, res) => {
+    const { studentId, amount, email } = req.body;
+    const { schoolId, activeBranchId } = req.user;
+
+    if (!studentId || !amount || Number(amount) < MIN_PAYMENT_AMOUNT) {
+        throw new CustomError.BadRequestError(`studentId and amount ≥ ₦${MIN_PAYMENT_AMOUNT} required`);
+    }
+
+    const student = await prisma.studentProfile.findUnique({ where: { id: studentId }, select: { schoolId: true } });
+    if (!student || student.schoolId !== schoolId) throw new CustomError.NotFoundError('Student not found');
+
+    const secretKey = await getDecryptedPaystackSecret(schoolId);
+    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
+    const reference = generateRef('WDP');
+
+    const transaction = await prisma.paymentTransaction.create({
+        data: {
+            schoolId,
+            branchId: activeBranchId || null,
+            studentId,
+            reference,
+            amount: Number(amount),
+            method: 'PAYSTACK',
+            status: 'PENDING',
+            initiatedBy: req.user.userId,
+            note: 'WALLET_DEPOSIT'
+        }
+    });
+
+    let payerEmail = email || (await getStudentEmail(studentId)) || 'parent@skooly.app';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) payerEmail = 'parent@skooly.app';
+
+    const payload = {
+        email: payerEmail,
+        amount: Math.round(Number(amount) * 100),
+        reference,
+        currency: financeSettings?.currencySymbol === '$' ? 'USD' : 'NGN',
+        metadata: {
+            schoolId,
+            studentId,
+            transactionId: transaction.id,
+            type: 'WALLET_DEPOSIT',
+            custom_fields: [
+                { display_name: 'Purpose', variable_name: 'purpose', value: 'Wallet Top-up' },
+                { display_name: 'Student ID', variable_name: 'student_id', value: studentId }
+            ]
+        },
+        callback_url: `${process.env.CLIENT_URL}/parent/payment-success?ref=${reference}&type=wallet`
+    };
+
+    const response = await axios.post('https://api.paystack.co/transaction/initialize', payload, {
+        headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' }
+    });
+
+    if (!response.data.status) throw new CustomError.BadRequestError('Paystack wallet deposit initialization failed');
+
+    res.status(StatusCodes.OK).json({
+        authorizationUrl: response.data.data.authorization_url,
+        reference,
+        transactionId: transaction.id
+    });
+};
+
+// ─── PHASE 8: VERIFY PAYMENT (for PaymentSuccess page) ──────────────────────
+const verifyPayment = async (req, res) => {
+    const { ref } = req.query;
+    const { schoolId } = req.user;
+
+    if (!ref) throw new CustomError.BadRequestError('ref query param is required');
+
+    const tx = await prisma.paymentTransaction.findUnique({
+        where: { reference: ref },
+        include: {
+            receipt: true,
+            student: { include: { user: { select: { name: true } } } }
+        }
+    });
+
+    if (!tx || tx.schoolId !== schoolId) throw new CustomError.NotFoundError('Payment not found');
+
+    res.status(StatusCodes.OK).json({
+        status: tx.status,
+        amount: tx.amount,
+        method: tx.method,
+        paidAt: tx.paidAt,
+        note: tx.note,
+        studentName: tx.student?.user?.name,
+        receiptNumber: tx.receipt?.receiptNumber || null,
+        receiptId: tx.receipt?.id || null,
+    });
+};
+
 // ─── PAYSTACK WEBHOOK (raw Buffer from app.js — no auth, signature verified) ─
 
 const handlePaystackWebhook = async (req, res) => {
@@ -535,6 +663,35 @@ const handlePaystackWebhook = async (req, res) => {
                     }
                 });
 
+                // PHASE 8: Route WALLET_DEPOSIT to wallet credit instead of invoice payment
+                if (txRecord.note === 'WALLET_DEPOSIT') {
+                    const { fundWallet: doFundWallet } = require('./financev2.controller');
+                    let wallet = await tx.studentWallet.findUnique({ where: { studentId: txRecord.studentId } });
+                    if (!wallet) {
+                        const student = await tx.studentProfile.findUnique({ where: { id: txRecord.studentId } });
+                        wallet = await tx.studentWallet.create({
+                            data: { schoolId: txRecord.schoolId, studentId: txRecord.studentId, branchId: student?.branchId }
+                        });
+                    }
+                    const updatedWallet = await tx.studentWallet.update({
+                        where: { studentId: txRecord.studentId },
+                        data: { balance: { increment: txRecord.amount } }
+                    });
+                    await tx.studentWalletTransaction.create({
+                        data: {
+                            walletId: wallet.id,
+                            schoolId: txRecord.schoolId,
+                            type: 'DEPOSIT',
+                            amount: txRecord.amount,
+                            balanceBefore: updatedWallet.balance - txRecord.amount,
+                            balanceAfter: updatedWallet.balance,
+                            reference: txRecord.reference,
+                            description: 'Paystack Online Top-up'
+                        }
+                    });
+                    walletBalanceAfter = updatedWallet.balance;
+                    invoiceNumbers = [];
+                } else {
                 const result = await applyPaymentToInvoices(tx, {
                     schoolId: txRecord.schoolId,
                     studentId: txRecord.studentId,
@@ -545,6 +702,7 @@ const handlePaystackWebhook = async (req, res) => {
 
                 invoiceNumbers = result.invoiceNumbers;
                 walletBalanceAfter = result.walletBalanceAfter;
+                } // end else (non-wallet-deposit)
 
                 receipt = await createReceipt(tx, {
                     schoolId: txRecord.schoolId,
@@ -841,10 +999,79 @@ const getTransferSubmissions = async (req, res) => {
     res.status(StatusCodes.OK).json({ submissions, total, page: Number(page) });
 };
 
+// ─── RESEND INVOICE EMAIL ─────────────────────────────────────────────────────
+
+const resendInvoice = async (req, res) => {
+    const { id } = req.params;
+    const { schoolId } = req.user;
+
+    const invoice = await prisma.financeInvoice.findUnique({
+        where: { id },
+        include: {
+            student: {
+                include: {
+                    user: { select: { name: true, email: true } },
+                    parent: { include: { user: { select: { email: true, name: true } } } }
+                }
+            },
+            items: true
+        }
+    });
+
+    if (!invoice || invoice.schoolId !== schoolId) {
+        throw new CustomError.NotFoundError('Invoice not found');
+    }
+
+    const [financeSettings, schoolSettings] = await Promise.all([
+        prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } })
+    ]);
+
+    // Determine recipient — prefer parent email, fall back to student email
+    const parentEmail = invoice.student?.parent?.user?.email;
+    const studentEmail = invoice.student?.user?.email;
+    const recipientEmail = parentEmail || studentEmail;
+
+    if (!recipientEmail) {
+        throw new CustomError.BadRequestError('No email address found for this student or parent');
+    }
+
+    const studentName = invoice.student?.user?.name || 'Student';
+    const currencySymbol = financeSettings?.currencySymbol || '₦';
+    const schoolName = schoolSettings?.schoolName || 'School';
+    const showItemizedBreakdown = financeSettings?.showItemizedBreakdown !== false;
+
+    await sendInvoiceEmail(recipientEmail, {
+        studentName,
+        invoiceNumber: invoice.invoiceNumber,
+        totalAmount: invoice.totalAmount,
+        dueDate: invoice.dueDate,
+        items: invoice.items,
+        showItemizedBreakdown,
+        schoolName,
+        currencySymbol
+    });
+
+    // Mark as SENT if still OPEN/DRAFT
+    if (['OPEN', 'DRAFT'].includes(invoice.status)) {
+        await prisma.financeInvoice.update({
+            where: { id },
+            data: { status: 'SENT' }
+        });
+    }
+
+    await logNotification(schoolId, invoice.studentId, 'INVOICE_RESENT', recipientEmail);
+
+    res.status(StatusCodes.OK).json({
+        msg: `Invoice emailed to ${recipientEmail}`,
+        sentTo: recipientEmail
+    });
+};
+
 // ─── INVOICE GENERATION ──────────────────────────────────────────────────────
 
 const generateInvoice = async (req, res) => {
-    const { studentId, term, academicYear, dueDate, feeDefinitionIds } = req.body;
+    const { studentId, term, academicYear, dueDate, feeDefinitionIds, expectedTotal } = req.body;
     const { schoolId, activeBranchId } = req.user;
 
     if (!studentId) throw new CustomError.BadRequestError('studentId is required');
@@ -853,7 +1080,6 @@ const generateInvoice = async (req, res) => {
         where: { id: studentId },
         include: { user: { select: { name: true, email: true } } }
     });
-    // Tenant isolation — student must belong to this school
     if (!student || student.schoolId !== schoolId) throw new CustomError.NotFoundError('Student not found');
 
     const [financeSettings, schoolSettings] = await Promise.all([
@@ -861,19 +1087,47 @@ const generateInvoice = async (req, res) => {
         prisma.schoolSettings.findFirst({ where: { schoolId } })
     ]);
 
-    // fee definitions must also belong to this school
+    // Fee definitions — scoped to this school
     const feeQuery = {
-        schoolId,
-        isActive: true,
-        isDeleted: false,
+        schoolId, isActive: true, isDeleted: false,
         ...(feeDefinitionIds?.length ? { id: { in: feeDefinitionIds } } : {})
     };
     const fees = await prisma.feeDefinition.findMany({ where: feeQuery });
     if (fees.length === 0) throw new CustomError.BadRequestError('No active fee definitions found');
 
+    // ── Compute totals ────────────────────────────────────────────────────────
+    const subTotal = fees.reduce((s, f) => s + f.amount * (f.quantity || 1), 0);
+
+    // Apply active scholarships
+    const scholarships = await prisma.scholarship.findMany({
+        where: { schoolId, studentId, isDeleted: false, status: 'ACTIVE' }
+    });
+
+    let discountTotal = 0;
+    for (const sc of scholarships) {
+        if (sc.type === 'PERCENTAGE') {
+            discountTotal += subTotal * (sc.value / 100);
+        } else if (sc.type === 'SCHOLARSHIP' || sc.type === 'FIXED_AMOUNT') {
+            // Student pays sc.value — discount is the difference
+            discountTotal = Math.max(discountTotal, subTotal - sc.value);
+        }
+    }
+    discountTotal = Math.min(discountTotal, subTotal); // cap at subTotal
+    const totalAmount = Math.max(0, subTotal - discountTotal);
+    console.log(`[generateInvoice] subTotal=${subTotal} scholarships=${scholarships.length} discountTotal=${discountTotal} totalAmount=${totalAmount}`);
+
+    // ── Cross-validate with frontend ──────────────────────────────────────────
+    if (expectedTotal !== undefined && expectedTotal !== null) {
+        const diff = Math.abs(Number(expectedTotal) - totalAmount);
+        if (diff > 1) { // allow ₦1 rounding tolerance
+            throw new CustomError.BadRequestError(
+                `Total mismatch: frontend computed ₦${Number(expectedTotal).toLocaleString()} but backend computed ₦${totalAmount.toLocaleString()}. Refresh and try again.`
+            );
+        }
+    }
+
     const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
     const invoiceNumber = `${invoicePrefix}${Date.now()}`;
-    const subTotal = fees.reduce((s, f) => s + f.amount * (f.quantity || 1), 0);
 
     const invoice = await prisma.$transaction(async (tx) => {
         return await tx.financeInvoice.create({
@@ -885,9 +1139,10 @@ const generateInvoice = async (req, res) => {
                 academicYear: academicYear || schoolSettings?.currentYear || null,
                 invoiceNumber,
                 subTotal,
-                totalAmount: subTotal,
-                balanceDue: subTotal,
-                status: 'PUBLISHED',
+                discountTotal,
+                totalAmount,
+                balanceDue: totalAmount,
+                status: 'OPEN',
                 dueDate: dueDate ? new Date(dueDate) : null,
                 items: {
                     create: fees.map(f => ({
@@ -904,15 +1159,13 @@ const generateInvoice = async (req, res) => {
         });
     });
 
-    // GAP 8 FIX — fire email after transaction, non-blocking
+    // Send invoice email (non-blocking)
     const recipientEmail = await getStudentEmail(studentId);
     const studentName = student.user?.name?.trim() || '';
     if (recipientEmail) {
         sendInvoiceEmail(recipientEmail, {
-            studentName,
-            invoiceNumber,
-            totalAmount: subTotal,
-            dueDate,
+            studentName, invoiceNumber,
+            totalAmount, dueDate,
             schoolName: schoolSettings?.schoolName || 'School',
             currencySymbol: financeSettings?.currencySymbol || '₦'
         })
@@ -1173,6 +1426,566 @@ const applyWalletToInvoice = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: `₦${applied.toLocaleString()} applied from wallet to invoice` });
 };
 
+// ─── RECORD MANUAL PAYMENT (PHASE 6) ──────────────────────────────────────────
+
+const recordManualPayment = async (req, res) => {
+    const { id: invoiceId } = req.params;
+    const { amount, method, discountAmount } = req.body;
+    const { schoolId, activeBranchId } = req.user;
+
+    if (!amount || amount <= 0) throw new CustomError.BadRequestError('Amount must be greater than 0');
+    if (!['CASH', 'POS', 'BANK_TRANSFER'].includes(method)) {
+        throw new CustomError.BadRequestError('Invalid payment method');
+    }
+
+    const invoice = await prisma.financeInvoice.findUnique({
+        where: { id: invoiceId },
+        include: { student: true }
+    });
+
+    if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) {
+        throw new CustomError.NotFoundError('Invoice not found');
+    }
+    if (invoice.balanceDue <= 0) {
+        throw new CustomError.BadRequestError('Invoice is already fully paid');
+    }
+
+    const appliedAmount = Number(amount);
+    const appliedDiscount = discountAmount ? Number(discountAmount) : 0;
+    
+    if (appliedAmount + appliedDiscount > invoice.balanceDue) {
+        throw new CustomError.BadRequestError('Payment and discount exceed balance due');
+    }
+
+    const reference = generateRef('MNL');
+
+    await prisma.$transaction(async (tx) => {
+        const liveInvoice = await tx.financeInvoice.findUnique({ where: { id: invoiceId } });
+        if (!liveInvoice || liveInvoice.balanceDue <= 0) {
+            throw new CustomError.BadRequestError('Invoice already fully paid');
+        }
+
+        if (appliedAmount + appliedDiscount > liveInvoice.balanceDue) {
+            throw new CustomError.BadRequestError('Payment and discount exceed balance due');
+        }
+
+        const newPaid = liveInvoice.amountPaid + appliedAmount;
+        const newDiscountTotal = liveInvoice.discountTotal + appliedDiscount;
+        const newBalance = liveInvoice.balanceDue - (appliedAmount + appliedDiscount);
+
+        // Update Invoice
+        await tx.financeInvoice.update({
+            where: { id: invoiceId },
+            data: {
+                amountPaid: newPaid,
+                discountTotal: newDiscountTotal,
+                balanceDue: newBalance,
+                status: newBalance <= 0 ? 'PAID' : 'PARTIAL'
+            }
+        });
+
+        // Audit trail: create PaymentTransaction + Allocation
+        const txRecord = await tx.paymentTransaction.create({
+            data: {
+                schoolId,
+                branchId: activeBranchId,
+                studentId: liveInvoice.studentId,
+                reference,
+                amount: appliedAmount,
+                method: method,
+                status: 'SUCCESSFUL',
+                paidAt: new Date(),
+                initiatedBy: req.user.userId
+            }
+        });
+
+        await tx.paymentAllocation.create({
+            data: {
+                schoolId,
+                paymentTransactionId: txRecord.id,
+                invoiceId,
+                allocatedAmount: appliedAmount
+            }
+        });
+
+        // Generate receipt
+        const [financeSettings, schoolSettings] = await Promise.all([
+            tx.financeSettings.findUnique({ where: { schoolId } }),
+            tx.schoolSettings.findFirst({ where: { schoolId } })
+        ]);
+
+        await createReceipt(tx, {
+            schoolId,
+            branchId: activeBranchId,
+            studentId: liveInvoice.studentId,
+            paymentTransactionId: txRecord.id,
+            amountPaid: appliedAmount,
+            method: method,
+            invoiceNumbers: [liveInvoice.invoiceNumber],
+            walletBalanceAfter: 0, // Manual payment doesn't affect wallet
+            financeSettings,
+            schoolSettings
+        });
+    });
+
+    res.status(StatusCodes.OK).json({ msg: `Payment of ₦${appliedAmount.toLocaleString()} recorded successfully` });
+};
+
+// ─── PHASE 3: CLASS BILLING SUMMARY ─────────────────────────────────────────
+
+const getClassBillingSummary = async (req, res) => {
+    const { schoolId } = req.user;
+    const { term, academicYear } = req.query;
+
+    // Get all classes for the school
+    const classes = await prisma.class.findMany({
+        where: { schoolId, isDeleted: false },
+        include: {
+            students: {
+                where: { isDeleted: false },
+                select: { id: true }
+            }
+        },
+        orderBy: { name: 'asc' }
+    });
+
+    // Fetch all invoices for this school/term/year
+    const invoiceWhere = {
+        schoolId, isDeleted: false,
+        ...(term && { term }),
+        ...(academicYear && { academicYear }),
+    };
+
+    const allInvoices = await prisma.financeInvoice.findMany({
+        where: invoiceWhere,
+        include: {
+            student: { select: { classId: true } }
+        }
+    });
+
+    // Map classId → aggregates
+    const classMap = {};
+    for (const inv of allInvoices) {
+        const cid = inv.student?.classId;
+        if (!cid) continue;
+        if (!classMap[cid]) classMap[cid] = { expected: 0, paid: 0, outstanding: 0, invoiceCount: 0 };
+        classMap[cid].expected    += inv.totalAmount;
+        classMap[cid].paid        += inv.amountPaid;
+        classMap[cid].outstanding += inv.balanceDue;
+        classMap[cid].invoiceCount++;
+    }
+
+    const summary = classes.map(c => ({
+        id: c.id, name: c.name, level: c.level || '',
+        studentCount: c.students.length,
+        billedCount: classMap[c.id]?.invoiceCount || 0,
+        expected:    classMap[c.id]?.expected    || 0,
+        paid:        classMap[c.id]?.paid        || 0,
+        outstanding: classMap[c.id]?.outstanding || 0,
+    }));
+
+    res.status(StatusCodes.OK).json({ summary });
+};
+
+// ─── PHASE 3: STUDENTS IN CLASS WITH BILLING STATUS ──────────────────────────
+
+const getClassStudents = async (req, res) => {
+    const { classId } = req.params;
+    const { schoolId } = req.user;
+    const { term, academicYear } = req.query;
+
+    try {
+        const students = await prisma.studentProfile.findMany({
+            where: {
+                OR: [{ schoolId }, { schoolId: null }],
+                classId,
+                isDeleted: false
+            },
+            include: {
+                user: { select: { name: true } },
+                FinanceInvoice: {
+                    where: {
+                        schoolId,
+                        isDeleted: false,
+                        ...(term && { term }),
+                        ...(academicYear && { academicYear }),
+                    },
+                    select: { id: true, status: true, totalAmount: true, amountPaid: true, balanceDue: true, invoiceNumber: true }
+                },
+                Scholarship: {
+                    where: { isDeleted: false },
+                    select: { id: true, type: true, value: true, status: true }
+                }
+            },
+            orderBy: { admissionDate: 'asc' }
+        });
+
+        const result = students.map(s => {
+            const invoices = s.FinanceInvoice || [];
+            const scholarships = (s.Scholarship || []);
+            const totalExpected = invoices.reduce((a, i) => a + i.totalAmount, 0);
+            const totalPaid = invoices.reduce((a, i) => a + i.amountPaid, 0);
+            const totalOutstanding = invoices.reduce((a, i) => a + i.balanceDue, 0);
+
+            let billingStatus = 'UNBILLED';
+            if (invoices.length > 0) {
+                if (totalOutstanding <= 0) billingStatus = 'PAID';
+                else if (totalPaid > 0) billingStatus = 'PARTIAL';
+                else billingStatus = 'UNPAID';
+            }
+
+            return {
+                id: s.id,
+                admissionNo: s.admissionNo,
+                classLevel: s.classLevel,
+                name: s.user?.name || 'Unknown',
+                billingStatus,
+                invoiceCount: invoices.length,
+                totalExpected,
+                totalPaid,
+                totalOutstanding,
+                hasScholarship: scholarships.some(sc => sc.status === 'ACTIVE'),
+                invoices: invoices.map(i => ({
+                    id: i.id, invoiceNumber: i.invoiceNumber, status: i.status,
+                    totalAmount: i.totalAmount, amountPaid: i.amountPaid, balanceDue: i.balanceDue
+                }))
+            };
+        });
+
+        res.status(StatusCodes.OK).json({ students: result, count: result.length });
+    } catch (err) {
+        console.error('[getClassStudents ERROR]', err.message, err.stack);
+        throw err;
+    }
+};
+
+// ─── PHASE 3: STUDENT BILLING PROFILE ────────────────────────────────────────
+
+const getStudentBillingProfile = async (req, res) => {
+    const { studentId } = req.params;
+    const { schoolId } = req.user;
+    const { term, academicYear } = req.query;
+
+    const student = await prisma.studentProfile.findUnique({
+        where: { id: studentId },
+        include: { user: { select: { name: true, email: true } } }
+    });
+    if (!student || student.schoolId !== schoolId) throw new CustomError.NotFoundError('Student not found');
+
+    // Auto-load applicable fees: WHOLE_SCHOOL or fees matching student's class (classId)
+    const fees = await prisma.feeDefinition.findMany({
+        where: {
+            schoolId, isActive: true, isDeleted: false,
+            OR: [
+                { scope: 'WHOLE_SCHOOL' },
+                { scope: 'CLASS', classIds: { has: student.classId || '' } }
+            ],
+            ...(term && { termScope: { in: ['ANNUAL', term] } })
+        },
+        orderBy: [{ isCompulsory: 'desc' }, { name: 'asc' }]
+    });
+
+    // Active scholarships
+    const scholarships = await prisma.scholarship.findMany({
+        where: { schoolId, studentId, isDeleted: false, status: 'ACTIVE' }
+    });
+
+    // Existing invoices for this term
+    const existingInvoices = await prisma.financeInvoice.findMany({
+        where: {
+            schoolId, studentId, isDeleted: false,
+            ...(term && { term }),
+            ...(academicYear && { academicYear }),
+        },
+        include: { items: true },
+        orderBy: { createdAt: 'desc' }
+    });
+
+    res.status(StatusCodes.OK).json({
+        student: { id: student.id, name: student.user?.name, admissionNo: student.admissionNo, classLevel: student.classLevel, classId: student.classId },
+        fees, scholarships, existingInvoices
+    });
+};
+
+// ─── PHASE 3: BULK INVOICE GENERATION ────────────────────────────────────────
+
+const bulkGenerateInvoices = async (req, res) => {
+    const { studentIds, feeDefinitionIds, term, academicYear, dueDate } = req.body;
+    const { schoolId, activeBranchId } = req.user;
+
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+        throw new CustomError.BadRequestError('studentIds array is required');
+    }
+    if (!Array.isArray(feeDefinitionIds) || feeDefinitionIds.length === 0) {
+        throw new CustomError.BadRequestError('feeDefinitionIds array is required');
+    }
+
+    const [financeSettings, schoolSettings, fees] = await Promise.all([
+        prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } }),
+        prisma.feeDefinition.findMany({ where: { schoolId, isActive: true, isDeleted: false, id: { in: feeDefinitionIds } } })
+    ]);
+
+    if (fees.length === 0) throw new CustomError.BadRequestError('No valid fee definitions found');
+
+    const results = { created: [], skipped: [], errors: [] };
+    const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
+
+    for (const studentId of studentIds) {
+        try {
+            const student = await prisma.studentProfile.findUnique({
+                where: { id: studentId }, select: { schoolId: true, branchId: true }
+            });
+            if (!student || student.schoolId !== schoolId) {
+                results.skipped.push({ studentId, reason: 'Not found' });
+                continue;
+            }
+
+            // Skip if invoice already exists for this term
+            if (term) {
+                const exists = await prisma.financeInvoice.findFirst({
+                    where: { schoolId, studentId, term, academicYear: academicYear || null, isDeleted: false }
+                });
+                if (exists) { results.skipped.push({ studentId, reason: 'Invoice already exists' }); continue; }
+            }
+
+            // Apply scholarship discounts (all active scholarships for student)
+            const scholarships = await prisma.scholarship.findMany({
+                where: { schoolId, studentId, isDeleted: false, status: 'ACTIVE' }
+            });
+            let subTotal = fees.reduce((s, f) => s + f.amount * (f.quantity || 1), 0);
+            let discountAmount = 0;
+            for (const sc of scholarships) {
+                if (sc.type === 'PERCENTAGE') {
+                    discountAmount += subTotal * (sc.value / 100);
+                } else if (sc.type === 'SCHOLARSHIP' || sc.type === 'FIXED_AMOUNT') {
+                    // Student pays sc.value — discount is the difference
+                    discountAmount = Math.max(discountAmount, subTotal - sc.value);
+                }
+            }
+            discountAmount = Math.min(discountAmount, subTotal); // cap at subTotal
+            const totalAmount = Math.max(0, subTotal - discountAmount);
+
+            const invoiceNumber = `${invoicePrefix}${Date.now()}-${studentId.slice(0, 4).toUpperCase()}`;
+            const invoice = await prisma.financeInvoice.create({
+                data: {
+                    schoolId, branchId: activeBranchId || student.branchId || null,
+                    studentId, term: term || schoolSettings?.currentTerm || null,
+                    academicYear: academicYear || schoolSettings?.currentYear || null,
+                    invoiceNumber, subTotal, discountTotal: discountAmount,
+                    totalAmount, balanceDue: totalAmount, status: 'OPEN',
+                    dueDate: dueDate ? new Date(dueDate) : null,
+                    items: {
+                        create: fees.map(f => ({
+                            type: f.type || 'FEE', referenceId: f.id,
+                            label: f.name, quantity: f.quantity || 1,
+                            unitPrice: f.amount, amount: f.amount * (f.quantity || 1)
+                        }))
+                    }
+                }
+            });
+            results.created.push({ studentId, invoiceId: invoice.id, invoiceNumber });
+        } catch (e) {
+            results.errors.push({ studentId, reason: e.message });
+        }
+    }
+
+    res.status(StatusCodes.CREATED).json({ results, msg: `${results.created.length} invoices generated` });
+};
+
+// ─── PHASE 4: FAMILY BILLING ──────────────────────────────────────────────────
+
+const getFamilyBillingSummary = async (req, res) => {
+    const { schoolId } = req.user;
+    const { term, academicYear } = req.query;
+
+    const parents = await prisma.parentProfile.findMany({
+        where: { OR: [{ schoolId }, { schoolId: null }], isDeleted: false },
+        include: {
+            user: { select: { name: true, email: true } },
+            students: {
+                where: { isDeleted: false },
+                select: { id: true }
+            }
+        }
+    });
+
+    const invoices = await prisma.financeInvoice.findMany({
+        where: {
+            schoolId, isDeleted: false,
+            ...(term && { term }),
+            ...(academicYear && { academicYear })
+        },
+        select: { studentId: true, totalAmount: true, amountPaid: true, balanceDue: true, status: true }
+    });
+
+    const studentInvoices = {};
+    for (const inv of invoices) {
+        if (!studentInvoices[inv.studentId]) studentInvoices[inv.studentId] = [];
+        studentInvoices[inv.studentId].push(inv);
+    }
+
+    const summary = parents.map(parent => {
+        let expected = 0;
+        let paid = 0;
+        let outstanding = 0;
+        let invoiceCount = 0;
+
+        parent.students.forEach(student => {
+            const invs = studentInvoices[student.id] || [];
+            invs.forEach(inv => {
+                expected += inv.totalAmount;
+                paid += inv.amountPaid;
+                outstanding += inv.balanceDue;
+                invoiceCount++;
+            });
+        });
+
+        return {
+            id: parent.id,
+            name: parent.fatherName || parent.motherName || parent.user?.name || 'Unknown Parent',
+            email: parent.user?.email,
+            phone: parent.phone || parent.fatherPhone || parent.motherPhone,
+            studentCount: parent.students.length,
+            invoiceCount, expected, paid, outstanding
+        };
+    }).filter(p => p.studentCount > 0);
+
+    res.status(StatusCodes.OK).json({ summary });
+};
+
+const getFamilyBillingProfile = async (req, res) => {
+    const { parentId } = req.params;
+    const { schoolId } = req.user;
+    const { term, academicYear } = req.query;
+
+    const parent = await prisma.parentProfile.findUnique({
+        where: { id: parentId },
+        include: {
+            user: { select: { name: true, email: true } },
+            students: {
+                where: { isDeleted: false },
+                include: {
+                    user: { select: { name: true } },
+                    classArm: { select: { name: true } },
+                    FinanceInvoice: {
+                        where: {
+                            schoolId, isDeleted: false,
+                            ...(term && { term }),
+                            ...(academicYear && { academicYear })
+                        },
+                        include: { items: true },
+                        orderBy: { createdAt: 'desc' }
+                    }
+                }
+            }
+        }
+    });
+
+    if (!parent || (parent.schoolId && parent.schoolId !== schoolId)) {
+        throw new CustomError.NotFoundError('Parent not found');
+    }
+
+    const children = parent.students.map(student => ({
+        id: student.id,
+        name: student.user?.name,
+        admissionNo: student.admissionNo,
+        className: student.classArm?.name || student.classLevel,
+        invoices: student.FinanceInvoice
+    }));
+
+    res.status(StatusCodes.OK).json({
+        parent: {
+            id: parent.id,
+            name: parent.fatherName || parent.motherName || parent.user?.name,
+            email: parent.user?.email,
+            phone: parent.phone || parent.fatherPhone || parent.motherPhone
+        },
+        children
+    });
+};
+
+const sendFamilyInvoice = async (req, res) => {
+    const { parentId } = req.params;
+    const { schoolId } = req.user;
+    const { term, academicYear } = req.body;
+
+    const parent = await prisma.parentProfile.findUnique({
+        where: { id: parentId },
+        include: {
+            user: { select: { name: true, email: true } },
+            students: {
+                where: { isDeleted: false },
+                include: {
+                    user: { select: { name: true } },
+                    FinanceInvoice: {
+                        where: {
+                            schoolId, isDeleted: false,
+                            ...(term && { term }),
+                            ...(academicYear && { academicYear })
+                        },
+                        include: { items: true }
+                    }
+                }
+            }
+        }
+    });
+
+    if (!parent || (parent.schoolId && parent.schoolId !== schoolId)) {
+        throw new CustomError.NotFoundError('Parent not found');
+    }
+
+    const recipientEmail = parent.user?.email;
+    if (!recipientEmail) throw new CustomError.BadRequestError('Parent has no email address configured');
+
+    const [financeSettings, schoolSettings] = await Promise.all([
+        prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } })
+    ]);
+
+    let grandTotal = 0;
+    let grandBalance = 0;
+    const childrenData = [];
+    const invoiceIdsToMarkSent = [];
+
+    parent.students.forEach(student => {
+        if (student.FinanceInvoice.length > 0) {
+            const studentTotal = student.FinanceInvoice.reduce((sum, inv) => sum + inv.totalAmount, 0);
+            const studentBalance = student.FinanceInvoice.reduce((sum, inv) => sum + inv.balanceDue, 0);
+            
+            grandTotal += studentTotal;
+            grandBalance += studentBalance;
+
+            student.FinanceInvoice.forEach(inv => {
+                if (['OPEN', 'DRAFT'].includes(inv.status)) invoiceIdsToMarkSent.push(inv.id);
+            });
+
+            childrenData.push({ name: student.user?.name, invoices: student.FinanceInvoice });
+        }
+    });
+
+    if (childrenData.length === 0) throw new CustomError.BadRequestError('No invoices found for this family for the specified term');
+
+    const parentName = parent.fatherName || parent.motherName || parent.user?.name || 'Parent';
+
+    const { sendFamilyStatementEmail } = require('../services/finance-email.service');
+    await sendFamilyStatementEmail(recipientEmail, {
+        parentName, childrenData, grandTotal, grandBalance, term, academicYear,
+        schoolName: schoolSettings?.schoolName || 'School',
+        currencySymbol: financeSettings?.currencySymbol || '₦',
+        showItemizedBreakdown: financeSettings?.showItemizedBreakdown !== false
+    });
+
+    if (invoiceIdsToMarkSent.length > 0) {
+        await prisma.financeInvoice.updateMany({
+            where: { id: { in: invoiceIdsToMarkSent } },
+            data: { status: 'SENT' }
+        });
+    }
+
+    res.status(StatusCodes.OK).json({ msg: `Family statement sent to ${recipientEmail}` });
+};
+
 module.exports = {
     getPaymentSettings,
     updatePaymentSettings,
@@ -1186,10 +1999,25 @@ module.exports = {
     reviewTransfer,
     getTransferSubmissions,
     generateInvoice,
+    resendInvoice,
     getInvoices,
     getInvoice,
     getPaymentTransactions,
     getReceipts,
     applyWalletToInvoice,
     getActivePaymentMethods,
+    recordManualPayment,
+    // Phase 3
+    getClassBillingSummary,
+    getClassStudents,
+    getStudentBillingProfile,
+    bulkGenerateInvoices,
+    // Phase 4
+    getFamilyBillingSummary,
+    getFamilyBillingProfile,
+    sendFamilyInvoice,
+    // Phase 8
+    initializePaystackWalletDeposit,
+    verifyPayment,
 };
+

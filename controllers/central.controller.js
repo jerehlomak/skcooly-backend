@@ -66,6 +66,65 @@ const logout = (req, res) => {
     res.status(StatusCodes.OK).json({ message: 'Logged out.' })
 }
 
+const { sendAdminPasswordResetEmail } = require('../services/admin-email.service')
+
+const forgotPassword = async (req, res) => {
+    const { email } = req.body
+    if (!email) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Email is required.' })
+    }
+
+    const admin = await prisma.centralAdmin.findUnique({ where: { email } })
+    if (!admin) {
+        // Return 200 to prevent email enumeration
+        return res.status(StatusCodes.OK).json({ message: 'If an account with that email exists, we have sent a password reset link.' })
+    }
+
+    const resetToken = crypto.randomUUID()
+    const expires = new Date(Date.now() + 60 * 60 * 1000) // 1 hour
+
+    await prisma.centralAdmin.update({
+        where: { id: admin.id },
+        data: { resetPasswordToken: resetToken, resetPasswordExpires: expires }
+    })
+
+    const resetLink = `${process.env.CENTRAL_ADMIN_URL || 'http://localhost:3000'}/reset-password?token=${resetToken}`
+    await sendAdminPasswordResetEmail(admin.email, resetLink)
+
+    res.status(StatusCodes.OK).json({ message: 'If an account with that email exists, we have sent a password reset link.' })
+}
+
+const resetPassword = async (req, res) => {
+    const { token, password } = req.body
+    if (!token || !password) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Token and new password are required.' })
+    }
+
+    const admin = await prisma.centralAdmin.findFirst({
+        where: {
+            resetPasswordToken: token,
+            resetPasswordExpires: { gt: new Date() }
+        }
+    })
+
+    if (!admin) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Invalid or expired password reset token.' })
+    }
+
+    const hashedPassword = await argon2.hash(password)
+
+    await prisma.centralAdmin.update({
+        where: { id: admin.id },
+        data: {
+            password: hashedPassword,
+            resetPasswordToken: null,
+            resetPasswordExpires: null
+        }
+    })
+
+    res.status(StatusCodes.OK).json({ message: 'Password has been reset successfully.' })
+}
+
 const setupFirstAdmin = async (req, res) => {
     const { name, email, password, secret } = req.body
     if (secret !== process.env.ADMIN_SETUP_SECRET) {
@@ -964,8 +1023,51 @@ const updateBillingProfile = async (req, res) => {
     res.status(StatusCodes.OK).json({ profile })
 }
 
+const createLead = async (req, res) => {
+    const { schoolName, contactPerson, phoneNumber, emailAddress, stateLga, preferredPlanId, notes } = req.body;
+    const lead = await prisma.schoolLead.create({
+        data: {
+            schoolName,
+            contactPerson,
+            phoneNumber,
+            emailAddress,
+            stateLga: stateLga || null,
+            preferredPlanId: preferredPlanId || null,
+            notes
+        }
+    });
+    res.status(StatusCodes.CREATED).json({ lead, message: 'Inquiry submitted successfully.' });
+}
+
+const getLeads = async (req, res) => {
+    const { status, page = 1, limit = 20 } = req.query;
+    const skip = (Number(page) - 1) * Number(limit);
+    const where = {};
+    if (status) where.status = status;
+
+    const [leads, total] = await Promise.all([
+        prisma.schoolLead.findMany({
+            where, skip, take: Number(limit), orderBy: { createdAt: 'desc' },
+            include: { preferredPlan: { select: { name: true } } }
+        }),
+        prisma.schoolLead.count({ where })
+    ]);
+    res.status(StatusCodes.OK).json({ leads, total, page: Number(page), limit: Number(limit) });
+}
+
+const updateLeadStatus = async (req, res) => {
+    const { id } = req.params;
+    const { status } = req.body;
+    const lead = await prisma.schoolLead.update({
+        where: { id },
+        data: { status }
+    });
+    res.status(StatusCodes.OK).json({ lead });
+}
+
 module.exports = {
     login, getMe, logout, setupFirstAdmin,
+    forgotPassword, resetPassword,
     getOverview,
     getSchools, getSchool, createSchool, updateSchool, suspendSchool, activateSchool, deleteSchool,
     getSchoolCredentials, resetSchoolCredentials, syncSchoolCounts,
@@ -979,5 +1081,6 @@ module.exports = {
     createInvoice, getInvoices, getInvoice, updateInvoice, deleteInvoice,
     sendInvoice, recordInvoicePayment, sendInvoiceReminder,
     getMyInvoices, getMyInvoice, getBillingProfile, updateBillingProfile,
+    createLead, getLeads, updateLeadStatus
 }
 

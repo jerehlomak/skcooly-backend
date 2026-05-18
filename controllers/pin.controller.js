@@ -29,7 +29,9 @@ const generatePins = async (req, res) => {
             }
         })
 
-        const uniquePinCodes = await generateUniquePins(tx, quantity, 10)
+        // Generate 12-char alphanumeric pins for applications, default to 10 for results
+        const pinLength = ['ADMISSION_APPLICATION', 'EMPLOYMENT'].includes(pinType) ? 12 : 10;
+        const uniquePinCodes = await generateUniquePins(tx, quantity, pinLength)
 
         const pinsData = uniquePinCodes.map((pinCode, index) => {
             return {
@@ -38,7 +40,7 @@ const generatePins = async (req, res) => {
                 serialNumber: `${batchNumber}-${String(index + 1).padStart(5, '0')}`,
                 pinType: pinType || 'RESULT_CHECKING',
                 schoolId: schoolId || null,
-                maxUsage: 5 // Default
+                maxUsage: ['ADMISSION_APPLICATION', 'EMPLOYMENT'].includes(pinType) ? 1 : 5 // Applications are single-use
             }
         })
 

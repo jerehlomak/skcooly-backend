@@ -12,6 +12,7 @@ model SchoolSettings {
   id               String     @id @default(uuid())
   schoolId         String? // tenant isolation
   schoolName       String     @default("My School")
+  arabicName       String?
   tagline          String?
   phone            String?
   email            String?
@@ -36,6 +37,42 @@ model SchoolSettings {
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model AcademicSession {
+  id        String    @id @default(cuid())
+  schoolId  String? // tenant isolation
+  name      String // e.g. "2024/2025"
+  startDate DateTime?
+  endDate   DateTime?
+  isCurrent Boolean   @default(false)
+
+  classes  Class[]
+  students StudentProfile[]
+
+  isDeleted        Boolean            @default(false)
+  deletedAt        DateTime?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+  AcademicTerm     AcademicTerm[]
+  PromotionHistory PromotionHistory[]
+
+  @@index([schoolId, isDeleted])
+}
+
+model Section {
+  id         String  @id @default(cuid())
+  schoolId   String? // tenant isolation
+  name       String // e.g. "Primary", "Junior Secondary"
+  arabicName String?
+  type       String? // e.g. "Primary", "Secondary"
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([schoolId, isDeleted])
 }
 
 model FeeParticular {
@@ -81,10 +118,32 @@ model Transaction {
   createdAt        DateTime        @default(now())
   updatedAt        DateTime        @updatedAt
 
-  isDeleted Boolean   @default(false)
+  isDeleted Boolean        @default(false)
   deletedAt DateTime?
+  terms     AcademicTerm[]
 
   @@index([schoolId, isDeleted])
+}
+
+model AcademicTerm {
+  id        String    @id @default(uuid())
+  schoolId  String // Tenant isolation
+  sessionId String // Relates to AcademicSession
+  name      String // e.g. "First Term", "Second Term"
+  startDate DateTime?
+  endDate   DateTime?
+  isActive  Boolean   @default(false)
+
+  session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  createdAt     DateTime     @default(now())
+  updatedAt     DateTime     @updatedAt
+  Transaction   Transaction? @relation(fields: [transactionId], references: [id])
+  transactionId String?
+
+  @@unique([schoolId, sessionId, name])
+  @@index([schoolId, isActive])
 }
 
 model FeeInvoice {
@@ -232,13 +291,17 @@ model ClassLevel {
 
 model CustomRole {
   id              String   @id @default(uuid())
-  name            String   @unique
+  schoolId        String? // tenant isolation
+  name            String
   description     String?
   isSystemDefault Boolean  @default(false)
   permissions     String[]
   users           User[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
 }
 
 model User {
@@ -251,6 +314,8 @@ model User {
   role           Role             @default(STUDENT)
   customRoleId   String?
   customRole     CustomRole?      @relation(fields: [customRoleId], references: [id])
+  recoveryKey        String?
+  recoveryKeyExpires DateTime?
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   parentProfile  ParentProfile?
@@ -286,7 +351,10 @@ model StudentProfile {
   parentProfileId       String?
   previousSchool        String?
   religion              String?
+  arabicName            String?
   classId               String? // specific class arm relation
+  sessionId             String? // enrollment session
+  subjectCategoryId     String? // links student to a subject category (for filtered result sheets)
   enrollments           Enrollment[]
   feeInvoices           FeeInvoice[]
   attendanceRecords     AttendanceRecord[]
@@ -298,6 +366,8 @@ model StudentProfile {
   user                  User                   @relation(fields: [userId], references: [id])
   classArm              Class?                 @relation("ClassStudents", fields: [classId], references: [id])
   school                School?                @relation(fields: [schoolId], references: [id])
+  session               AcademicSession?       @relation(fields: [sessionId], references: [id])
+  subjectCategory       SubjectCategory?       @relation("StudentSubjectCategory", fields: [subjectCategoryId], references: [id])
 
   isDeleted                  Boolean                      @default(false)
   deletedAt                  DateTime?
@@ -311,6 +381,8 @@ model StudentProfile {
   PaymentTransaction         PaymentTransaction[]
   TransferSubmission         TransferSubmission[]
   FinanceReceipt             FinanceReceipt[]
+  Scholarship                Scholarship[]
+  promotionHistory           PromotionHistory[]
 
   @@unique([schoolId, admissionNo])
   @@index([schoolId, isDeleted])
@@ -336,6 +408,9 @@ model TeacherProfile {
   accountNumber    String?
   accountName      String?
   subjectsTaught   String?
+  staffType        String?        @default("TEACHER") // TEACHER, CLASS_TEACHER, ADMIN, OTHER
+  photoUrl         String?
+  arabicName       String?
   courses          Course[]
   salarySlips      SalarySlip[]
   assignedSubjects Subject[]      @relation("SubjectTeacher")
@@ -350,6 +425,12 @@ model TeacherProfile {
   Assignment      Assignment[]
   LessonResource  LessonResource[]
   StaffAttendance StaffAttendance[]
+
+  // Payroll relations
+  payrollSettings PayrollSetting[] @relation("StaffPayrollSettings")
+  staffLoans      StaffLoan[]      @relation("StaffLoans")
+  pensionEntries  PensionLedger[]  @relation("StaffPension")
+  payrollRunItems PayrollRunItem[] @relation("StaffPayrollRunItems")
 
   @@unique([schoolId, employeeId])
   @@index([schoolId, isDeleted])
@@ -385,23 +466,27 @@ model ParentProfile {
 }
 
 model Class {
-  id                String             @id @default(uuid())
-  schoolId          String? // tenant isolation
-  name              String
-  level             String
-  section           String?
-  capacity          Int                @default(40)
-  status            String             @default("Active")
-  formTeacherId     String?
-  createdAt         DateTime           @default(now())
-  updatedAt         DateTime           @updatedAt
-  formTeacher       TeacherProfile?    @relation("FormTeacher", fields: [formTeacherId], references: [id])
-  subjects          ClassSubject[]
-  students          StudentProfile[]   @relation("ClassStudents")
-  attendanceRecords AttendanceRecord[] @relation("ClassAttendance")
-  exams             Exam[]
-  assignments       Assignment[]
-  lessonResources   LessonResource[]
+  id                   String             @id @default(uuid())
+  schoolId             String? // tenant isolation
+  sessionId            String? // Reference to AcademicSession
+  name                 String
+  arabicName           String?
+  level                String
+  section              String?
+  status               String             @default("Active")
+  formTeacherId        String?
+  createdAt            DateTime           @default(now())
+  updatedAt            DateTime           @updatedAt
+  session              AcademicSession?   @relation(fields: [sessionId], references: [id])
+  formTeacher          TeacherProfile?    @relation("FormTeacher", fields: [formTeacherId], references: [id])
+  subjects             ClassSubject[]
+  students             StudentProfile[]   @relation("ClassStudents")
+  attendanceRecords    AttendanceRecord[] @relation("ClassAttendance")
+  exams                Exam[]
+  assignments          Assignment[]
+  lessonResources      LessonResource[]
+  promotionHistoryFrom PromotionHistory[] @relation("FromClass")
+  promotionHistoryTo   PromotionHistory[] @relation("ToClass")
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -409,22 +494,42 @@ model Class {
   @@index([schoolId, isDeleted])
 }
 
+model SubjectCategory {
+  id         String  @id @default(cuid())
+  schoolId   String?
+  name       String
+  arabicName String?
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  subjects Subject[]
+  students StudentProfile[] @relation("StudentSubjectCategory")
+
+  @@index([schoolId, isDeleted])
+}
+
 model Subject {
-  id             String          @id @default(uuid())
+  id             String           @id @default(uuid())
   schoolId       String? // tenant isolation
   name           String
   code           String?
-  category       SubjectCategory @default(CORE)
-  stream         SubjectStream   @default(ALL)
+  categoryId     String?
+  arabicName     String?
+  type           String?
+  stream         SubjectStream    @default(ALL)
   description    String?
-  status         String          @default("Active")
+  status         String           @default("Active")
   teacherId      String?
-  createdAt      DateTime        @default(now())
-  updatedAt      DateTime        @updatedAt
+  createdAt      DateTime         @default(now())
+  updatedAt      DateTime         @updatedAt
   classes        ClassSubject[]
   enrollments    Enrollment[]
   studentResults StudentResult[]
-  teacher        TeacherProfile? @relation("SubjectTeacher", fields: [teacherId], references: [id])
+  teacher        TeacherProfile?  @relation("SubjectTeacher", fields: [teacherId], references: [id])
+  category       SubjectCategory? @relation(fields: [categoryId], references: [id])
 
   isDeleted      Boolean          @default(false)
   deletedAt      DateTime?
@@ -601,12 +706,6 @@ enum Role {
   BRANCH_STAFF // restricted to own branch only
 }
 
-enum SubjectCategory {
-  CORE
-  OPTIONAL
-  VOCATIONAL
-}
-
 enum SubjectStream {
   ALL
   JSS
@@ -657,8 +756,10 @@ model CentralAdmin {
   password      String
   role          CentralAdminRole      @default(SUPPORT)
   isActive      Boolean               @default(true)
-  lastLogin     DateTime?
-  permissions   Json? // granular permission list e.g. ["manage_schools","generate_pins"]
+  lastLogin            DateTime?
+  resetPasswordToken   String?
+  resetPasswordExpires DateTime?
+  permissions          Json? // granular permission list e.g. ["manage_schools","generate_pins"]
   createdAt     DateTime              @default(now())
   updatedAt     DateTime              @updatedAt
   auditLogs     AuditLog[]
@@ -673,8 +774,9 @@ model SubscriptionPlan {
   id            String               @id @default(uuid())
   name          String               @unique // e.g., Basic, Pro, Enterprise
   description   String?
-  monthlyPrice  Float                @default(0) // monthly price in USD
-  yearlyPrice   Float                @default(0) // yearly price in USD
+  monthlyPrice  Float                @default(0)
+  yearlyPrice   Float                @default(0)
+  priceLabel    String?              // Custom label e.g. "Contact Us", "Negotiable", overrides price display
   maxStudents   Int                  @default(100)
   maxTeachers   Int                  @default(10)
   maxClasses    Int                  @default(10)
@@ -687,6 +789,25 @@ model SubscriptionPlan {
   updatedAt     DateTime             @updatedAt
   schools       School[]
   subscriptions SchoolSubscription[]
+  schoolLeads   SchoolLead[]
+}
+
+// Leads / Inquiries from the website
+model SchoolLead {
+  id              String            @id @default(uuid())
+  schoolName      String
+  contactPerson   String
+  phoneNumber     String
+  emailAddress    String
+  stateLga        String?
+  preferredPlanId String?
+  notes           String?
+  status          String            @default("NEW") // NEW, CONTACTED, CONVERTED, REJECTED
+  
+  preferredPlan   SubscriptionPlan? @relation(fields: [preferredPlanId], references: [id])
+  
+  createdAt       DateTime          @default(now())
+  updatedAt       DateTime          @updatedAt
 }
 
 // A group of schools (multi-branch organization)
@@ -781,6 +902,9 @@ model School {
   AttendanceScanLog          AttendanceScanLog[]
   AttendanceSettings         AttendanceSettings?
   ScannerDevice              ScannerDevice[]
+  Scholarship                Scholarship[]
+  AcademicTerm               AcademicTerm[]
+  applications               Application[]
 }
 
 // ─── BRANCHES (Phase 1) ──────────────────────────────────────────────────────
@@ -962,6 +1086,7 @@ model StudentResult {
   scores           Json // e.g. {"1st CA": 18, "Exam": 50}
   totalScore       Float    @default(0)
   grade            String?
+  subjectPosition  Int?
   teacherId        String?
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
@@ -974,6 +1099,65 @@ model StudentResult {
 
   @@unique([studentProfileId, subjectId, term, academicYear])
   @@index([schoolId, isDeleted])
+}
+
+// Stores the computed overall results for a student per term
+model StudentTermResult {
+  id               String   @id @default(uuid())
+  schoolId         String
+  studentProfileId String
+  classId          String
+  term             String
+  academicYear     String
+  totalScore       Float    @default(0)
+  average          Float    @default(0)
+  position         Int?
+  status           String   @default("PENDING") // PASS, FAIL
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([studentProfileId, term, academicYear])
+  @@index([schoolId, classId])
+}
+
+model ResultTemplate {
+  id        String   @id @default(uuid())
+  schoolId  String
+  name      String   // e.g. "Template 1", "Original"
+  isActive  Boolean  @default(false)
+  config    Json     // Stores all the toggles, colors, etc.
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
+}
+
+model CommentRule {
+  id        String   @id @default(uuid())
+  schoolId  String
+  role      String   // "Class Teacher", "Head Teacher", "Principal"
+  minScore  Float
+  maxScore  Float
+  comment   String
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
+}
+
+model SharingHistory {
+  id               String   @id @default(uuid())
+  schoolId         String
+  studentProfileId String
+  term             String
+  academicYear     String
+  channel          String   // "WhatsApp", "Email", "SMS"
+  recipient        String   // Email or Phone
+  status           String   // "Sent", "Failed", "Pending"
+  sentAt           DateTime @default(now())
+
+  @@index([schoolId, studentProfileId])
 }
 
 // ─── BILLING & SUBSCRIPTIONS ───────────────────────────────────────────────
@@ -1321,6 +1505,74 @@ model StudentReportComment {
   @@index([schoolId])
 }
 
+// ─── NEW RESULT MODULE MODELS (PHASE 1) ───────────────────────────────────
+
+// Tracks score entry state per class/subject/term (Not Started, In Progress, Submitted)
+model SubjectEntryStatus {
+  id           String @id @default(uuid())
+  schoolId     String
+  classId      String
+  subjectId    String
+  term         String
+  academicYear String
+  entryType    String @default("NUMERIC") // NUMERIC, COMMENT, TRAIT
+  status       String @default("NOT_STARTED") // NOT_STARTED, IN_PROGRESS, SUBMITTED
+  submittedAt  DateTime?
+  submittedBy  String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@unique([schoolId, classId, subjectId, term, academicYear])
+  @@index([schoolId, classId])
+}
+
+// Tracks whether results are released for a class/term
+model ResultReleaseStatus {
+  id           String @id @default(uuid())
+  schoolId     String
+  classId      String
+  term         String
+  academicYear String
+  isReleased   Boolean @default(false)
+  releasedAt   DateTime?
+  releasedBy   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@unique([schoolId, classId, term, academicYear])
+  @@index([schoolId])
+}
+
+// Stores affective/psychomotor trait scores per student/term
+model TraitRating {
+  id               String @id @default(uuid())
+  schoolId         String
+  studentProfileId String
+  classId          String
+  term             String
+  academicYear     String
+  domain           String // AFFECTIVE, PSYCHOMOTOR
+  ratings          Json   // e.g. {"Neatness": "A", "Punctuality": "B"}
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+  
+  @@unique([schoolId, studentProfileId, domain, term, academicYear])
+  @@index([schoolId, classId])
+}
+
+// Defines available traits and rating scales per domain
+model TraitConfiguration {
+  id           String @id @default(uuid())
+  schoolId     String
+  domain       String // AFFECTIVE, PSYCHOMOTOR
+  traits       String[] // ["Neatness", "Punctuality", ...]
+  ratingScale  Json // [{"rating": "A", "description": "Excellent"}]
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  
+  @@unique([schoolId, domain])
+}
+
 // ─── LMS & CBT (Phase 1 Expansion) ───────────────────────────────────────────
 
 model QuestionBank {
@@ -1489,6 +1741,7 @@ model SchoolPin {
   school    School?         @relation(fields: [schoolId], references: [id])
   student   StudentProfile? @relation(fields: [studentId], references: [id])
   usageLogs PinUsageLog[]
+  application Application?
 
   @@index([batchId])
   @@index([schoolId])
@@ -1533,18 +1786,19 @@ model PlatformTransaction {
 // ─── FINANCE MODULE (V2 PHASE 1) ─────────────────────────────────────────────
 
 model FinanceSettings {
-  id                   String  @id @default(uuid())
-  schoolId             String  @unique
-  currencySymbol       String  @default("₦")
-  invoicePrefix        String  @default("INV-")
-  receiptPrefix        String  @default("REC-")
-  allowPartialPayment  Boolean @default(true)
-  allowOverpayment     Boolean @default(false)
-  autoApplyWallet      Boolean @default(false)
-  showOptionalFees     Boolean @default(true)
-  financeBranding      Json?
-  enableTransport      Boolean @default(false)
-  financeModuleToggles Json?
+  id                    String  @id @default(uuid())
+  schoolId              String  @unique
+  currencySymbol        String  @default("₦")
+  invoicePrefix         String  @default("INV-")
+  receiptPrefix         String  @default("REC-")
+  allowPartialPayment   Boolean @default(true)
+  allowOverpayment      Boolean @default(false)
+  autoApplyWallet       Boolean @default(false)
+  showOptionalFees      Boolean @default(true)
+  showItemizedBreakdown Boolean @default(true)
+  financeBranding       Json?
+  enableTransport       Boolean @default(false)
+  financeModuleToggles  Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1602,6 +1856,7 @@ model FeeDefinition {
   quantity         Int?
   studentType      StudentTypeScope @default(BOTH)
   scope            FeeScopeChoice   @default(WHOLE_SCHOOL)
+  classIds         String[] // specific class arm IDs when scope = CLASS
   termScope        TermScope        @default(ANNUAL)
   isCompulsory     Boolean          @default(true)
   showOnPortal     Boolean          @default(true)
@@ -1635,6 +1890,46 @@ model StudentFeeAssignment {
   school        School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   student       StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
   feeDefinition FeeDefinition  @relation(fields: [feeDefinitionId], references: [id], onDelete: Cascade)
+}
+
+// ─── SCHOLARSHIP & DISCOUNT MANAGEMENT (Phase 2) ─────────────────────────────
+
+enum ScholarshipType {
+  SCHOLARSHIP // fully/partially sponsored
+  PERCENTAGE // e.g. 50% off total fees
+  FIXED_AMOUNT // specific agreed amount student pays
+}
+
+enum ScholarshipStatus {
+  ACTIVE
+  INACTIVE
+  EXPIRED
+}
+
+model Scholarship {
+  id          String            @id @default(uuid())
+  schoolId    String
+  studentId   String
+  type        ScholarshipType
+  value       Float // percentage (0-100) or fixed amount
+  description String?
+  sponsorName String? // for SCHOLARSHIP type
+  status      ScholarshipStatus @default(ACTIVE)
+  startTerm   String?
+  startYear   String?
+  endTerm     String?
+  endYear     String?
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+
+  isDeleted Boolean   @default(false)
+  deletedAt DateTime?
+
+  school  School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student StudentProfile @relation(fields: [studentId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, studentId])
+  @@index([schoolId, isDeleted])
 }
 
 enum TransportBillingMode {
@@ -2098,3 +2393,203 @@ enum StaffAttendanceStatus {
   HALF_DAY
   ABSENT
 }
+
+// ─── LEDGER (INCOME & EXPENSES) ─────────────────────────────────────────────
+
+enum LedgerSource {
+  AUTO
+  MANUAL
+}
+
+enum LedgerCategoryType {
+  INCOME
+  EXPENSE
+}
+
+model FinanceCategory {
+  id        String             @id @default(uuid())
+  schoolId  String
+  name      String
+  type      LedgerCategoryType
+  createdAt DateTime           @default(now())
+
+  incomes  IncomeRecord[]
+  expenses ExpenseRecord[]
+
+  @@unique([schoolId, name, type])
+}
+
+model IncomeRecord {
+  id          String       @id @default(uuid())
+  schoolId    String
+  categoryId  String
+  description String
+  amount      Float
+  date        DateTime
+  source      LedgerSource // AUTO or MANUAL
+  referenceId String? // Links to PaymentTransaction if AUTO
+  createdBy   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  category FinanceCategory @relation(fields: [categoryId], references: [id])
+}
+
+model ExpenseRecord {
+  id          String       @id @default(uuid())
+  schoolId    String
+  categoryId  String
+  description String
+  amount      Float
+  date        DateTime
+  source      LedgerSource // AUTO or MANUAL
+  referenceId String? // Links to Payroll run if AUTO
+  createdBy   String?
+  createdAt   DateTime     @default(now())
+  updatedAt   DateTime     @updatedAt
+
+  category FinanceCategory @relation(fields: [categoryId], references: [id])
+}
+
+// ─── PAYROLL MODULE ──────────────────────────────────────────────────────────
+
+// Per-staff payroll earning/deduction configuration items
+model PayrollSetting {
+  id        String   @id @default(uuid())
+  schoolId  String?
+  staffId   String
+  type      String // "earning" | "deduction"
+  itemName  String
+  amount    Float
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  staff TeacherProfile @relation("StaffPayrollSettings", fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, staffId])
+}
+
+// Staff loan records
+model StaffLoan {
+  id                 String   @id @default(uuid())
+  schoolId           String?
+  staffId            String
+  loanAmount         Float
+  dateCollected      DateTime @default(now())
+  repaymentPerMonth  Float    @default(0)
+  outstandingBalance Float
+  status             String   @default("active") // active | cleared
+  notes              String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  staff TeacherProfile @relation("StaffLoans", fields: [staffId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, staffId])
+}
+
+// Pension contribution accumulation per staff
+model PensionLedger {
+  id           String   @id @default(uuid())
+  schoolId     String?
+  staffId      String
+  amount       Float
+  date         DateTime @default(now())
+  payrollRunId String?
+  createdAt    DateTime @default(now())
+
+  staff      TeacherProfile @relation("StaffPension", fields: [staffId], references: [id], onDelete: Cascade)
+  payrollRun PayrollRun?    @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, staffId])
+}
+
+// A single batch payroll run
+model PayrollRun {
+  id              String   @id @default(uuid())
+  schoolId        String?
+  runDate         DateTime @default(now())
+  month           Int
+  year            Int
+  totalGross      Float    @default(0)
+  totalDeductions Float    @default(0)
+  totalNet        Float    @default(0)
+  status          String   @default("draft") // draft | confirmed
+  createdBy       String?
+  expenseRecordId String? // Links to auto-created ExpenseRecord on confirm
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  items          PayrollRunItem[]
+  pensionEntries PensionLedger[]
+
+  @@index([schoolId])
+}
+
+// Per-staff line item within a payroll run
+model PayrollRunItem {
+  id                  String @id @default(uuid())
+  payrollRunId        String
+  staffId             String
+  gross               Float
+  deductionsBreakdown Json // [{name, amount}]
+  earningsBreakdown   Json // [{name, amount}]
+  net                 Float
+  paymentMethod       String @default("pending") // pending | gateway | manual | export
+  status              String @default("pending") // pending | paid
+
+  payrollRun PayrollRun     @relation(fields: [payrollRunId], references: [id], onDelete: Cascade)
+  staff      TeacherProfile @relation("StaffPayrollRunItems", fields: [staffId], references: [id])
+
+  @@index([payrollRunId])
+  @@index([staffId])
+}
+
+model PromotionHistory {
+  id          String  @id @default(uuid())
+  schoolId    String
+  studentId   String
+  fromClassId String?
+  toClassId   String?
+  sessionId   String
+  promotedBy  String? // ID of the user who performed the promotion
+  status      String  @default("PROMOTED") // PROMOTED, HELD_BACK, GRADUATED
+  notes       String?
+
+  student   StudentProfile  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  fromClass Class?          @relation("FromClass", fields: [fromClassId], references: [id])
+  toClass   Class?          @relation("ToClass", fields: [toClassId], references: [id])
+  session   AcademicSession @relation(fields: [sessionId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId, studentId])
+}
+
+// --- PUBLIC APPLICATIONS (ADMISSION / RECRUITMENT) --------------------------
+
+model Application {
+  id              String   @id @default(uuid())
+  schoolId        String
+  pinId           String   @unique
+  applicationType String   // ADMISSION_APPLICATION, EMPLOYMENT
+  status          String   @default("PENDING") // PENDING, APPROVED, REJECTED
+  
+  formData        Json     // Stores all dynamic form inputs
+  
+  applicantName   String
+  applicantEmail  String?
+  applicantPhone  String?
+  
+  passportUrl          String?
+  birthCertificateUrl  String?
+  otherCertificatesUrl String?
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+  
+  school          School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  pin             SchoolPin @relation(fields: [pinId], references: [id], onDelete: Cascade)
+}
+

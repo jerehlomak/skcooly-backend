@@ -16,12 +16,26 @@ const {
     reviewTransfer,
     getTransferSubmissions,
     generateInvoice,
+    resendInvoice,
     getInvoices,
     getInvoice,
     getPaymentTransactions,
     getReceipts,
     applyWalletToInvoice,
     getActivePaymentMethods,
+    recordManualPayment,
+    // Phase 3
+    getClassBillingSummary,
+    getClassStudents,
+    getStudentBillingProfile,
+    bulkGenerateInvoices,
+    // Phase 4
+    getFamilyBillingSummary,
+    getFamilyBillingProfile,
+    sendFamilyInvoice,
+    // Phase 8
+    initializePaystackWalletDeposit,
+    verifyPayment,
 } = require('../controllers/financePayment.controller');
 
 const ADMIN_ROLES = ['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'];
@@ -52,6 +66,10 @@ router.route('/bank-accounts/:id')
 
 // Paystack payment init
 router.post('/pay/paystack', initializePaystackPayment);
+router.post('/pay/paystack/wallet-deposit', initializePaystackWalletDeposit);
+
+// Payment verification (PaymentSuccess page)
+router.get('/payment-verify', verifyPayment);
 
 // Bank Transfer submission (any authenticated user – parents, staff)
 router.post('/transfers', submitTransfer);
@@ -66,6 +84,8 @@ router.route('/invoices')
     .post(authorizePermissions(...ADMIN_ROLES), generateInvoice);
 
 router.get('/invoices/:id', getInvoice);
+router.post('/invoices/:id/send', authorizePermissions(...ADMIN_ROLES), resendInvoice);
+router.post('/invoices/:id/pay', authorizePermissions(...ADMIN_ROLES), recordManualPayment);
 
 // Payment transactions / reconciliation
 router.get('/transactions', authorizePermissions(...ADMIN_ROLES), getPaymentTransactions);
@@ -76,4 +96,16 @@ router.get('/receipts', getReceipts);
 // Wallet application
 router.post('/wallet/apply', authorizePermissions(...ADMIN_ROLES), applyWalletToInvoice);
 
+// ─── Phase 3: Single Billing ──────────────────────────────────────────────────
+router.get('/billing/classes',                          authorizePermissions(...ADMIN_ROLES), getClassBillingSummary);
+router.get('/billing/classes/:classId/students',        authorizePermissions(...ADMIN_ROLES), getClassStudents);
+router.get('/billing/student/:studentId/profile',       authorizePermissions(...ADMIN_ROLES), getStudentBillingProfile);
+router.post('/billing/bulk-generate',                   authorizePermissions(...ADMIN_ROLES), bulkGenerateInvoices);
+
+// ─── Phase 4: Family Billing ──────────────────────────────────────────────────
+router.get('/billing/families',                         authorizePermissions(...ADMIN_ROLES), getFamilyBillingSummary);
+router.get('/billing/families/:parentId',               authorizePermissions(...ADMIN_ROLES), getFamilyBillingProfile);
+router.post('/billing/families/:parentId/send',         authorizePermissions(...ADMIN_ROLES), sendFamilyInvoice);
+
 module.exports = router;
+

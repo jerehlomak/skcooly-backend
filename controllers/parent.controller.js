@@ -172,19 +172,20 @@ const updateParent = async (req, res) => {
     }
 
     // Assign / Update specific students
+    // NOTE: selectedStudentIds from the frontend are User.id values (not StudentProfile.id)
     if (studentIds && Array.isArray(studentIds)) {
         const parentUser = await prisma.user.findUnique({ where: { id }, include: { parentProfile: true }});
         if (parentUser?.parentProfile?.id) {
-            // First disconnect all existing students for this parent (optional, depending on UX. Let's do it to keep it strictly matching)
+            // First disconnect all existing students for this parent
             await prisma.studentProfile.updateMany({
                 where: { parentProfileId: parentUser.parentProfile.id, schoolId: req.user.schoolId },
                 data: { parentProfileId: null }
             });
 
-            // Then reconnect the selected ones
+            // Then reconnect the selected ones — query by userId (which is User.id)
             if (studentIds.length > 0) {
                 await prisma.studentProfile.updateMany({
-                    where: { id: { in: studentIds }, schoolId: req.user.schoolId },
+                    where: { userId: { in: studentIds }, schoolId: req.user.schoolId },
                     data: { parentProfileId: parentUser.parentProfile.id }
                 });
             }
@@ -291,4 +292,55 @@ const getMyChildrenAcademics = async (req, res) => {
     res.status(StatusCodes.OK).json({ students });
 };
 
-module.exports = { addParent, getAllParents, getParent, updateParent, deleteParent, getMyChildrenAcademics };
+// ─── ASSIGN CHILD TO PARENT (Standalone endpoint) ────────────────────────────
+// This is the dedicated endpoint called from the parent profile page.
+// studentIds must be User.id values (not StudentProfile.id)
+const assignChildToParent = async (req, res) => {
+    const { id } = req.params; // Parent User.id
+    const { studentIds } = req.body; // Array of User.id values
+
+    if (!studentIds || !Array.isArray(studentIds)) {
+        throw new CustomError.BadRequestError('studentIds must be an array of student User IDs');
+    }
+
+    const parentProfile = await prisma.parentProfile.findUnique({
+        where: { userId: id }
+    });
+
+    if (!parentProfile) {
+        throw new CustomError.NotFoundError('Parent profile not found');
+    }
+
+    // Disconnect all existing children for this parent
+    await prisma.studentProfile.updateMany({
+        where: { parentProfileId: parentProfile.id, schoolId: req.user.schoolId },
+        data: { parentProfileId: null }
+    });
+
+    // Assign the new children (by userId)
+    if (studentIds.length > 0) {
+        await prisma.studentProfile.updateMany({
+            where: { userId: { in: studentIds }, schoolId: req.user.schoolId },
+            data: { parentProfileId: parentProfile.id }
+        });
+    }
+
+    // Return updated parent with children
+    const updated = await prisma.parentProfile.findUnique({
+        where: { id: parentProfile.id },
+        include: {
+            students: {
+                where: { isDeleted: false },
+                include: { user: { select: { name: true, id: true } } }
+            }
+        }
+    });
+
+    res.status(StatusCodes.OK).json({
+        msg: 'Children assigned successfully',
+        assignedCount: updated?.students.length || 0,
+        students: updated?.students || []
+    });
+};
+
+module.exports = { addParent, getAllParents, getParent, updateParent, deleteParent, getMyChildrenAcademics, assignChildToParent };

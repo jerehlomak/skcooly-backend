@@ -6,7 +6,7 @@ const { logTenantAction } = require('../services/audit-log.service')
 
 // ─── CREATE SUBJECT ───────────────────────────────────────────────────────────
 const addSubject = async (req, res) => {
-    const { name, code, category, stream, description, teacherId, classIds } = req.body
+    const { name, code, categoryId, arabicName, type, stream, description, teacherId, classIds } = req.body
     if (!name) throw new CustomError.BadRequestError('Subject name is required')
 
     const existing = await prisma.subject.findFirst({ where: { name, schoolId: req.user.schoolId } })
@@ -16,7 +16,9 @@ const addSubject = async (req, res) => {
         data: {
             name: name.trim(),
             code: code ? code.trim().toUpperCase() : null,
-            category: category || 'CORE',
+            categoryId: categoryId || null,
+            arabicName: arabicName || null,
+            type: type || null,
             stream: stream || 'ALL',
             description: description || null,
             teacherId: teacherId || null,
@@ -43,6 +45,7 @@ const getAllSubjects = async (req, res) => {
         },
         include: {
             classes: { include: { class: true } },
+            category: true,
             teacher: { include: { user: { select: { name: true } } } }
         },
         orderBy: { name: 'asc' }
@@ -57,6 +60,7 @@ const getSubject = async (req, res) => {
         where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: {
             classes: { include: { class: true } },
+            category: true,
             teacher: { include: { user: { select: { name: true, email: true } } } }
         }
     })
@@ -67,7 +71,7 @@ const getSubject = async (req, res) => {
 // ─── UPDATE SUBJECT ───────────────────────────────────────────────────────────
 const updateSubject = async (req, res) => {
     const { id } = req.params
-    const { name, code, category, stream, description, teacherId, status, classIds } = req.body
+    const { name, code, categoryId, arabicName, type, stream, description, teacherId, status, classIds } = req.body
 
     const existing = await prisma.subject.findFirst({ where: { id, schoolId: req.user.schoolId } })
     if (!existing) throw new CustomError.NotFoundError(`No subject found with id: ${id}`)
@@ -75,7 +79,9 @@ const updateSubject = async (req, res) => {
     const updateData = {
         ...(name && { name: name.trim() }),
         ...(code !== undefined && { code: code ? code.trim().toUpperCase() : null }),
-        ...(category && { category }),
+        ...(categoryId && { categoryId }),
+        ...(arabicName !== undefined && { arabicName }),
+        ...(type !== undefined && { type }),
         ...(stream && { stream }),
         ...(description !== undefined && { description }),
         ...(teacherId !== undefined && { teacherId: teacherId || null }),
@@ -153,3 +159,5 @@ const getMySubjects = async (req, res) => {
 };
 
 module.exports = { addSubject, getAllSubjects, getSubject, updateSubject, deleteSubject, getMySubjects }
+
+

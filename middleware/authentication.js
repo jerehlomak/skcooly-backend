@@ -57,14 +57,38 @@ const authenticateUser = async (req, res, next) => {
 const authorizePermissions = (...roles) => {
     return (req, res, next) => {
         if (!roles.includes(req.user.role)) {
-            throw new CustomError.UnauthorizedError('Unathorized to access this route')
+            throw new CustomError.UnauthorizedError('Unauthorized to access this route')
         }
         next()
     }
-
 }
+
+const requirePermission = (requiredPerm) => {
+    return async (req, res, next) => {
+        try {
+            // Super admins and school admins bypass granular permission checks
+            if (['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'].includes(req.user.role)) {
+                return next();
+            }
+            
+            const user = await prisma.user.findUnique({
+                where: { id: req.user.userId },
+                include: { customRole: true }
+            });
+            
+            if (user?.customRole?.permissions?.includes(requiredPerm)) {
+                return next();
+            }
+            
+            throw new CustomError.UnauthorizedError(`Permission denied. Requires: ${requiredPerm}`);
+        } catch (error) {
+            next(error);
+        }
+    };
+};
 
 module.exports = {
     authenticateUser,
-    authorizePermissions
+    authorizePermissions,
+    requirePermission
 }

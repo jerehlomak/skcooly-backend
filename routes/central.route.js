@@ -5,6 +5,7 @@ const billingRouter = require('./billing.route')
 
 const {
     login, getMe, logout, setupFirstAdmin,
+    forgotPassword, resetPassword,
     getOverview,
     getSchools, getSchool, createSchool, updateSchool, suspendSchool, activateSchool, deleteSchool,
     getPlans, createPlan, updatePlan, deletePlan,
@@ -16,6 +17,7 @@ const {
     getGroups, createGroup,
     createInvoice, getInvoices, getInvoice, updateInvoice, deleteInvoice,
     sendInvoice, recordInvoicePayment, sendInvoiceReminder,
+    createLead, getLeads, updateLeadStatus
 } = require('../controllers/central.controller')
 
 const { getSchoolWalletAdmin, topUpWallet, setWalletStatus } = require('../controllers/wallet.controller')
@@ -28,6 +30,12 @@ const { authenticateCentralAdmin, requireSuperAdmin } = require('../middleware/c
 // ─── Auth (public) ─────────────────────────────────────────────────────────
 router.post('/auth/login', login)
 router.post('/auth/setup', setupFirstAdmin)
+router.post('/auth/forgot-password', forgotPassword)
+router.post('/auth/reset-password', resetPassword)
+
+// ─── Public Subscription Plans & Leads ──────────────────────────────────────
+router.get('/plans', getPlans)
+router.post('/leads', createLead)
 
 // ─── Protected ─────────────────────────────────────────────────────────────
 router.use(authenticateCentralAdmin)
@@ -53,8 +61,8 @@ router.get('/schools/:id/credentials', getSchoolCredentials)
 router.post('/schools/:id/credentials/reset', requireSuperAdmin, resetSchoolCredentials)
 router.post('/schools/:id/sync-counts', syncSchoolCounts)
 
-// ─── Subscription Plans ────────────────────────────────────────────────────
-router.route('/plans').get(getPlans).post(requireSuperAdmin, createPlan)
+// ─── Subscription Plans (Protected Mutations) ──────────────────────────────────
+router.route('/plans').post(requireSuperAdmin, createPlan)
 router.route('/plans/:id').put(requireSuperAdmin, updatePlan).delete(requireSuperAdmin, deletePlan)
 
 // ─── Analytics ─────────────────────────────────────────────────────────────
@@ -69,6 +77,10 @@ router.put('/features/:schoolId/bulk', bulkUpsertFeatureFlags)
 // ─── Announcements ─────────────────────────────────────────────────────────
 router.route('/announcements').get(getAnnouncements).post(createAnnouncement)
 router.route('/announcements/:id').put(updateAnnouncement).delete(deleteAnnouncement)
+
+// ─── Leads ─────────────────────────────────────────────────────────────────
+router.get('/leads', getLeads)
+router.put('/leads/:id/status', updateLeadStatus)
 
 // ─── Support Tickets ───────────────────────────────────────────────────────
 router.route('/tickets').get(getTickets).post(createTicket)

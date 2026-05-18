@@ -22,6 +22,7 @@ const authRouter = require('./routes/auth.route')
 const userRouter = require('./routes/user.route')
 const studentRouter = require('./routes/student.route')
 const teacherRouter = require('./routes/teacher.route')
+const bulkImportRouter = require('./routes/bulkImport.route')
 const parentRouter = require('./routes/parent.route')
 const classRouter = require('./routes/class.route')
 const subjectRouter = require('./routes/subject.route')
@@ -46,10 +47,18 @@ const paymentRouter = require('./routes/payment.route')
 const branchRouter = require('./routes/branch.route')  // Phase 1
 const schoolPinRouter = require('./routes/schoolPin.route') // Phase 4
 const walletRouter = require('./routes/wallet.route')       // Phase 6
-const schoolMessagingRouter = require('./routes/schoolMessaging.route') // Phase 7
+const schoolMessagingRouter = require('./routes/schoolMessaging.route')
+const applicationRouter = require('./routes/application.route') // Phase 7
 const financeV2Router = require('./routes/financev2.route') // Phase 1 Base (Finance Unified)
 const financePaymentRouter = require('./routes/financePayment.route') // Phase 2: payments, invoices, transfers
 const setupRouter = require('./routes/setup.route') // Admin setup endpoint
+const scholarshipRouter = require('./routes/scholarship.route') // Phase 2: scholarships & discounts
+const payrollRouter = require('./routes/payroll.route') // Payroll Module
+const sessionRouter = require('./routes/sessionRoutes')
+const sectionRouter = require('./routes/sectionRoutes')
+const subjectCategoryRouter = require('./routes/subjectCategoryRoutes')
+const termRouter = require('./routes/term.route')
+const studentFinanceRouter = require('./routes/studentFinance.route') // Phase 6 (Student Wallet & Ledger)
 
 
 // middleware 
@@ -131,6 +140,7 @@ app.use('/api/v1/results', resultRouter)
 app.use('/api/v1/cbt', cbtRouter)
 app.use('/api/v1/lms', lmsRouter)
 app.use('/api/v1/fee', feeRouter)
+app.use('/api/v1/applications', applicationRouter) // Phase 4: Public Applications
 app.use('/api/v1/branches', branchRouter)  // Phase 1: branch management
 app.use('/api/v1/pins', schoolPinRouter)   // Phase 4: PIN usage
 app.use('/api/v1/wallet', walletRouter)    // Phase 6: school wallet
@@ -138,12 +148,22 @@ app.use('/api/v1/messaging', schoolMessagingRouter) // Phase 7: messaging center
 app.use('/api/v1/finance-v2', financeV2Router) // Phase 1: base finance unified
 app.use('/api/v1/finance-v2', financePaymentRouter) // Phase 2: payments, invoices, transfers, receipts
 app.use('/api/v1/setup', setupRouter)               // One-time admin setup (protected by ADMIN_SETUP_SECRET)
+app.use('/api/v1/scholarships', scholarshipRouter)  // Phase 2: scholarships & discounts
+app.use('/api/v1/payroll', payrollRouter)           // Payroll Module
+app.use('/api/v1/sessions', sessionRouter)
+app.use('/api/v1/sections', sectionRouter)
+app.use('/api/v1/subject-categories', subjectCategoryRouter)
+app.use('/api/v1/terms', termRouter)
+const recoveryRouter = require('./routes/recovery.route')
 
+app.use('/api/v1/bulk-import', bulkImportRouter) // Phase 3: Excel bulk import
+app.use('/api/v1/student-finance', studentFinanceRouter) // Phase 6: Student Wallets
 const {
     getMyInvoices, getMyInvoice,
     getBillingProfile, updateBillingProfile
 } = require('./controllers/central.controller')
 const { authenticateUser, authorizePermissions } = require('./middleware/authentication')
+app.use('/api/v1/recovery', authenticateUser, recoveryRouter)
 
 // School-facing invoice inbox (Phase 10)
 app.get('/api/v1/my-invoices', authenticateUser,
