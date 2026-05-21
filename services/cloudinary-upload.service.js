@@ -129,4 +129,38 @@ async function uploadApplicationDocument(file, schoolId) {
     });
 }
 
-module.exports = { uploadTransferEvidence, deleteFile, uploadProfilePhoto, uploadApplicationDocument };
+/**
+ * Upload a legacy result PDF to Cloudinary.
+ * @param {Object} file - The file object from express-fileupload
+ * @param {string} schoolId - For folder organisation
+ * @returns {Promise<{secure_url: string, public_id: string}>}
+ */
+async function uploadLegacyResultPdf(file, schoolId) {
+    if (!file) throw new Error('No file provided');
+    if (file.mimetype !== 'application/pdf') {
+        throw new Error('Invalid file type. Only PDF is allowed for legacy results.');
+    }
+    if (file.size > 10 * 1024 * 1024) { // 10MB max for legacy PDFs
+        throw new Error('File too large. Maximum size is 10MB.');
+    }
+
+    return new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+            {
+                folder: `skooly/legacy_results/${schoolId}`,
+                resource_type: 'raw',
+                allowed_formats: ['pdf'],
+                timeout: 60000,
+            },
+            (error, result) => {
+                if (error) return reject(error);
+                resolve({ secure_url: result.secure_url, public_id: result.public_id });
+            }
+        );
+
+        const streamifier = require('streamifier');
+        streamifier.createReadStream(file.data).pipe(uploadStream);
+    });
+}
+
+module.exports = { uploadTransferEvidence, deleteFile, uploadProfilePhoto, uploadApplicationDocument, uploadLegacyResultPdf };

@@ -13,7 +13,7 @@ const addClass = async (req, res) => {
         const classesToCreate = arms.map(arm => ({
             name: `${name} ${arm}`.trim().toUpperCase(),
             level: level.trim().toUpperCase(),
-            section: arm.trim(),
+            section: section ? section.trim() : null,
             sessionId: sessionId || null,
             arabicName: arabicName || null,
             status: 'Active',

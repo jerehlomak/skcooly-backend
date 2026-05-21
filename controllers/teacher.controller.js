@@ -4,6 +4,7 @@ const argon2 = require('argon2');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
 const { logTenantAction } = require('../services/audit-log.service')
+const crypto = require('crypto');
 
 const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -49,10 +50,9 @@ const addTeacher = async (req, res) => {
 
         const formattedSeq = sequence.toString().padStart(4, '0');
         employeeId = `TCH-${currentYear}-${formattedSeq}`;
-        publicId = `STF-TCH-${formattedSeq}`;
-    } else {
-        publicId = `STF-${employeeId}`;
     }
+
+    publicId = `STF-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
     // Auto-generate password securely
     const generatedPassword = generateRandomPassword();

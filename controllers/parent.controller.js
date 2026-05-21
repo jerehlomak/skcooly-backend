@@ -182,10 +182,10 @@ const updateParent = async (req, res) => {
                 data: { parentProfileId: null }
             });
 
-            // Then reconnect the selected ones — query by userId (which is User.id)
+            // Then reconnect the selected ones — query by id (which is StudentProfile.id)
             if (studentIds.length > 0) {
                 await prisma.studentProfile.updateMany({
-                    where: { userId: { in: studentIds }, schoolId: req.user.schoolId },
+                    where: { id: { in: studentIds }, schoolId: req.user.schoolId },
                     data: { parentProfileId: parentUser.parentProfile.id }
                 });
             }

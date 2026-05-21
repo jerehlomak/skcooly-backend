@@ -19,7 +19,8 @@ model SchoolSettings {
   address          String?
   country          String?
   logoUrl          String?
-  schoolType       SchoolType @default(SECONDARY)
+  schoolTypeId     String? // foreign key to custom school type
+  schoolType       SchoolType? @relation(fields: [schoolTypeId], references: [id])
   currentTerm      String?    @default("First Term")
   currentYear      String?    @default("2025/2026")
   currency         String?    @default("NGN")
@@ -34,6 +35,7 @@ model SchoolSettings {
   resultShowNextTermFees  Boolean @default(false)
   resultAutomaticComments Boolean @default(false)
   parentResultAccessMode  String  @default("DIRECT") // DIRECT | PIN
+  parentTranscriptAccess  Boolean @default(false)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -480,6 +482,7 @@ model Class {
   session              AcademicSession?   @relation(fields: [sessionId], references: [id])
   formTeacher          TeacherProfile?    @relation("FormTeacher", fields: [formTeacherId], references: [id])
   subjects             ClassSubject[]
+  legacyResults        LegacyResult[]
   students             StudentProfile[]   @relation("ClassStudents")
   attendanceRecords    AttendanceRecord[] @relation("ClassAttendance")
   exams                Exam[]
@@ -689,10 +692,18 @@ enum SmsStatus {
   FAILED
 }
 
-enum SchoolType {
-  PRIMARY
-  SECONDARY
-  ARABIC
+model SchoolType {
+  id             String   @id @default(uuid())
+  name           String   @unique
+  description    String?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+  // optional default flag for new schools
+  isDefault      Boolean  @default(false)
+  defaultClasses Json?    @default("[]")
+
+  // reverse relation (optional)
+  settings       SchoolSettings[]
 }
 
 enum Role {
@@ -854,6 +865,7 @@ model School {
   teacherCount               Int                          @default(0)
   adminEmail                 String? // primary school admin login email
   dbSchemaKey                String? // namespace/tenant key if needed
+  legacyResults              LegacyResult[]
   suspendedAt                DateTime?
   suspendReason              String?
   createdAt                  DateTime                     @default(now())
@@ -1099,6 +1111,25 @@ model StudentResult {
 
   @@unique([studentProfileId, subjectId, term, academicYear])
   @@index([schoolId, isDeleted])
+}
+
+// Stores legacy uploaded PDFs for historical results
+model LegacyResult {
+  id           String   @id @default(uuid())
+  schoolId     String
+  classId      String
+  academicYear String
+  term         String
+  sessionName  String?
+  fileUrl      String
+  uploadedBy   String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  class        Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
+  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, classId, academicYear])
 }
 
 // Stores the computed overall results for a student per term

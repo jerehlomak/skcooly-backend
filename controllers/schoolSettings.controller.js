@@ -71,7 +71,7 @@ const updateSettings = async (req, res) => {
     let settings = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } })
     const { 
         schoolName, arabicName, tagline, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, rulesContent,
-        resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode
+        resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode, parentTranscriptAccess
     } = req.body
 
     if (!settings) {
@@ -88,7 +88,7 @@ const updateSettings = async (req, res) => {
                 ...(address !== undefined && { address }),
                 ...(country !== undefined && { country }),
                 ...(logoUrl !== undefined && { logoUrl }),
-                ...(schoolType !== undefined && { schoolType }),
+                ...(schoolType !== undefined && { schoolTypeId: schoolType }),
                 ...(currentTerm !== undefined && { currentTerm }),
                 ...(currentYear !== undefined && { currentYear }),
                 ...(currency !== undefined && { currency }),
@@ -101,6 +101,7 @@ const updateSettings = async (req, res) => {
                 ...(resultShowNextTermFees !== undefined && { resultShowNextTermFees }),
                 ...(resultAutomaticComments !== undefined && { resultAutomaticComments }),
                 ...(parentResultAccessMode !== undefined && { parentResultAccessMode }),
+                ...(parentTranscriptAccess !== undefined && { parentTranscriptAccess }),
             }
         })
     }
@@ -158,18 +159,37 @@ const deleteClassLevel = async (req, res) => {
 // ─── SEED CLASS LEVELS by school type ─────────────────────────────────────────
 const seedClassLevels = async (req, res) => {
     const { schoolType, replace } = req.body
-    if (!DEFAULTS[schoolType]) throw new CustomError.BadRequestError(`Unknown school type: ${schoolType}`)
+
+    let levels = [];
+    const dbSchoolType = await prisma.schoolType.findFirst({
+        where: {
+            OR: [
+                { id: schoolType },
+                { name: schoolType }
+            ]
+        }
+    });
+
+    if (dbSchoolType && dbSchoolType.defaultClasses) {
+        levels = typeof dbSchoolType.defaultClasses === 'string'
+            ? JSON.parse(dbSchoolType.defaultClasses)
+            : dbSchoolType.defaultClasses;
+    } else if (DEFAULTS[schoolType]) {
+        levels = DEFAULTS[schoolType];
+    } else {
+        throw new CustomError.BadRequestError(`Unknown school type or template: ${schoolType}`);
+    }
 
     if (replace) {
         await prisma.classLevel.deleteMany()
     }
-    const levels = DEFAULTS[schoolType]
+
     // upsert each so multiple calls are idempotent
     const created = await Promise.all(
-        levels.map(lvl => prisma.classLevel.upsert({
+        levels.map((lvl, index) => prisma.classLevel.upsert({
             where: { name: lvl.name },
-            update: { order: lvl.order, category: lvl.category, isActive: true },
-            create: lvl
+            update: { order: lvl.order ?? (index + 1), category: lvl.category || null, isActive: true },
+            create: { name: lvl.name, order: lvl.order ?? (index + 1), category: lvl.category || null, isActive: true }
         }))
     )
     res.status(StatusCodes.OK).json({ msg: `Seeded ${created.length} class levels for ${schoolType}`, levels: created })

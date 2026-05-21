@@ -7,6 +7,7 @@ const argon2 = require('argon2');
 const { StatusCodes } = require('http-status-codes');
 const prisma = require('../db/prisma');
 const CustomError = require('../errors');
+const crypto = require('crypto');
 
 const generateRandomPassword = () => {
     const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -120,14 +121,11 @@ const bulkImportStaff = async (req, res) => {
             }
 
             let employeeId = String(row.employeeId || '').trim();
-            let publicId = '';
             if (!employeeId) {
                 const formattedSeq = sequence.toString().padStart(4, '0');
                 employeeId = `TCH-${currentYear}-${formattedSeq}`;
-                publicId = `STF-TCH-${formattedSeq}`;
-            } else {
-                publicId = `STF-${employeeId}`;
             }
+            const publicId = `STF-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
             sequence++;
 
             const generatedPassword = generateRandomPassword();
@@ -237,14 +235,11 @@ const bulkImportStudents = async (req, res) => {
             }
 
             let admissionNo = String(row.admissionNo || '').trim();
-            let publicId = '';
             if (!admissionNo) {
                 const formattedSequence = sequence.toString().padStart(4, '0');
                 admissionNo = `SKL-${currentYear}-${formattedSequence}`;
-                publicId = `STU-${currentYear}-${formattedSequence}`;
-            } else {
-                publicId = `STU-${admissionNo}`;
             }
+            const publicId = `STU-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
             sequence++;
 
             // Check uniqueness

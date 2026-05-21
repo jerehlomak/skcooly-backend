@@ -688,11 +688,134 @@ const generateResultPDF = async (data, templateId, config = {}) => {
   return pdf;
 };
 
+const generateTranscriptPDF = async (data) => {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+  } catch (err) {
+    console.error("Failed to launch Puppeteer:", err);
+    throw new Error("PDF generation service is currently unavailable.");
+  }
+
+  const page = await browser.newPage();
+  
+  const html = transcriptTemplate(data);
+  
+  await page.setContent(html, { waitUntil: 'networkidle0' });
+  const pdf = await page.pdf({ format: 'A4', printBackground: true });
+  
+  await browser.close();
+  return pdf;
+};
+
+const transcriptTemplate = (data) => {
+  const school = data.school || {};
+  const student = data.student || {};
+  const columns = data.columns || []; // Array of session/term labels
+  const subjects = data.subjects || []; // Array of objects { name, scores: [] }
+  const notes = data.notes || []; 
+
+  return `
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <script src="https://cdn.tailwindcss.com"></script>
+        <style>
+          @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;700&display=swap');
+          body { font-family: 'Inter', sans-serif; }
+        </style>
+      </head>
+      <body class="bg-white p-8 max-w-4xl mx-auto font-sans text-xs border border-gray-300">
+        <!-- Letterhead -->
+        <div class="flex justify-between items-center mb-6 pb-4 border-b-2 border-gray-800">
+          <div class="w-24 h-24 flex items-center justify-center">
+            ${school.logoUrl ? `<img src="${school.logoUrl}" class="w-full h-full object-contain" />` : `<div class="bg-gray-200 w-full h-full flex items-center justify-center text-gray-500">Logo</div>`}
+          </div>
+          <div class="text-center flex-1 mx-4">
+            <h1 class="text-3xl font-extrabold text-gray-900 uppercase tracking-wide">${school.name || 'SCHOOL NAME'}</h1>
+            <p class="text-sm italic font-bold text-gray-700 mt-1">${school.motto || ''}</p>
+            <p class="text-xs text-gray-600 mt-1">${school.address || ''}</p>
+            <p class="text-xs text-gray-600">Tel: ${school.phone || ''} | Email: ${school.email || ''}</p>
+          </div>
+          <div class="w-24 h-24"></div> <!-- Balancing space -->
+        </div>
+
+        <div class="text-center mb-6">
+          <h2 class="text-2xl font-bold uppercase underline">SCHOOL TRANSCRIPT</h2>
+          <p class="text-right text-xs mt-2 font-bold">Date Issued: ${new Date().toLocaleDateString()}</p>
+        </div>
+
+        <!-- Bio -->
+        <div class="grid grid-cols-2 gap-4 mb-6 border p-4 bg-gray-50">
+          <div><span class="font-bold">Student Name:</span> <span class="uppercase">${student.name || ''}</span></div>
+          <div><span class="font-bold">Registration No:</span> ${student.admissionNo || ''}</div>
+          <div><span class="font-bold">Sex:</span> ${student.gender || ''}</div>
+          <div><span class="font-bold">Date of Birth:</span> ${student.dob || '—'}</div>
+          <div><span class="font-bold">Entrance Date:</span> ${student.admissionDate || '—'}</div>
+          <div><span class="font-bold">Current/Final Class:</span> ${student.class || '—'}</div>
+        </div>
+
+        <!-- Scores Table -->
+        <div class="mb-6 overflow-x-auto">
+          <table class="w-full border-collapse border border-gray-800 text-[10px] text-center">
+            <thead>
+              <tr class="bg-gray-200">
+                <th class="border border-gray-800 p-2 text-left w-1/4">SUBJECTS</th>
+                ${columns.map(c => `<th class="border border-gray-800 p-1 min-w-[50px]"><div class="rotate-180" style="writing-mode: vertical-rl;">${c}</div></th>`).join('')}
+              </tr>
+            </thead>
+            <tbody>
+              ${subjects.map(sub => `
+                <tr>
+                  <td class="border border-gray-800 p-2 text-left font-bold">${sub.name}</td>
+                  ${sub.scores.map(s => `<td class="border border-gray-800 p-1">${s !== null && s !== undefined ? s : '–'}</td>`).join('')}
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+        </div>
+
+        <!-- Notes (Legacy) -->
+        ${notes.length > 0 ? `
+        <div class="mb-6 p-4 bg-yellow-50 border border-yellow-200 text-xs italic">
+          <p class="font-bold mb-1">Notes / Imported Records:</p>
+          <ul class="list-disc ml-4">
+            ${notes.map(n => `<li>${n}</li>`).join('')}
+          </ul>
+        </div>
+        ` : ''}
+
+        <!-- Certification -->
+        <div class="mt-8 pt-4 border-t border-gray-300">
+          <p class="text-sm font-bold italic mb-8">This is to certify that the above mentioned information is true and correct.</p>
+          
+          <div class="flex justify-between items-end mt-16">
+            <div class="text-center w-48">
+              <div class="border-b-2 border-gray-800 h-4 mb-2"></div>
+              <p class="font-bold uppercase">Principal</p>
+            </div>
+            
+            <div class="w-32 h-32 border-2 border-gray-400 rounded-full flex items-center justify-center text-gray-400 font-bold uppercase rotate-12 opacity-50">
+              OFFICIAL SEAL
+            </div>
+          </div>
+        </div>
+
+      </body>
+    </html>
+  `;
+};
+
 module.exports = {
   generateResultPDF,
+  generateTranscriptPDF,
   template1,
   template2,
   template3,
   template4,
-  template5
+  template5,
+  transcriptTemplate
 };

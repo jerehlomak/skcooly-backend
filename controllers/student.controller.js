@@ -1,9 +1,9 @@
-
 const prisma = require('../db/prisma');
 const argon2 = require('argon2')
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
 const { logTenantAction } = require('../services/audit-log.service')
+const crypto = require('crypto');
 const { publishEvent, EVENTS } = require('../services/event-bus.service')
 
 // Helper function to generate a random readable 8 character password
@@ -47,7 +47,6 @@ const addStudent = async (req, res) => {
         .toLowerCase().replace(/[^a-z0-9]/g, '')
 
     let admissionNo = req.body.admissionNo;
-    let publicId = '';
     let sequenceTag = '0001'; // used in email generation
 
     if (!admissionNo) {
@@ -69,12 +68,13 @@ const addStudent = async (req, res) => {
         const formattedSequence = sequence.toString().padStart(4, '0')
         sequenceTag = formattedSequence
         admissionNo = `SKL-${currentYear}-${formattedSequence}`
-        publicId = `STU-${currentYear}-${formattedSequence}`
     } else {
         // Derive a short sequence tag from the custom admissionNo for email uniqueness
         sequenceTag = admissionNo.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(-6);
-        publicId = `STU-${admissionNo}`;
     }
+    
+    // Always use a globally unique UUID for publicId to prevent collisions
+    const publicId = `STU-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
     // Auto-generate credentials — email is globally unique thanks to schoolTag
     // Sanitize name fully so Arabic/special chars don't break email format
