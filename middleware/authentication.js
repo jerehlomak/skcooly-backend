@@ -56,12 +56,18 @@ const authenticateUser = async (req, res, next) => {
 
 const authorizePermissions = (...roles) => {
     return (req, res, next) => {
-        if (!roles.includes(req.user.role)) {
-            throw new CustomError.UnauthorizedError('Unauthorized to access this route')
+        const allowedRoles = [...roles];
+        // Automatically allow modern admin roles if the legacy 'ADMIN' role is allowed
+        if (allowedRoles.includes('ADMIN')) {
+            allowedRoles.push('SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN');
         }
-        next()
-    }
-}
+
+        if (!allowedRoles.includes(req.user.role)) {
+            throw new CustomError.UnauthorizedError('Unauthorized to access this route');
+        }
+        next();
+    };
+};
 
 const requirePermission = (requiredPerm) => {
     return async (req, res, next) => {
