@@ -198,6 +198,12 @@ const updateStudent = async (req, res) => {
         address, previousSchool, parentProfileId, sessionId, subjectCategoryId
     } = req.body
 
+    // Convert empty strings or 'none' to null for foreign keys
+    if (subjectCategoryId === '' || subjectCategoryId === 'none') subjectCategoryId = null;
+    if (classId === '' || classId === 'none') classId = null;
+    if (sessionId === '' || sessionId === 'none') sessionId = null;
+    if (parentProfileId === '' || parentProfileId === 'none') parentProfileId = null;
+
     // Update User name if provided
     const updateData = {}
     if (name) updateData.name = name
