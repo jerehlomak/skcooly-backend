@@ -1,7 +1,7 @@
 const Redis = require('ioredis');
 
-// Connect to Redis only if REDIS_URL is provided or in production
-const hasRedis = !!process.env.REDIS_URL || process.env.NODE_ENV === 'production';
+// Connect to Redis only if REDIS_URL is provided
+const hasRedis = !!process.env.REDIS_URL;
 
 let redis = null;
 if (hasRedis) {
