@@ -1,16 +1,18 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
-const { generateResultPDF } = require('../services/pdf.service');
+const { generateResultPDF, generateDynamicPDF, generateDynamicPDFs } = require('../services/pdf.service');
 const { uploadBufferToCloudinary } = require('../services/cloudinary-upload.service');
 const { shareResult } = require('../services/sharing.service');
+const jwt = require('jsonwebtoken');
 
 // ─── GRADING SCALE ────────────────────────────────────────────────────────────
 const getGradingScale = async (req, res) => {
     const category = req.query.category || 'ALL';
+    const type = req.query.type || 'SUBJECT';
     
     const scale = await prisma.gradingScale.findUnique({
-        where: { schoolId_category: { schoolId: req.user.schoolId, category } }
+        where: { schoolId_category_type: { schoolId: req.user.schoolId, category, type } }
     });
 
     const defaultGrades = [
@@ -23,21 +25,21 @@ const getGradingScale = async (req, res) => {
     ];
 
     res.status(StatusCodes.OK).json({
-        scale: scale || { schoolId: req.user.schoolId, category, passMark: 40, grades: defaultGrades }
+        scale: scale || { schoolId: req.user.schoolId, category, type, passMark: 40, grades: defaultGrades }
     });
 };
 
 const saveGradingScale = async (req, res) => {
-    const { passMark, grades, category = 'ALL' } = req.body;
+    const { passMark, grades, category = 'ALL', type = 'SUBJECT' } = req.body;
 
     if (!grades || !Array.isArray(grades)) {
         throw new CustomError.BadRequestError('grades array is required');
     }
 
     const scale = await prisma.gradingScale.upsert({
-        where: { schoolId_category: { schoolId: req.user.schoolId, category } },
+        where: { schoolId_category_type: { schoolId: req.user.schoolId, category, type } },
         update: { passMark: Number(passMark) || 40, grades },
-        create: { schoolId: req.user.schoolId, category, passMark: Number(passMark) || 40, grades }
+        create: { schoolId: req.user.schoolId, category, type, passMark: Number(passMark) || 40, grades }
     });
 
     res.status(StatusCodes.OK).json({ msg: 'Grading scale saved', scale });
@@ -98,6 +100,21 @@ const getStudentReportCard = async (req, res) => {
     });
 
     if (!student) throw new CustomError.NotFoundError('Student not found');
+
+    // Override with historical class if enrolled for this specific term
+    const termRecord = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
+    });
+    if (termRecord) {
+        const histEnroll = await prisma.studentTermEnrollment.findFirst({
+            where: { schoolId: req.user.schoolId, studentProfileId, academicTermId: termRecord.id },
+            include: { class: { select: { name: true, level: true, id: true } } }
+        });
+        if (histEnroll && histEnroll.class) {
+            student.classArm = histEnroll.class;
+            student.classId = histEnroll.classId;
+        }
+    }
 
     const effectiveClassId = classId || student.classId;
 
@@ -168,11 +185,28 @@ const getStudentReportCard = async (req, res) => {
     const grades = gradingScaleRecord?.grades ?? [];
     const passMark = gradingScaleRecord?.passMark ?? 40;
 
-    // 5. Annotate each result with computed grade/remark
+    // 5. Annotate each result with computed grade/remark and extract CAs/Exam
     const enrichedResults = results.map(r => {
         const { grade, remark } = computeGrade(r.totalScore, grades);
+        
+        const scoresObj = typeof r.scores === 'string' ? JSON.parse(r.scores) : (r.scores || {});
+        let ca1 = null, ca2 = null, ca3 = null, exam = null;
+        
+        for (const [k, v] of Object.entries(scoresObj)) {
+            const key = k.toLowerCase();
+            if (key.includes('1st ca') || key === 'ca1') ca1 = Number(v);
+            else if (key.includes('2nd ca') || key === 'ca2') ca2 = Number(v);
+            else if (key.includes('3rd ca') || key === 'ca3') ca3 = Number(v);
+            else if (key.includes('exam')) exam = Number(v);
+        }
+
         return {
             ...r,
+            scores: scoresObj,
+            ca1,
+            ca2,
+            ca3,
+            exam,
             computedGrade: grade,
             computedRemark: remark,
             isPassing: r.totalScore >= passMark
@@ -318,6 +352,11 @@ const getStudentReportCard = async (req, res) => {
         if (cumCount > 0) cumulativeAverage = (cumTotal / cumCount).toFixed(1);
     }
 
+    // 12. Trait Ratings
+    let traits = await prisma.traitRating.findMany({
+        where: { studentProfileId, term, academicYear, schoolId: req.user.schoolId }
+    });
+
     res.status(StatusCodes.OK).json({
         student: {
             id: student.id,
@@ -342,6 +381,7 @@ const getStudentReportCard = async (req, res) => {
         },
         attendance,
         comments: comments || null,
+        traits,
         annualResults,
         templateConfig,
         schoolSettings: schoolInfo ? {
@@ -398,6 +438,21 @@ const generateReportCardPDF = async (req, res) => {
 
     if (!student) throw new CustomError.NotFoundError('Student not found');
 
+    // Override with historical class if enrolled for this specific term
+    const termRecord2 = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
+    });
+    if (termRecord2) {
+        const histEnroll = await prisma.studentTermEnrollment.findFirst({
+            where: { schoolId: req.user.schoolId, studentProfileId, academicTermId: termRecord2.id },
+            include: { class: { select: { name: true, level: true, id: true } } }
+        });
+        if (histEnroll && histEnroll.class) {
+            student.classArm = histEnroll.class;
+            student.classId = histEnroll.classId;
+        }
+    }
+
     const effectiveClassId = classId || student.classId;
 
     const results = await prisma.studentResult.findMany({
@@ -423,8 +478,24 @@ const generateReportCardPDF = async (req, res) => {
 
     const enrichedResults = results.map(r => {
         const { grade, remark } = computeGrade(r.totalScore, grades);
+        
+        const scoresObj = typeof r.scores === 'string' ? JSON.parse(r.scores) : (r.scores || {});
+        let ca1 = null, ca2 = null, ca3 = null, exam = null;
+        
+        for (const [k, v] of Object.entries(scoresObj)) {
+            const key = k.toLowerCase();
+            if (key.includes('1st ca') || key === 'ca1') ca1 = Number(v);
+            else if (key.includes('2nd ca') || key === 'ca2') ca2 = Number(v);
+            else if (key.includes('3rd ca') || key === 'ca3') ca3 = Number(v);
+            else if (key.includes('exam')) exam = Number(v);
+        }
+
         return {
             ...r,
+            ca1,
+            ca2,
+            ca3,
+            exam,
             computedGrade: grade,
             computedRemark: remark,
             isPassing: r.totalScore >= passMark
@@ -562,11 +633,30 @@ const getClassReportCards = async (req, res) => {
             throw new CustomError.BadRequestError('classId, term, and academicYear are required');
         }
 
-        const students = await prisma.studentProfile.findMany({
-            where: { classId, schoolId: req.user.schoolId, isDeleted: false, status: 'Active' },
-            include: { user: { select: { name: true } } },
-            orderBy: { user: { name: 'asc' } }
+        let students = [];
+        const termRecord = await prisma.academicTerm.findFirst({
+            where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
         });
+
+        if (termRecord) {
+            const enrollments = await prisma.studentTermEnrollment.findMany({
+                where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
+                include: { student: { include: { user: { select: { name: true } } } } }
+            });
+            if (enrollments.length > 0) {
+                students = enrollments.map(e => e.student).filter(s => s.status === 'Active' && !s.isDeleted);
+            }
+        }
+
+        if (students.length === 0) {
+            students = await prisma.studentProfile.findMany({
+                where: { classId, schoolId: req.user.schoolId, isDeleted: false, status: 'Active' },
+                include: { user: { select: { name: true } } },
+                orderBy: { user: { name: 'asc' } }
+            });
+        } else {
+            students.sort((a, b) => a.user.name.localeCompare(b.user.name));
+        }
 
         // Determine the section for this class to pick the right grading scale
         const classInfo = await prisma.class.findUnique({
@@ -669,11 +759,30 @@ const getAdminClassResults = async (req, res) => {
         throw new CustomError.BadRequestError('classId, term, and academicYear are required');
     }
 
-    const students = await prisma.studentProfile.findMany({
-        where: { classId, schoolId: req.user.schoolId, isDeleted: false },
-        include: { user: { select: { name: true } } },
-        orderBy: { user: { name: 'asc' } }
+    let students = [];
+    const termRecord = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
     });
+
+    if (termRecord) {
+        const enrollments = await prisma.studentTermEnrollment.findMany({
+            where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
+            include: { student: { include: { user: { select: { name: true } } } } }
+        });
+        if (enrollments.length > 0) {
+            students = enrollments.map(e => e.student).filter(s => !s.isDeleted);
+        }
+    }
+
+    if (students.length === 0) {
+        students = await prisma.studentProfile.findMany({
+            where: { classId, schoolId: req.user.schoolId, isDeleted: false },
+            include: { user: { select: { name: true } } },
+            orderBy: { user: { name: 'asc' } }
+        });
+    } else {
+        students.sort((a, b) => a.user.name.localeCompare(b.user.name));
+    }
 
     const results = await prisma.studentResult.findMany({
         where: { classId, term, academicYear, schoolId: req.user.schoolId },
@@ -710,11 +819,30 @@ const getBroadsheet = async (req, res) => {
     const classSubjects = classSubjectsRecords.map(cs => cs.subject).sort((a,b) => a.name.localeCompare(b.name));
 
     // Get active students
-    const students = await prisma.studentProfile.findMany({
-        where: { classId, schoolId: req.user.schoolId, isDeleted: false, status: 'Active' },
-        include: { user: { select: { name: true } } },
-        orderBy: { user: { name: 'asc' } }
+    let students = [];
+    const termRecord = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
     });
+
+    if (termRecord) {
+        const enrollments = await prisma.studentTermEnrollment.findMany({
+            where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
+            include: { student: { include: { user: { select: { name: true } } } } }
+        });
+        if (enrollments.length > 0) {
+            students = enrollments.map(e => e.student).filter(s => s.status === 'Active' && !s.isDeleted);
+        }
+    }
+
+    if (students.length === 0) {
+        students = await prisma.studentProfile.findMany({
+            where: { classId, schoolId: req.user.schoolId, isDeleted: false, status: 'Active' },
+            include: { user: { select: { name: true } } },
+            orderBy: { user: { name: 'asc' } }
+        });
+    } else {
+        students.sort((a, b) => a.user.name.localeCompare(b.user.name));
+    }
 
     // Get all results
     const results = await prisma.studentResult.findMany({
@@ -988,22 +1116,12 @@ const getTemplatePreview = async (req, res) => {
     res.status(StatusCodes.OK).send(html);
 };
 
-const saveResultTemplate = async (req, res) => {
-    const { templateId, config } = req.body;
-    if (!templateId) throw new CustomError.BadRequestError('templateId is required');
-
-    await prisma.resultTemplate.updateMany({
+const getAllTemplates = async (req, res) => {
+    const templates = await prisma.resultTemplate.findMany({
         where: { schoolId: req.user.schoolId },
-        data: { isActive: false }
+        orderBy: { createdAt: 'desc' }
     });
-
-    const template = await prisma.resultTemplate.upsert({
-        where: { schoolId_name: { schoolId: req.user.schoolId, name: templateId } },
-        update: { isActive: true, config },
-        create: { schoolId: req.user.schoolId, name: templateId, isActive: true, config }
-    });
-
-    res.status(StatusCodes.OK).json({ msg: 'Template saved', template });
+    res.status(StatusCodes.OK).json({ templates });
 };
 
 const getResultTemplate = async (req, res) => {
@@ -1011,6 +1129,68 @@ const getResultTemplate = async (req, res) => {
         where: { schoolId: req.user.schoolId, isActive: true }
     });
     res.status(StatusCodes.OK).json({ template });
+};
+
+const createResultTemplate = async (req, res) => {
+    const { name, config } = req.body;
+    if (!name) throw new CustomError.BadRequestError('Template name is required');
+
+    // Optionally set others to inactive if this is marked active, but let's just create it
+    try {
+        const template = await prisma.resultTemplate.create({
+            data: { schoolId: req.user.schoolId, name, config, isActive: true }
+        });
+        
+        await prisma.resultTemplate.updateMany({
+            where: { schoolId: req.user.schoolId, id: { not: template.id } },
+            data: { isActive: false }
+        });
+
+        res.status(StatusCodes.CREATED).json({ msg: 'Template created', template });
+    } catch (error) {
+        if (error.code === 'P2002') {
+            throw new CustomError.BadRequestError('A template with this name already exists.');
+        }
+        throw error;
+    }
+};
+
+const updateResultTemplate = async (req, res) => {
+    const { id } = req.params;
+    const { name, config, isActive } = req.body;
+
+    const template = await prisma.resultTemplate.findFirst({ where: { id, schoolId: req.user.schoolId } });
+    if (!template) throw new CustomError.NotFoundError('Template not found');
+
+    try {
+        const updated = await prisma.resultTemplate.update({
+            where: { id },
+            data: { name: name || template.name, config: config || template.config, isActive: isActive !== undefined ? isActive : template.isActive }
+        });
+
+        if (isActive) {
+            await prisma.resultTemplate.updateMany({
+                where: { schoolId: req.user.schoolId, id: { not: id } },
+                data: { isActive: false }
+            });
+        }
+
+        res.status(StatusCodes.OK).json({ msg: 'Template updated', template: updated });
+    } catch (error) {
+        if (error.code === 'P2002') {
+            throw new CustomError.BadRequestError('A template with this name already exists.');
+        }
+        throw error;
+    }
+};
+
+const deleteResultTemplate = async (req, res) => {
+    const { id } = req.params;
+    const template = await prisma.resultTemplate.findFirst({ where: { id, schoolId: req.user.schoolId } });
+    if (!template) throw new CustomError.NotFoundError('Template not found');
+
+    await prisma.resultTemplate.delete({ where: { id } });
+    res.status(StatusCodes.OK).json({ msg: 'Template deleted' });
 };
 
 const getCommentRules = async (req, res) => {
@@ -1054,6 +1234,112 @@ const shareResultEndpoint = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Result shared successfully', data: result });
 };
 
+// ─── PHASE 4: PRINT & EXPORT ────────────────────────────────────────────────
+
+const generatePrintToken = async (req, res) => {
+    const token = jwt.sign(
+        { userId: req.user.userId, schoolId: req.user.schoolId, role: req.user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '30m' }
+    );
+    res.status(StatusCodes.OK).json({ token });
+};
+
+const validateResults = async (req, res) => {
+    const { classId, term, academicYear } = req.query;
+    if (!classId || !term || !academicYear) throw new CustomError.BadRequestError('Missing parameters');
+
+    const termRecord = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
+    });
+    if (!termRecord) return res.status(StatusCodes.OK).json({ warnings: ['Term not found.'] });
+
+    const enrollments = await prisma.studentTermEnrollment.findMany({
+        where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
+        include: { student: { include: { user: true } } }
+    });
+
+    const students = enrollments.map(e => e.student).filter(s => s.status === 'Active' && !s.isDeleted);
+    
+    const results = await prisma.studentResult.findMany({
+        where: { schoolId: req.user.schoolId, classId, term, academicYear }
+    });
+
+    const warnings = [];
+
+    students.forEach(student => {
+        const studentResults = results.filter(r => r.studentProfileId === student.id);
+        if (studentResults.length === 0) {
+            warnings.push(`${student.user.name} (${student.admissionNo}): No results found.`);
+        } else {
+            studentResults.forEach(r => {
+                if (r.totalScore === null || r.totalScore === undefined) {
+                    warnings.push(`${student.user.name}: Missing total score.`);
+                }
+            });
+        }
+    });
+
+    res.status(StatusCodes.OK).json({ warnings });
+};
+
+const batchExportPDF = async (req, res) => {
+    const { studentIds, classId, term, academicYear, templateId, format } = req.body;
+    
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
+        throw new CustomError.BadRequestError('No students selected for export');
+    }
+
+    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    
+    const token = jwt.sign(
+        { userId: req.user.userId, schoolId: req.user.schoolId, role: req.user.role },
+        process.env.JWT_SECRET,
+        { expiresIn: '30m' }
+    );
+
+    try {
+        if (format === 'zip') {
+            const jobs = studentIds.map(studentId => ({
+                filename: `Result_${studentId}.pdf`,
+                url: `${frontendUrl}/print-batch?studentIds=${studentId}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId}&token=${token}`
+            }));
+
+            const pdfs = await generateDynamicPDFs(jobs);
+
+            // Dynamically import ESM archiver module
+            const archiverModule = await import('archiver');
+            const archiver = archiverModule.default || archiverModule;
+            
+            const archive = archiver('zip', { zlib: { level: 9 } });
+            res.attachment(`results_${classId}.zip`);
+            archive.pipe(res);
+
+            pdfs.forEach(pdfObj => {
+                archive.append(pdfObj.buffer, { name: pdfObj.filename });
+            });
+
+            await archive.finalize();
+
+        } else {
+            const idsParam = studentIds.join(',');
+            const url = `${frontendUrl}/print-batch?studentIds=${idsParam}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId}&token=${token}`;
+            
+            const pdfBuffer = await generateDynamicPDF(url);
+
+            res.set({
+                'Content-Type': 'application/pdf',
+                'Content-Disposition': `attachment; filename="Class_Results.pdf"`,
+                'Content-Length': pdfBuffer.length,
+            });
+            res.send(pdfBuffer);
+        }
+    } catch (err) {
+        console.error("Batch Export Error:", err);
+        throw new CustomError.InternalServerError('Failed to generate batch export');
+    }
+};
+
 module.exports = {
     getGradingScale,
     saveGradingScale,
@@ -1073,10 +1359,16 @@ module.exports = {
     getCumulativeBroadsheet,
     generateReportCardPDF,
     getTemplatePreview,
-    saveResultTemplate,
+    getAllTemplates,
+    createResultTemplate,
+    updateResultTemplate,
+    deleteResultTemplate,
     getResultTemplate,
     getCommentRules,
     saveCommentRule,
     deleteCommentRule,
-    shareResultEndpoint
+    shareResultEndpoint,
+    generatePrintToken,
+    validateResults,
+    batchExportPDF
 };

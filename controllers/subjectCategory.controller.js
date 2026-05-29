@@ -4,7 +4,7 @@ const CustomError = require('../errors');
 const { logTenantAction } = require('../services/audit-log.service');
 
 const createCategory = async (req, res) => {
-    const { name, arabicName } = req.body;
+    const { name } = req.body;
     const schoolId = req.user.schoolId;
 
     if (!name) {
@@ -14,8 +14,7 @@ const createCategory = async (req, res) => {
     const category = await prisma.subjectCategory.create({
         data: {
             schoolId,
-            name,
-            arabicName: arabicName || null
+            name
         }
     });
 
@@ -42,7 +41,7 @@ const getAllCategories = async (req, res) => {
 
 const updateCategory = async (req, res) => {
     const { id } = req.params;
-    const { name, arabicName } = req.body;
+    const { name } = req.body;
     const schoolId = req.user.schoolId;
 
     const existing = await prisma.subjectCategory.findFirst({
@@ -56,8 +55,7 @@ const updateCategory = async (req, res) => {
     const category = await prisma.subjectCategory.update({
         where: { id },
         data: {
-            ...(name && { name }),
-            ...(arabicName !== undefined && { arabicName })
+            ...(name && { name })
         }
     });
 

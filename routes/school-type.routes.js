@@ -1,15 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
-const isAdmin = authorizePermissions('ADMIN'); // admin check middleware
 const schoolTypeController = require('../controllers/school-type.controller');
 
+// All routes require authentication and school-admin level access
 router.use(authenticateUser);
+router.use(authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'));
 
-router.get('/', isAdmin, schoolTypeController.listSchoolTypes);
-router.post('/', isAdmin, schoolTypeController.createSchoolType);
-router.patch('/:id', isAdmin, schoolTypeController.updateSchoolType);
-router.delete('/:id', isAdmin, schoolTypeController.deleteSchoolType);
+router.get('/', schoolTypeController.listSchoolTypes);
+router.post('/', schoolTypeController.createSchoolType);
+router.patch('/:id', schoolTypeController.updateSchoolType);
+router.delete('/:id', schoolTypeController.deleteSchoolType);
+router.post('/:id/default', schoolTypeController.setDefaultSchoolType);
 
-router.post('/:id/default', isAdmin, schoolTypeController.setDefaultSchoolType);
 module.exports = router;

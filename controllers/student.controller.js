@@ -20,7 +20,7 @@ const generateRandomPassword = () => {
 const addStudent = async (req, res) => {
     let {
         name, classLevel, classId, gender, phone,
-        admissionDate, dateOfBirth, orphan, religion, bloodGroup,
+        admissionDate, dateOfBirth, orphan, religion, bloodGroup, genotype,
         address, previousSchool, parentProfileId, sessionId, subjectCategoryId
     } = req.body
 
@@ -69,6 +69,13 @@ const addStudent = async (req, res) => {
         sequenceTag = formattedSequence
         admissionNo = `SKL-${currentYear}-${formattedSequence}`
     } else {
+        // Validate uniqueness of manually provided admission number
+        const existing = await prisma.studentProfile.findFirst({
+            where: { admissionNo, schoolId: req.user.schoolId, isDeleted: false }
+        });
+        if (existing) {
+            throw new CustomError.BadRequestError(`Admission number "${admissionNo}" already exists in the system.`);
+        }
         // Derive a short sequence tag from the custom admissionNo for email uniqueness
         sequenceTag = admissionNo.replace(/[^a-z0-9]/gi, '').toLowerCase().slice(-6);
     }
@@ -109,10 +116,10 @@ const addStudent = async (req, res) => {
                         orphan: orphan === true || orphan === 'yes',
                         religion: religion || null,
                         bloodGroup: bloodGroup || null,
+                        genotype: genotype || null,
                         address: address || null,
                         previousSchool: previousSchool || null,
                         parentProfileId: parentProfileId || null,
-                        arabicName: req.body.arabicName || null,
                         subjectCategoryId: subjectCategoryId || null,
                         publicId
                     }
@@ -147,22 +154,67 @@ const getAllStudents = async (req, res) => {
         return res.status(StatusCodes.FORBIDDEN).json({ msg: 'No school context found for this user.' })
     }
 
+    const { page, limit, search, schoolType, classId } = req.query;
+    
+    // Pagination defaults
+    const pageNumber = parseInt(page) || 1;
+    const limitNumber = parseInt(limit) || 10; // If not provided, default to 10 for paginated requests, but if they need all we might need a flag. Wait, if we enforce 10, all old components will break.
+    // If page/limit is provided, we paginate. Otherwise, we return all (backward compatibility for components not updated yet).
+    const isPaginated = page !== undefined || limit !== undefined;
+    const actualLimit = isPaginated ? limitNumber : undefined;
+    const skip = isPaginated ? (pageNumber - 1) * limitNumber : undefined;
+
+    let levelFilter = undefined;
+    if (schoolType) {
+        const classLevels = await prisma.classLevel.findMany({
+            where: { schoolId, category: schoolType }
+        });
+        const levelNames = classLevels.map(cl => cl.name);
+        const uppercaseLevelNames = levelNames.map(n => n.toUpperCase());
+        levelFilter = { in: [...new Set([...levelNames, ...uppercaseLevelNames])] };
+    }
+
+    let whereClause = {
+        schoolId,          // only this school
+        isDeleted: false,  // soft delete check
+        NOT: { schoolId: null },  // safety guard
+        ...(levelFilter && { classLevel: levelFilter }),
+        ...(classId && { classId }), // filter by specific class
+    };
+
+    if (search) {
+        whereClause = {
+            ...whereClause,
+            OR: [
+                { user: { name: { contains: search, mode: 'insensitive' } } },
+                { user: { email: { contains: search, mode: 'insensitive' } } },
+                { admissionNo: { contains: search, mode: 'insensitive' } },
+            ]
+        };
+    }
+
+    const totalRecords = await prisma.studentProfile.count({ where: whereClause });
+
     const students = await prisma.studentProfile.findMany({
-        where: {
-            schoolId,          // only this school
-            isDeleted: false,  // soft delete check
-            NOT: { schoolId: null }  // safety guard: never return null-schoolId orphans
-        },
+        where: whereClause,
         include: {
-            user: { select: { id: true, name: true, email: true, role: true } },
-            classArm: { select: { name: true, level: true } },
+            user: { select: { id: true, name: true, email: true, role: true, isRestricted: true, restrictionReason: true } },
+            classArm: { select: { id: true, name: true, level: true } },
             parent: {
                 include: { user: { select: { name: true } } }
             }
         },
-        orderBy: { enrollmentDate: 'desc' }
-    })
-    res.status(StatusCodes.OK).json({ students, count: students.length })
+        orderBy: { enrollmentDate: 'desc' },
+        ...(isPaginated && { skip, take: actualLimit })
+    });
+    
+    res.status(StatusCodes.OK).json({ 
+        students, 
+        count: students.length,
+        total: totalRecords,
+        page: pageNumber,
+        totalPages: isPaginated ? Math.ceil(totalRecords / limitNumber) : 1
+    });
 }
 
 // ─── GET SINGLE STUDENT ────────────────────────────────────────────────────────
@@ -194,7 +246,7 @@ const updateStudent = async (req, res) => {
     const { id } = req.params // This is the User.id
     let {
         name, classLevel, classId, gender, phone, status,
-        admissionDate, dateOfBirth, orphan, religion, bloodGroup,
+        admissionDate, dateOfBirth, orphan, religion, bloodGroup, genotype,
         address, previousSchool, parentProfileId, sessionId, subjectCategoryId
     } = req.body
 
@@ -223,7 +275,7 @@ const updateStudent = async (req, res) => {
     })
 
     // Because updateMany doesn't support nested updates, we update the profile separately
-    if (Object.keys(updateData).length > 0 || classLevel || classId || gender || status || phone || dateOfBirth || orphan !== undefined || religion || bloodGroup || address || previousSchool || parentProfileId || req.body.arabicName !== undefined || subjectCategoryId !== undefined) {
+    if (Object.keys(updateData).length > 0 || classLevel || classId || gender || status || phone || dateOfBirth || orphan !== undefined || religion || bloodGroup || address || previousSchool || parentProfileId || subjectCategoryId !== undefined) {
         await prisma.studentProfile.update({
             where: { userId: id },
             data: {
@@ -236,10 +288,10 @@ const updateStudent = async (req, res) => {
                 orphan: orphan !== undefined ? (orphan === true || orphan === 'yes') : undefined,
                 religion: religion !== undefined ? religion : undefined,
                 bloodGroup: bloodGroup !== undefined ? bloodGroup : undefined,
+                genotype: genotype !== undefined ? genotype : undefined,
                 address: address !== undefined ? address : undefined,
                 previousSchool: previousSchool !== undefined ? previousSchool : undefined,
                 parentProfileId: parentProfileId !== undefined ? parentProfileId : undefined,
-                arabicName: req.body.arabicName !== undefined ? req.body.arabicName : undefined,
                 sessionId: sessionId !== undefined ? sessionId : undefined,
                 subjectCategoryId: subjectCategoryId !== undefined ? subjectCategoryId : undefined
             }
@@ -375,4 +427,98 @@ const promoteStudents = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: `Successfully processed ${students.length} students` });
 }
 
-module.exports = { addStudent, getAllStudents, getStudent, updateStudent, deleteStudent, promoteStudents }
+// ─── CHECK ADMISSION NUMBER ───────────────────────────────────────────────────
+const checkAdmissionNo = async (req, res) => {
+    const { admissionNo } = req.query;
+    if (!admissionNo) return res.status(200).json({ exists: false });
+    const existing = await prisma.studentProfile.findFirst({
+        where: { admissionNo, schoolId: req.user.schoolId, isDeleted: false }
+    });
+    res.status(200).json({ exists: !!existing });
+};
+
+// ─── TRANSFER STUDENT CLASS ───────────────────────────────────────────────────
+const transferStudent = async (req, res) => {
+    const { id } = req.params; // Student User ID
+    const { newClassId, notes } = req.body;
+    const schoolId = req.user.schoolId;
+
+    if (!newClassId) {
+        throw new CustomError.BadRequestError('Please provide a destination class (newClassId)');
+    }
+
+    const student = await prisma.studentProfile.findFirst({
+        where: { userId: id, schoolId, isDeleted: false },
+        include: { classArm: true }
+    });
+
+    if (!student) {
+        throw new CustomError.NotFoundError(`No student found with id: ${id}`);
+    }
+
+    const newClass = await prisma.class.findUnique({
+        where: { id: newClassId, schoolId, isDeleted: false }
+    });
+
+    if (!newClass) {
+        throw new CustomError.NotFoundError(`Target class not found.`);
+    }
+
+    if (student.classId === newClassId) {
+        throw new CustomError.BadRequestError('Student is already in this class.');
+    }
+
+    // Find the active academic session
+    const currentSession = await prisma.academicSession.findFirst({
+        where: { schoolId, isCurrent: true, isDeleted: false }
+    });
+
+    // Find the active academic term
+    const currentTerm = currentSession ? await prisma.academicTerm.findFirst({
+        where: { schoolId, sessionId: currentSession.id, isActive: true }
+    }) : null;
+
+    await prisma.$transaction(async (tx) => {
+        // 1. Log transfer in PromotionHistory
+        if (currentSession) {
+            await tx.promotionHistory.create({
+                data: {
+                    schoolId,
+                    studentId: student.id,
+                    fromClassId: student.classId,
+                    toClassId: newClassId,
+                    sessionId: currentSession.id,
+                    promotedBy: req.user.userId,
+                    status: 'TRANSFERRED',
+                    notes: notes || 'Manual class transfer'
+                }
+            });
+        }
+
+        // 2. Update current active term enrollment if it exists
+        if (currentTerm) {
+            await tx.studentTermEnrollment.updateMany({
+                where: {
+                    studentProfileId: student.id,
+                    academicTermId: currentTerm.id
+                },
+                data: {
+                    classId: newClassId
+                }
+            });
+        }
+
+        // 3. Update the main student profile
+        await tx.studentProfile.update({
+            where: { id: student.id },
+            data: {
+                classId: newClassId,
+                classLevel: newClass.level
+            }
+        });
+    });
+
+    res.status(StatusCodes.OK).json({ msg: 'Student transferred successfully' });
+};
+
+module.exports = { addStudent, getAllStudents, getStudent, updateStudent, deleteStudent, promoteStudents, checkAdmissionNo, transferStudent }

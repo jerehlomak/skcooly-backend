@@ -40,32 +40,53 @@ const getSchoolBatches = async (req, res) => {
 // ─── SCHOOL ADMIN: View Individual PINs (For Export/Printing) ─────────────
 const getSchoolPins = async (req, res) => {
     const schoolId = req.user.schoolId
-    const { batchId, status } = req.query
+    const { batchId, status, search, page, limit } = req.query
+
+    const pageNum = Number(page) || 1
+    const limitNum = Number(limit) || 10
+    const skip = (pageNum - 1) * limitNum
 
     const where = { schoolId }
     if (batchId) where.batchId = batchId
-    if (status) where.status = status
+    if (status && status !== 'ALL') where.status = status
 
-    const rawPins = await prisma.schoolPin.findMany({
-        where,
-        orderBy: { serialNumber: 'asc' },
-        include: {
-            student: {
-                select: {
-                    admissionNo: true,
-                    user: { select: { name: true } }
-                }
+    if (search) {
+        where.OR = [
+            { serialNumber: { contains: search, mode: 'insensitive' } },
+            { pinCode: { contains: search, mode: 'insensitive' } }
+        ]
+    }
+
+    const [rawPins, total] = await Promise.all([
+        prisma.schoolPin.findMany({
+            where,
+            orderBy: { serialNumber: 'asc' },
+            include: {
+                student: {
+                    select: {
+                        admissionNo: true,
+                        user: { select: { name: true } }
+                    }
+                },
+                batch: { select: { batchNumber: true, pricePerPin: true } }
             },
-            batch: { select: { batchNumber: true, pricePerPin: true } }
-        }
-    })
+            skip,
+            take: limitNum
+        }),
+        prisma.schoolPin.count({ where })
+    ])
 
-    // Normalise student shape so the frontend still gets { firstName, lastName, admissionNo }
+    // Normalise student shape and mask PINs
     const pins = rawPins.map(p => {
-        if (!p.student) return p
+        const pinCode = (p.status === 'ACTIVE' && p.usageCount === 0)
+            ? p.pinCode
+            : `${p.pinCode.substring(0, 4)}********${p.pinCode.substring(p.pinCode.length - 2)}`
+
+        if (!p.student) return { ...p, pinCode }
         const parts = (p.student.user?.name || '').split(' ')
         return {
             ...p,
+            pinCode,
             student: {
                 firstName: parts[0] || '',
                 lastName: parts.slice(1).join(' ') || '',
@@ -74,7 +95,12 @@ const getSchoolPins = async (req, res) => {
         }
     })
 
-    res.status(StatusCodes.OK).json({ pins })
+    res.status(StatusCodes.OK).json({ 
+        pins,
+        total,
+        page: pageNum,
+        totalPages: Math.ceil(total / limitNum)
+    })
 }
 
 // ─── STUDENT/PARENT: Validate and Consume PIN ─────────────────────────────

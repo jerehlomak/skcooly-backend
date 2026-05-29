@@ -150,21 +150,43 @@ const submitApplication = async (req, res) => {
 // ─── DASHBOARD: Get School Applications ───────────────────────────────────
 const getSchoolApplications = async (req, res) => {
     const schoolId = req.user.schoolId;
-    const { status, type } = req.query;
+    const { status, type, search, page, limit } = req.query;
+
+    const pageNum = Number(page) || 1;
+    const limitNum = Number(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
 
     const where = { schoolId };
     if (status) where.status = status;
     if (type) where.applicationType = type;
+    
+    if (search) {
+        where.OR = [
+            { applicantName: { contains: search, mode: 'insensitive' } },
+            { applicantEmail: { contains: search, mode: 'insensitive' } },
+            { applicantPhone: { contains: search, mode: 'insensitive' } }
+        ];
+    }
 
-    const applications = await prisma.application.findMany({
-        where,
-        orderBy: { createdAt: 'desc' },
-        include: {
-            pin: { select: { pinCode: true, serialNumber: true } }
-        }
+    const [applications, total] = await Promise.all([
+        prisma.application.findMany({
+            where,
+            orderBy: { createdAt: 'desc' },
+            include: {
+                pin: { select: { pinCode: true, serialNumber: true } }
+            },
+            skip,
+            take: limitNum
+        }),
+        prisma.application.count({ where })
+    ]);
+
+    res.status(StatusCodes.OK).json({ 
+        applications, 
+        total,
+        page: pageNum,
+        totalPages: Math.ceil(total / limitNum)
     });
-
-    res.status(StatusCodes.OK).json({ applications });
 };
 
 // ─── DASHBOARD: Update Application Status ─────────────────────────────────

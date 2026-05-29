@@ -289,6 +289,8 @@ const getSchool = async (req, res) => {
             subscription: true,
             featureFlags: true,
             tickets: { orderBy: { createdAt: 'desc' }, take: 5 },
+            branchSchools: { select: { id: true, name: true, schoolCode: true, status: true, createdAt: true } },
+            parent: { select: { id: true, name: true, schoolCode: true } }
         },
     })
     if (!school) return res.status(StatusCodes.NOT_FOUND).json({ message: 'School not found.' })
@@ -296,7 +298,7 @@ const getSchool = async (req, res) => {
 }
 
 const createSchool = async (req, res) => {
-    const { name, email, phone, address, country, planId, adminEmail, groupId } = req.body
+    const { name, email, phone, address, country, planId, adminEmail, groupId, parentId } = req.body
     if (!name || !email) {
         return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Name and email are required.' })
     }
@@ -304,6 +306,7 @@ const createSchool = async (req, res) => {
     try {
         // If groupId provided but empty string, treat as null
         const resolvedGroupId = groupId || null
+        const resolvedParentId = parentId || null
 
         // Generate a unique, human-readable school code e.g. SKL-A1B2C3
         const generateSchoolCode = () => {
@@ -319,7 +322,7 @@ const createSchool = async (req, res) => {
         }
 
         const school = await prisma.school.create({
-            data: { schoolCode, name, email, phone, address, country, planId: planId || null, adminEmail, groupId: resolvedGroupId, status: 'ACTIVE' },
+            data: { schoolCode, name, email, phone, address, country, planId: planId || null, adminEmail, groupId: resolvedGroupId, parentId: resolvedParentId, status: 'ACTIVE' },
             include: { plan: { select: { name: true } } },
         })
 
@@ -377,7 +380,7 @@ const createSchool = async (req, res) => {
 
 const updateSchool = async (req, res) => {
     const { id } = req.params
-    const { name, email, phone, address, country, planId, adminEmail, studentCount, teacherCount, groupId, schoolCode } = req.body
+    const { name, email, phone, address, country, planId, adminEmail, studentCount, teacherCount, groupId, schoolCode, parentId } = req.body
 
     try {
         const school = await prisma.school.update({
@@ -386,6 +389,7 @@ const updateSchool = async (req, res) => {
                 name, email, phone, address, country,
                 planId: planId || null,
                 groupId: groupId || null,
+                parentId: parentId || null,
                 adminEmail,
                 schoolCode: schoolCode || undefined,
                 studentCount: studentCount !== undefined ? Number(studentCount) : undefined,

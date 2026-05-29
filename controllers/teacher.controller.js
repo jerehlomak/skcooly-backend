@@ -17,7 +17,7 @@ const generateRandomPassword = () => {
 
 // ─── ADD TEACHER ───────────────────────────────────────────────────────────────
 const addTeacher = async (req, res) => {
-    const { name, email, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber, arabicName } = req.body;
+    const { name, email, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
 
     if (!name || !gender || !email) {
         throw new CustomError.BadRequestError('Please provide name, email, and gender');
@@ -96,8 +96,7 @@ const addTeacher = async (req, res) => {
                         bankName: bankName || null,
                         accountName: accountName || null,
                         accountNumber: accountNumber || null,
-                        subjectsTaught: subjects || null,
-                        arabicName: arabicName || null
+                        subjectsTaught: subjects || null
                     }
                 }
             },
@@ -114,12 +113,45 @@ const addTeacher = async (req, res) => {
 
 // ─── GET ALL TEACHERS ──────────────────────────────────────────────────────────
 const getAllTeachers = async (req, res) => {
+    const { page, limit, search } = req.query;
+    
+    // Pagination defaults
+    const pageNumber = parseInt(page) || 1;
+    const limitNumber = parseInt(limit) || 10;
+    const isPaginated = page !== undefined || limit !== undefined;
+    const actualLimit = isPaginated ? limitNumber : undefined;
+    const skip = isPaginated ? (pageNumber - 1) * limitNumber : undefined;
+
+    let whereClause = { schoolId: req.user.schoolId, isDeleted: false };
+
+    if (search) {
+        whereClause = {
+            ...whereClause,
+            OR: [
+                { user: { name: { contains: search, mode: 'insensitive' } } },
+                { user: { email: { contains: search, mode: 'insensitive' } } },
+                { employeeId: { contains: search, mode: 'insensitive' } },
+                { department: { contains: search, mode: 'insensitive' } }
+            ]
+        };
+    }
+
+    const totalRecords = await prisma.teacherProfile.count({ where: whereClause });
+
     const teachers = await prisma.teacherProfile.findMany({
-        where: { schoolId: req.user.schoolId, isDeleted: false },
-        include: { user: { select: { id: true, name: true, email: true, role: true } } },
-        orderBy: { hireDate: 'desc' }
+        where: whereClause,
+        include: { user: { select: { id: true, name: true, email: true, role: true, isRestricted: true, restrictionReason: true } } },
+        orderBy: { hireDate: 'desc' },
+        ...(isPaginated && { skip, take: actualLimit })
     });
-    res.status(StatusCodes.OK).json({ teachers, count: teachers.length });
+    
+    res.status(StatusCodes.OK).json({ 
+        teachers, 
+        count: teachers.length,
+        total: totalRecords,
+        page: pageNumber,
+        totalPages: isPaginated ? Math.ceil(totalRecords / limitNumber) : 1
+    });
 };
 
 // ─── GET SINGLE TEACHER ───────────────────────────────────────────────────────
@@ -138,7 +170,7 @@ const getTeacher = async (req, res) => {
 // ─── UPDATE TEACHER ───────────────────────────────────────────────────────────
 const updateTeacher = async (req, res) => {
     const { id } = req.params; // User.id
-    const { name, email, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber, staffType, photoUrl, arabicName } = req.body;
+    const { name, email, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber, staffType, photoUrl } = req.body;
 
     if (email) {
         const existingEmailUser = await prisma.user.findFirst({
@@ -170,7 +202,7 @@ const updateTeacher = async (req, res) => {
         }
     });
 
-    if (department !== undefined || phone !== undefined || gender || status || dateOfBirth || address !== undefined || qualification !== undefined || salary !== undefined || bankName !== undefined || accountName !== undefined || accountNumber !== undefined || subjects !== undefined || staffType !== undefined || photoUrlUpdate !== undefined || arabicName !== undefined) {
+    if (department !== undefined || phone !== undefined || gender || status || dateOfBirth || address !== undefined || qualification !== undefined || salary !== undefined || bankName !== undefined || accountName !== undefined || accountNumber !== undefined || subjects !== undefined || staffType !== undefined || photoUrlUpdate !== undefined) {
         await prisma.teacherProfile.update({
             where: { userId: id },
             data: {
@@ -187,8 +219,7 @@ const updateTeacher = async (req, res) => {
                 ...(accountNumber !== undefined && { accountNumber }),
                 ...(subjects !== undefined && { subjects }),
                 ...(staffType !== undefined && { staffType }),
-                ...(photoUrlUpdate !== undefined && { photoUrl: photoUrlUpdate }),
-                ...(arabicName !== undefined && { arabicName })
+                ...(photoUrlUpdate !== undefined && { photoUrl: photoUrlUpdate })
             }
         });
     }
@@ -355,4 +386,70 @@ const getMyFormClass = async (req, res) => {
 };
 
 
-module.exports = { addTeacher, getAllTeachers, getTeacher, updateTeacher, deleteTeacher, getMyClasses, getMySubjects, getMyFormClass };
+// ─── REASSIGN TEACHER / STAFF ─────────────────────────────────────────────────
+const reassignTeacher = async (req, res) => {
+    const { id } = req.params; // Teacher User ID
+    const { department, staffType, formClassId } = req.body;
+    const schoolId = req.user.schoolId;
+
+    const teacher = await prisma.teacherProfile.findFirst({
+        where: { userId: id, schoolId, isDeleted: false }
+    });
+
+    if (!teacher) {
+        throw new CustomError.NotFoundError(`No staff found with id: ${id}`);
+    }
+
+    await prisma.$transaction(async (tx) => {
+        // Update department and staffType
+        if (department || staffType) {
+            await tx.teacherProfile.update({
+                where: { id: teacher.id },
+                data: {
+                    ...(department && { department }),
+                    ...(staffType && { staffType })
+                }
+            });
+        }
+
+        // If a formClassId is provided, we assign them as the form teacher of that class
+        if (formClassId !== undefined) {
+            if (formClassId === 'none' || formClassId === '') {
+                 await tx.class.updateMany({
+                     where: { formTeacherId: teacher.id, schoolId },
+                     data: { formTeacherId: null }
+                 });
+            } else {
+                 const targetClass = await tx.class.findUnique({
+                     where: { id: formClassId, schoolId, isDeleted: false }
+                 });
+                 if (!targetClass) throw new CustomError.NotFoundError('Form class not found');
+                 
+                 // Remove them from other classes first (assuming 1 form class per teacher)
+                 await tx.class.updateMany({
+                     where: { formTeacherId: teacher.id, schoolId },
+                     data: { formTeacherId: null }
+                 });
+                 
+                 // Assign to new class
+                 await tx.class.update({
+                     where: { id: formClassId },
+                     data: { formTeacherId: teacher.id }
+                 });
+            }
+        }
+        
+        // If staffType changed to Admin or other, update the User role too
+        if (staffType) {
+             const newRole = staffType === 'ADMIN' ? 'ADMIN' : 'TEACHER';
+             await tx.user.update({
+                 where: { id: teacher.userId },
+                 data: { role: newRole }
+             });
+        }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: 'Staff reassigned successfully' });
+};
+
+module.exports = { addTeacher, getAllTeachers, getTeacher, updateTeacher, deleteTeacher, getMyClasses, getMySubjects, getMyFormClass, reassignTeacher };

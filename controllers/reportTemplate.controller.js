@@ -4,67 +4,25 @@ const CustomError = require('../errors');
 
 // ─── DEFAULT TEMPLATE CONFIG ─────────────────────────────────────────────────
 const DEFAULT_TEMPLATE_CONFIG = {
-    // Layout toggles
-    showSchoolLogo: true,
-    showSchoolAddress: true,
-    showStudentPhoto: true,
-    showAdmissionNo: true,
-    showClass: true,
-    showSession: true,
-    showTerm: true,
-    showAge: true,
-    showGender: true,
-    showTeacherName: true,
-    showClassAverage: true,
-    showSubjectPosition: false,
-    showOverallPosition: true,
-    showGradingKey: true,
-    showAttendance: true,
-    showEvaluation: true,
-    showTeacherComment: true,
-    showHeadComment: true,
-    showPrincipalComment: true,
-    showNextTerm: true,
-    showPromotedTo: false,
-    // Document
-    reportTitle: 'End of Term Academic Report',
-    principalTitle: 'Principal',
-    headTeacherTitle: 'Head Teacher',
-    formTeacherTitle: 'Form Teacher',
-    principalName: '',
-    // Design
-    primaryColor: '#0036a1',
-    headerBg: '#0036a1',
-    fontFamily: 'serif',
-    tableBorderColor: '#d1d5db',
-    pageMargin: '10mm',
-    logoPosition: 'left', // left | center | right
-    headerStyle: 'standard', // standard | banner | minimal
-    // Subject table columns
-    subjectColumns: [
-        { id: 'ca1', name: '1st CA', key: 'ca1', width: 60, show: true },
-        { id: 'ca2', name: '2nd CA', key: 'ca2', width: 60, show: true },
-        { id: 'exam', name: 'Exam', key: 'exam', width: 60, show: true },
-        { id: 'total', name: 'Total', key: 'total', width: 60, show: true, computed: true },
-        { id: 'grade', name: 'Grade', key: 'grade', width: 55, show: true, computed: true },
-        { id: 'remark', name: 'Remark', key: 'remark', width: 80, show: true, computed: true },
+    blocks: [
+        { id: 'b-header', type: 'SchoolHeaderBlock', isVisible: true },
+        { id: 'b-student-info', type: 'StudentInfoBlock', isVisible: true },
+        { id: 'b-academic-summary', type: 'AcademicSummaryBlock', isVisible: true },
+        { id: 'b-subject-results', type: 'SubjectResultsBlock', isVisible: true },
+        { id: 'b-attendance', type: 'AttendanceBlock', isVisible: true },
+        { id: 'b-trait-ratings', type: 'TraitRatingsBlock', isVisible: true },
+        { id: 'b-comments', type: 'NarrativeCommentsBlock', isVisible: true },
+        { id: 'b-signatures', type: 'SignaturesBlock', isVisible: true }
     ],
-    // Evaluation sections
-    evaluationSections: [
-        {
-            id: 'behavior',
-            title: 'Behavioural Assessment',
-            show: true,
-            rows: [
-                { id: 'b1', label: 'Attentiveness' },
-                { id: 'b2', label: 'Cooperation' },
-                { id: 'b3', label: 'Punctuality' },
-                { id: 'b4', label: 'Neatness' },
-                { id: 'b5', label: 'Leadership' },
-            ],
-            scale: ['Excellent', 'Very Good', 'Good', 'Fair', 'Poor']
-        }
-    ],
+    design: {
+        primaryColor: '#0036a1',
+        headerBg: '#0036a1',
+        fontFamily: 'serif',
+        tableBorderColor: '#d1d5db',
+        pageMargin: '10mm',
+        logoPosition: 'left',
+        headerStyle: 'standard'
+    }
 };
 
 // ─── GET ALL TEMPLATES ────────────────────────────────────────────────────────
@@ -103,9 +61,11 @@ const getTemplateById = async (req, res) => {
 // ─── GET TEMPLATE FOR A CLASS ─────────────────────────────────────────────────
 const getTemplateForClass = async (req, res) => {
     const { classId } = req.params;
+    const { type } = req.query;
+    const queryType = type || "EXAM";
 
     const assignment = await prisma.templateClassAssignment.findFirst({
-        where: { classId, schoolId: req.user.schoolId },
+        where: { classId, schoolId: req.user.schoolId, type: queryType },
         include: {
             template: true
         }
@@ -114,7 +74,7 @@ const getTemplateForClass = async (req, res) => {
     if (!assignment) {
         // Return the default template for the school if none assigned
         const defaultTemplate = await prisma.reportTemplate.findFirst({
-            where: { schoolId: req.user.schoolId, isDeleted: false, isDefault: true }
+            where: { schoolId: req.user.schoolId, isDeleted: false, isDefault: true, type: queryType }
         });
 
         if (!defaultTemplate) {
@@ -131,16 +91,17 @@ const getTemplateForClass = async (req, res) => {
 
 // ─── CREATE TEMPLATE ──────────────────────────────────────────────────────────
 const createTemplate = async (req, res) => {
-    const { name, category, config, isDefault } = req.body;
+    const { name, type, category, config, isDefault } = req.body;
 
     if (!name) throw new CustomError.BadRequestError('Template name is required');
 
     const mergedConfig = { ...DEFAULT_TEMPLATE_CONFIG, ...(config || {}) };
+    const templateType = type || "EXAM";
 
-    // If this is set as default, un-default others
+    // If this is set as default, un-default others for the SAME type
     if (isDefault) {
         await prisma.reportTemplate.updateMany({
-            where: { schoolId: req.user.schoolId, isDefault: true },
+            where: { schoolId: req.user.schoolId, isDefault: true, type: templateType },
             data: { isDefault: false }
         });
     }
@@ -149,6 +110,7 @@ const createTemplate = async (req, res) => {
         data: {
             schoolId: req.user.schoolId,
             name,
+            type: templateType,
             category: category || null,
             config: mergedConfig,
             isDefault: isDefault || false
@@ -161,7 +123,7 @@ const createTemplate = async (req, res) => {
 // ─── UPDATE TEMPLATE ──────────────────────────────────────────────────────────
 const updateTemplate = async (req, res) => {
     const { id } = req.params;
-    const { name, category, config, isDefault } = req.body;
+    const { name, type, category, config, isDefault } = req.body;
 
     const existing = await prisma.reportTemplate.findFirst({
         where: { id, schoolId: req.user.schoolId, isDeleted: false }
@@ -171,7 +133,7 @@ const updateTemplate = async (req, res) => {
 
     if (isDefault) {
         await prisma.reportTemplate.updateMany({
-            where: { schoolId: req.user.schoolId, isDefault: true, id: { not: id } },
+            where: { schoolId: req.user.schoolId, isDefault: true, type: existing.type, id: { not: id } },
             data: { isDefault: false }
         });
     }
@@ -182,6 +144,7 @@ const updateTemplate = async (req, res) => {
         where: { id },
         data: {
             name: name || existing.name,
+            type: type || existing.type,
             category: category !== undefined ? category : existing.category,
             config: merged,
             isDefault: isDefault !== undefined ? isDefault : existing.isDefault
@@ -227,9 +190,9 @@ const assignTemplateToClasses = async (req, res) => {
     // Upsert assignments for each classId
     const ops = classIds.map(classId =>
         prisma.templateClassAssignment.upsert({
-            where: { schoolId_classId: { schoolId: req.user.schoolId, classId } },
+            where: { schoolId_classId_type: { schoolId: req.user.schoolId, classId, type: template.type } },
             update: { templateId: id },
-            create: { schoolId: req.user.schoolId, templateId: id, classId }
+            create: { schoolId: req.user.schoolId, templateId: id, classId, type: template.type }
         })
     );
 

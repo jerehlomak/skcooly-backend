@@ -57,7 +57,6 @@ const setupRouter = require('./routes/setup.route') // Admin setup endpoint
 const scholarshipRouter = require('./routes/scholarship.route') // Phase 2: scholarships & discounts
 const payrollRouter = require('./routes/payroll.route') // Payroll Module
 const sessionRouter = require('./routes/sessionRoutes')
-const sectionRouter = require('./routes/sectionRoutes')
 const subjectCategoryRouter = require('./routes/subjectCategoryRoutes')
 const termRouter = require('./routes/term.route')
 const studentFinanceRouter = require('./routes/studentFinance.route') // Phase 6 (Student Wallet & Ledger)
@@ -159,9 +158,9 @@ app.use('/api/v1/legacy-results', legacyResultRouter)
 app.use('/api/v1/scholarships', scholarshipRouter)  // Phase 2: scholarships & discounts
 app.use('/api/v1/payroll', payrollRouter)           // Payroll Module
 app.use('/api/v1/sessions', sessionRouter)
-app.use('/api/v1/sections', sectionRouter)
 app.use('/api/v1/subject-categories', subjectCategoryRouter)
 app.use('/api/v1/terms', termRouter)
+app.use('/api/v1/deadlines', require('./routes/deadline.route'))
 const recoveryRouter = require('./routes/recovery.route')
 
 app.use('/api/v1/bulk-import', bulkImportRouter) // Phase 3: Excel bulk import
@@ -197,73 +196,13 @@ app.use(errorHnadlerMiddleware)
 
 const PORT = process.env.PORT || 5000
 
-const seedSchoolTypes = async () => {
-    try {
-        const PRIMARY_DEFAULTS = [
-            { name: 'Nursery 1', category: 'Nursery', order: 1 },
-            { name: 'Nursery 2', category: 'Nursery', order: 2 },
-            { name: 'KG 1', category: 'Kindergarten', order: 3 },
-            { name: 'KG 2', category: 'Kindergarten', order: 4 },
-            { name: 'Primary 1', category: 'Primary', order: 5 },
-            { name: 'Primary 2', category: 'Primary', order: 6 },
-            { name: 'Primary 3', category: 'Primary', order: 7 },
-            { name: 'Primary 4', category: 'Primary', order: 8 },
-            { name: 'Primary 5', category: 'Primary', order: 9 },
-            { name: 'Primary 6', category: 'Primary', order: 10 },
-        ];
-        const SECONDARY_DEFAULTS = [
-            { name: 'JSS1', category: 'Junior', order: 1 },
-            { name: 'JSS2', category: 'Junior', order: 2 },
-            { name: 'JSS3', category: 'Junior', order: 3 },
-            { name: 'SS1 Science', category: 'Senior', order: 4 },
-            { name: 'SS1 Arts', category: 'Senior', order: 5 },
-            { name: 'SS1 Commerce', category: 'Senior', order: 6 },
-            { name: 'SS2 Science', category: 'Senior', order: 7 },
-            { name: 'SS2 Arts', category: 'Senior', order: 8 },
-            { name: 'SS2 Commerce', category: 'Senior', order: 9 },
-            { name: 'SS3 Science', category: 'Senior', order: 10 },
-            { name: 'SS3 Arts', category: 'Senior', order: 11 },
-            { name: 'SS3 Commerce', category: 'Senior', order: 12 },
-        ];
-        const ARABIC_DEFAULTS = [
-            { name: 'Awwal', category: 'Arabic', order: 1 },
-            { name: 'Thani', category: 'Arabic', order: 2 },
-            { name: 'Thalith', category: 'Arabic', order: 3 },
-            { name: "Rabi'", category: 'Arabic', order: 4 },
-            { name: 'Khamis', category: 'Arabic', order: 5 },
-            { name: 'Sadis', category: 'Arabic', order: 6 },
-            { name: "Sabi'", category: 'Arabic', order: 7 },
-            { name: 'Thamin', category: 'Arabic', order: 8 },
-        ];
-
-        const types = [
-            { name: 'PRIMARY', description: 'Primary School (Nursery, Kindergarten, Primary)', isDefault: false, defaultClasses: PRIMARY_DEFAULTS },
-            { name: 'SECONDARY', description: 'Secondary School (Junior/Senior Secondary)', isDefault: true, defaultClasses: SECONDARY_DEFAULTS },
-            { name: 'ARABIC', description: 'Arabic & Islamic Studies Curriculum', isDefault: false, defaultClasses: ARABIC_DEFAULTS },
-        ];
-
-        console.log('🌱 Seeding/updating default school types...');
-        for (const t of types) {
-            await prisma.schoolType.upsert({
-                where: { name: t.name },
-                update: {
-                    description: t.description,
-                    defaultClasses: t.defaultClasses
-                },
-                create: t
-            });
-        }
-        console.log('✅ Default school types updated.');
-    } catch (err) {
-        console.error('Error seeding default school types:', err);
-    }
-};
+// Global school types seeding removed
 
 const start = async () => {
     try {
         await prisma.$connect()
         console.log('Successfully connected to the PostgreSQL database via Prisma')
-        await seedSchoolTypes()
+
         startBillingCron()
         initSmsWorker()
         app.listen(PORT, () => console.log(`Server is listening at port ${PORT}`))

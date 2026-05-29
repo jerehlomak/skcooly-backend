@@ -104,6 +104,16 @@ const login = async (req, res) => {
         throw new CustomError.UnauthenticatedError('Invalid Credentials')
     }
 
+    // Check if the account has been restricted by the school admin
+    if (user.isRestricted) {
+        const reason = user.restrictionReason || 'No reason provided';
+        return res.status(403).json({
+            isRestricted: true,
+            msg: `Your portal has been restricted. Please contact the school administration.`,
+            reason
+        });
+    }
+
     const tokenUser = createTokenUser(user)
     attachCookiesToResponse({ res, user: tokenUser })
 
@@ -239,10 +249,80 @@ const resetPasswordWithKey = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Password reset successfully' });
 };
 
+const switchSchool = async (req, res) => {
+    const { targetSchoolId } = req.body;
+    const user = req.user;
+
+    if (!targetSchoolId) {
+        throw new CustomError.BadRequestError('Target school ID is required');
+    }
+
+    if (user.role !== 'SCHOOL_SUPER_ADMIN' && user.role !== 'ADMIN') {
+        throw new CustomError.UnauthorizedError('You do not have permission to switch branches');
+    }
+
+    // Determine the true main school ID from DB to prevent branching off a branch infinitely
+    const dbUser = await prisma.user.findUnique({ where: { id: user.userId } });
+    
+    // If the user is currently using a branch token, originalSchoolId is available.
+    // Otherwise, they are on their main school.
+    const mainSchoolId = user.originalSchoolId || dbUser.schoolId;
+
+    if (!mainSchoolId) {
+        throw new CustomError.BadRequestError('User does not belong to a school');
+    }
+
+    let targetSchool;
+    let isReturningToMain = false;
+
+    if (targetSchoolId === mainSchoolId) {
+        isReturningToMain = true;
+        targetSchool = await prisma.school.findUnique({
+            where: { id: mainSchoolId },
+            include: { plan: true, featureFlags: true, group: { select: { id: true, name: true } } }
+        });
+    } else {
+        targetSchool = await prisma.school.findFirst({
+            where: { id: targetSchoolId, parentId: mainSchoolId },
+            include: { plan: true, featureFlags: true, group: { select: { id: true, name: true } } }
+        });
+    }
+
+    if (!targetSchool) {
+        throw new CustomError.NotFoundError('Branch not found or access denied');
+    }
+
+    const tokenUser = createTokenUser(dbUser);
+    
+    // Overwrite the token's schoolId to the target school
+    tokenUser.schoolId = targetSchool.id;
+    
+    // If not returning to main, we need to remember the main school ID
+    if (!isReturningToMain) {
+        tokenUser.originalSchoolId = mainSchoolId;
+    }
+
+    attachCookiesToResponse({ res, user: tokenUser });
+
+    const userContextData = {
+        id: dbUser.id,
+        name: dbUser.name,
+        email: dbUser.email,
+        role: dbUser.role,
+        schoolId: targetSchool.id,
+        originalSchoolId: isReturningToMain ? undefined : mainSchoolId,
+        branchId: dbUser.branchId || null,
+        school: targetSchool,
+    };
+
+    res.status(StatusCodes.OK).json({ user: userContextData });
+};
+
 module.exports = {
     register,
     login,
     logout,
     registerAdmin,
-    resetPasswordWithKey
+    resetPasswordWithKey,
+    switchSchool
 }

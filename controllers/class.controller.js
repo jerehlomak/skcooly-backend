@@ -15,7 +15,6 @@ const addClass = async (req, res) => {
             level: level.trim().toUpperCase(),
             section: section ? section.trim() : null,
             sessionId: sessionId || null,
-            arabicName: arabicName || null,
             status: 'Active',
             schoolId: req.user.schoolId
         }))
@@ -32,7 +31,6 @@ const addClass = async (req, res) => {
             level: level.trim().toUpperCase(),
             section: section?.trim() || null,
             sessionId: sessionId || null,
-            arabicName: arabicName || null,
             status: 'Active',
             schoolId: req.user.schoolId
         }
@@ -47,12 +45,38 @@ const getAllClasses = async (req, res) => {
         return res.status(StatusCodes.FORBIDDEN).json({ msg: 'No school context found for this user.' })
     }
 
+    const { search, page, limit, schoolType } = req.query;
+    const pageNum = parseInt(page) || 1;
+    const limitNum = parseInt(limit) || 10;
+    const skip = (pageNum - 1) * limitNum;
+
+    let levelFilter = undefined;
+    if (schoolType) {
+        const classLevels = await prisma.classLevel.findMany({
+            where: { schoolId, category: schoolType }
+        });
+        const levelNames = classLevels.map(cl => cl.name);
+        const uppercaseLevelNames = levelNames.map(n => n.toUpperCase());
+        levelFilter = { in: [...new Set([...levelNames, ...uppercaseLevelNames])] };
+    }
+
+    const where = {
+        schoolId,
+        isDeleted: false,
+        NOT: { schoolId: null },
+        ...(levelFilter && { level: levelFilter }),
+        ...(search && {
+            OR: [
+                { name: { contains: search, mode: 'insensitive' } },
+                { level: { contains: search, mode: 'insensitive' } },
+            ]
+        })
+    };
+
+    const count = await prisma.class.count({ where });
+
     const classes = await prisma.class.findMany({
-        where: {
-            schoolId,
-            isDeleted: false,
-            NOT: { schoolId: null }  // safety guard: never return null-schoolId orphans
-        },
+        where,
         include: {
             subjects: {
                 include: {
@@ -62,9 +86,16 @@ const getAllClasses = async (req, res) => {
             },
             formTeacher: { include: { user: { select: { name: true } } } }
         },
-        orderBy: { name: 'asc' }
-    })
-    res.status(StatusCodes.OK).json({ classes, count: classes.length })
+        orderBy: { name: 'asc' },
+        ...(page && limit ? { skip, take: limitNum } : {})
+    });
+    
+    res.status(StatusCodes.OK).json({ 
+        classes, 
+        count: page && limit ? count : classes.length,
+        totalPages: page && limit ? Math.ceil(count / limitNum) : 1,
+        currentPage: pageNum
+    });
 }
 
 // ─── GET SINGLE CLASS ─────────────────────────────────────────────────────────
@@ -89,7 +120,7 @@ const getClass = async (req, res) => {
 // ─── UPDATE CLASS ─────────────────────────────────────────────────────────────
 const updateClass = async (req, res) => {
     const { id } = req.params
-    const { name, level, section, sessionId, arabicName, status } = req.body
+    const { name, level, section, sessionId, status } = req.body
     await prisma.class.updateMany({
         where: { id, schoolId: req.user.schoolId },
         data: {
@@ -97,7 +128,6 @@ const updateClass = async (req, res) => {
             ...(level && { level: level.trim().toUpperCase() }),
             ...(section !== undefined && { section }),
             ...(sessionId !== undefined && { sessionId }),
-            ...(arabicName !== undefined && { arabicName }),
             ...(status && { status })
         }
     })

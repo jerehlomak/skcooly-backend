@@ -9,10 +9,9 @@ datasource db {
 }
 
 model SchoolSettings {
-  id               String     @id @default(uuid())
+  id               String      @id @default(uuid())
   schoolId         String? // tenant isolation
-  schoolName       String     @default("My School")
-  arabicName       String?
+  schoolName       String      @default("My School")
   tagline          String?
   phone            String?
   email            String?
@@ -21,11 +20,13 @@ model SchoolSettings {
   logoUrl          String?
   schoolTypeId     String? // foreign key to custom school type
   schoolType       SchoolType? @relation(fields: [schoolTypeId], references: [id])
-  currentTerm      String?    @default("First Term")
-  currentYear      String?    @default("2025/2026")
-  currency         String?    @default("NGN")
-  rulesContent     String?    @db.Text
-  formTeacherTitle String?    @default("Form Teacher")
+  currentTerm      String?     @default("First Term")
+  currentYear      String?     @default("2025/2026")
+  currency         String?     @default("NGN")
+  currencySymbol   String?     @default("₦")
+  timezone         String?     @default("Africa/Lagos")
+  rulesContent     String?     @db.Text
+  formTeacherTitle String?     @default("Form Teacher")
 
   // Result Module settings
   resultSubjectPosition   Boolean @default(false)
@@ -36,6 +37,11 @@ model SchoolSettings {
   resultAutomaticComments Boolean @default(false)
   parentResultAccessMode  String  @default("DIRECT") // DIRECT | PIN
   parentTranscriptAccess  Boolean @default(false)
+
+  issuedResultTypes String @default("BOTH") // CA_ONLY | EXAM_ONLY | BOTH
+  caResultMode      String @default("NUMERIC") // NUMERIC | COMMENT
+  examResultMode    String @default("NUMERIC") // NUMERIC | COMMENT
+  resultConfig      Json?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -58,16 +64,16 @@ model AcademicSession {
   updatedAt        DateTime           @updatedAt
   AcademicTerm     AcademicTerm[]
   PromotionHistory PromotionHistory[]
+  studentTermEnrollments StudentTermEnrollment[]
 
   @@index([schoolId, isDeleted])
 }
 
 model Section {
-  id         String  @id @default(cuid())
-  schoolId   String? // tenant isolation
-  name       String // e.g. "Primary", "Junior Secondary"
-  arabicName String?
-  type       String? // e.g. "Primary", "Secondary"
+  id       String  @id @default(cuid())
+  schoolId String? // tenant isolation
+  name     String // e.g. "Primary", "Junior Secondary"
+  type     String? // e.g. "Primary", "Secondary"
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -135,6 +141,7 @@ model AcademicTerm {
   startDate DateTime?
   endDate   DateTime?
   isActive  Boolean   @default(false)
+  isLocked  Boolean   @default(false)
 
   session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -143,9 +150,49 @@ model AcademicTerm {
   updatedAt     DateTime     @updatedAt
   Transaction   Transaction? @relation(fields: [transactionId], references: [id])
   transactionId String?
+  studentTermEnrollments StudentTermEnrollment[]
+  activityDeadlines      ActivityDeadline[]
 
   @@unique([schoolId, sessionId, name])
   @@index([schoolId, isActive])
+}
+
+/// Configurable deadlines for school activities (score entry, fee entry, attendance, etc.)
+model ActivityDeadline {
+  id               String   @id @default(uuid())
+  schoolId         String
+  termId           String   // Which term this deadline belongs to
+  activity         String   // e.g. SCORE_ENTRY | FEE_ENTRY | ATTENDANCE | CBT
+  label            String?  // Optional display label, e.g. "First Term Score Deadline"
+  deadline         DateTime // Exact date + time when the activity locks
+  warningLeadHours Int      @default(48) // Hours before deadline to show warning
+  isActive         Boolean  @default(true)
+
+  term      AcademicTerm @relation(fields: [termId], references: [id], onDelete: Cascade)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, termId, activity])
+  @@index([schoolId, isActive])
+}
+
+model StudentTermEnrollment {
+  id               String          @id @default(uuid())
+  schoolId         String
+  studentProfileId String
+  academicTermId   String
+  classId          String
+  sessionId        String
+  createdAt        DateTime        @default(now())
+  
+  student          StudentProfile  @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  term             AcademicTerm    @relation(fields: [academicTermId], references: [id], onDelete: Cascade)
+  class            Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  session          AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@unique([studentProfileId, academicTermId])
+  @@index([schoolId])
 }
 
 model FeeInvoice {
@@ -283,12 +330,16 @@ model BankAccount {
 
 model ClassLevel {
   id        String   @id @default(uuid())
-  name      String   @unique
+  schoolId  String?
+  name      String
   category  String?
   order     Int      @default(0)
   isActive  Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+
+  @@unique([schoolId, name])
+  @@index([schoolId])
 }
 
 model CustomRole {
@@ -307,25 +358,31 @@ model CustomRole {
 }
 
 model User {
-  id             String           @id @default(uuid())
-  schoolId       String? // tenant isolation — links to School.id in central admin
-  branchId       String? // null = school-scope user; set = branch-restricted user
-  name           String
-  email          String           @unique
-  password       String
-  role           Role             @default(STUDENT)
-  customRoleId   String?
-  customRole     CustomRole?      @relation(fields: [customRoleId], references: [id])
+  id                 String           @id @default(uuid())
+  schoolId           String? // tenant isolation — links to School.id in central admin
+  branchId           String? // null = school-scope user; set = branch-restricted user
+  name               String
+  email              String           @unique
+  password           String
+  role               Role             @default(STUDENT)
+  customRoleId       String?
+  customRole         CustomRole?      @relation(fields: [customRoleId], references: [id])
   recoveryKey        String?
   recoveryKeyExpires DateTime?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  parentProfile  ParentProfile?
-  studentProfile StudentProfile?
-  teacherProfile TeacherProfile?
-  tenantAuditLog TenantAuditLog[]
-  school         School?          @relation(fields: [schoolId], references: [id])
-  branch         Branch?          @relation(fields: [branchId], references: [id])
+  // ─── Account Restriction ─────────────────────────────────────────────────
+  isRestricted       Boolean          @default(false)
+  restrictionReason  String?
+  restrictedAt       DateTime?
+  restrictedById     String? // The admin user who applied the restriction
+  // ─────────────────────────────────────────────────────────────────────────
+  createdAt          DateTime         @default(now())
+  updatedAt          DateTime         @updatedAt
+  parentProfile      ParentProfile?
+  studentProfile     StudentProfile?
+  teacherProfile     TeacherProfile?
+  tenantAuditLog     TenantAuditLog[]
+  school             School?          @relation(fields: [schoolId], references: [id])
+  branch             Branch?          @relation(fields: [branchId], references: [id])
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -347,13 +404,13 @@ model StudentProfile {
   address               String?
   admissionDate         DateTime               @default(now())
   bloodGroup            String?
+  genotype              String?
   dateOfBirth           DateTime?
   publicId              String?                @unique
   orphan                Boolean                @default(false)
   parentProfileId       String?
   previousSchool        String?
   religion              String?
-  arabicName            String?
   classId               String? // specific class arm relation
   sessionId             String? // enrollment session
   subjectCategoryId     String? // links student to a subject category (for filtered result sheets)
@@ -364,6 +421,7 @@ model StudentProfile {
   studentReportComments StudentReportComment[]
   ledgerEntries         StudentLedger[]
   transactions          Transaction[]
+  termEnrollments       StudentTermEnrollment[]
   parent                ParentProfile?         @relation(fields: [parentProfileId], references: [id])
   user                  User                   @relation(fields: [userId], references: [id])
   classArm              Class?                 @relation("ClassStudents", fields: [classId], references: [id])
@@ -412,7 +470,6 @@ model TeacherProfile {
   subjectsTaught   String?
   staffType        String?        @default("TEACHER") // TEACHER, CLASS_TEACHER, ADMIN, OTHER
   photoUrl         String?
-  arabicName       String?
   courses          Course[]
   salarySlips      SalarySlip[]
   assignedSubjects Subject[]      @relation("SubjectTeacher")
@@ -472,7 +529,6 @@ model Class {
   schoolId             String? // tenant isolation
   sessionId            String? // Reference to AcademicSession
   name                 String
-  arabicName           String?
   level                String
   section              String?
   status               String             @default("Active")
@@ -490,6 +546,7 @@ model Class {
   lessonResources      LessonResource[]
   promotionHistoryFrom PromotionHistory[] @relation("FromClass")
   promotionHistoryTo   PromotionHistory[] @relation("ToClass")
+  studentTermEnrollments StudentTermEnrollment[]
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -498,10 +555,9 @@ model Class {
 }
 
 model SubjectCategory {
-  id         String  @id @default(cuid())
-  schoolId   String?
-  name       String
-  arabicName String?
+  id       String  @id @default(cuid())
+  schoolId String?
+  name     String
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -520,9 +576,7 @@ model Subject {
   name           String
   code           String?
   categoryId     String?
-  arabicName     String?
   type           String?
-  stream         SubjectStream    @default(ALL)
   description    String?
   status         String           @default("Active")
   teacherId      String?
@@ -694,7 +748,7 @@ enum SmsStatus {
 
 model SchoolType {
   id             String   @id @default(uuid())
-  name           String   @unique
+  name           String
   description    String?
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
@@ -702,8 +756,14 @@ model SchoolType {
   isDefault      Boolean  @default(false)
   defaultClasses Json?    @default("[]")
 
+  // School ownership — null means platform-level (legacy), set means school-specific
+  schoolId       String?
+  school         School?  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
   // reverse relation (optional)
-  settings       SchoolSettings[]
+  settings SchoolSettings[]
+
+  @@unique([schoolId, name])
 }
 
 enum Role {
@@ -715,14 +775,6 @@ enum Role {
   SCHOOL_ADMIN // school-level admin
   BRANCH_ADMIN // restricted to own branch only
   BRANCH_STAFF // restricted to own branch only
-}
-
-enum SubjectStream {
-  ALL
-  JSS
-  SCIENCE
-  ARTS
-  COMMERCE
 }
 
 enum TransType {
@@ -761,23 +813,23 @@ enum TicketPriority {
 
 // Central admin users (platform owner & support staff)
 model CentralAdmin {
-  id            String                @id @default(uuid())
-  name          String
-  email         String                @unique
-  password      String
-  role          CentralAdminRole      @default(SUPPORT)
-  isActive      Boolean               @default(true)
+  id                   String                @id @default(uuid())
+  name                 String
+  email                String                @unique
+  password             String
+  role                 CentralAdminRole      @default(SUPPORT)
+  isActive             Boolean               @default(true)
   lastLogin            DateTime?
   resetPasswordToken   String?
   resetPasswordExpires DateTime?
   permissions          Json? // granular permission list e.g. ["manage_schools","generate_pins"]
-  createdAt     DateTime              @default(now())
-  updatedAt     DateTime              @updatedAt
-  auditLogs     AuditLog[]
-  announcements Announcement[]
-  ticketReplies TicketReply[]
-  pinBatches    SchoolPinBatch[]
-  platformTx    PlatformTransaction[]
+  createdAt            DateTime              @default(now())
+  updatedAt            DateTime              @updatedAt
+  auditLogs            AuditLog[]
+  announcements        Announcement[]
+  ticketReplies        TicketReply[]
+  pinBatches           SchoolPinBatch[]
+  platformTx           PlatformTransaction[]
 }
 
 // Subscription plans available on the platform
@@ -787,7 +839,7 @@ model SubscriptionPlan {
   description   String?
   monthlyPrice  Float                @default(0)
   yearlyPrice   Float                @default(0)
-  priceLabel    String?              // Custom label e.g. "Contact Us", "Negotiable", overrides price display
+  priceLabel    String? // Custom label e.g. "Contact Us", "Negotiable", overrides price display
   maxStudents   Int                  @default(100)
   maxTeachers   Int                  @default(10)
   maxClasses    Int                  @default(10)
@@ -805,7 +857,7 @@ model SubscriptionPlan {
 
 // Leads / Inquiries from the website
 model SchoolLead {
-  id              String            @id @default(uuid())
+  id              String  @id @default(uuid())
   schoolName      String
   contactPerson   String
   phoneNumber     String
@@ -813,12 +865,12 @@ model SchoolLead {
   stateLga        String?
   preferredPlanId String?
   notes           String?
-  status          String            @default("NEW") // NEW, CONTACTED, CONVERTED, REJECTED
-  
-  preferredPlan   SubscriptionPlan? @relation(fields: [preferredPlanId], references: [id])
-  
-  createdAt       DateTime          @default(now())
-  updatedAt       DateTime          @updatedAt
+  status          String  @default("NEW") // NEW, CONTACTED, CONVERTED, REJECTED
+
+  preferredPlan SubscriptionPlan? @relation(fields: [preferredPlanId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }
 
 // A group of schools (multi-branch organization)
@@ -872,6 +924,9 @@ model School {
   updatedAt                  DateTime                     @updatedAt
   groupId                    String?
   group                      SchoolGroup?                 @relation(fields: [groupId], references: [id])
+  parentId                   String?                      // Link to main school if this is a branch
+  parent                     School?                      @relation("MainSchoolToBranch", fields: [parentId], references: [id])
+  branchSchools              School[]                     @relation("MainSchoolToBranch")
   plan                       SubscriptionPlan?            @relation(fields: [planId], references: [id])
   subscription               SchoolSubscription?
   featureFlags               FeatureFlag[]
@@ -883,6 +938,7 @@ model School {
   billingEvents              BillingEvent[]
   tenantAuditLogs            TenantAuditLog[]             @relation("TenantAuditLogs")
   users                      User[]
+  schoolTypes                SchoolType[]
   students                   StudentProfile[]
   teachers                   TeacherProfile[]
   parents                    ParentProfile[]
@@ -1074,6 +1130,7 @@ model AssessmentStructure {
   id        String   @id @default(uuid())
   schoolId  String? // tenant isolation
   category  String // e.g., 'Nursery', 'Primary', 'JSS', 'SSS', 'Arabic'
+  classId   String? // Optional override per class
   parts     Json // e.g. [{"id": "1", "name": "1st CA", "weight": 20}, {"id": "2", "name": "Exam", "weight": 60}]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -1081,7 +1138,8 @@ model AssessmentStructure {
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
 
-  @@unique([schoolId, category])
+  // Remove strict uniqueness to allow multiple class overrides in the same category
+  @@index([schoolId, category])
   @@index([schoolId, isDeleted])
 }
 
@@ -1126,8 +1184,8 @@ model LegacyResult {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  class        Class    @relation(fields: [classId], references: [id], onDelete: Cascade)
-  school       School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class  Class  @relation(fields: [classId], references: [id], onDelete: Cascade)
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
   @@index([schoolId, classId, academicYear])
 }
@@ -1154,9 +1212,9 @@ model StudentTermResult {
 model ResultTemplate {
   id        String   @id @default(uuid())
   schoolId  String
-  name      String   // e.g. "Template 1", "Original"
+  name      String // e.g. "Template 1", "Original"
   isActive  Boolean  @default(false)
-  config    Json     // Stores all the toggles, colors, etc.
+  config    Json // Stores all the toggles, colors, etc.
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -1167,7 +1225,7 @@ model ResultTemplate {
 model CommentRule {
   id        String   @id @default(uuid())
   schoolId  String
-  role      String   // "Class Teacher", "Head Teacher", "Principal"
+  role      String // "Class Teacher", "Head Teacher", "Principal"
   minScore  Float
   maxScore  Float
   comment   String
@@ -1183,9 +1241,9 @@ model SharingHistory {
   studentProfileId String
   term             String
   academicYear     String
-  channel          String   // "WhatsApp", "Email", "SMS"
-  recipient        String   // Email or Phone
-  status           String   // "Sent", "Failed", "Pending"
+  channel          String // "WhatsApp", "Email", "SMS"
+  recipient        String // Email or Phone
+  status           String // "Sent", "Failed", "Pending"
   sentAt           DateTime @default(now())
 
   @@index([schoolId, studentProfileId])
@@ -1480,6 +1538,7 @@ model ReportTemplate {
   id               String                    @id @default(uuid())
   schoolId         String
   name             String // e.g. "JSS Template"
+  type             String                    @default("EXAM") // e.g. "CA", "EXAM", "CUMULATIVE", "TRANSCRIPT"
   category         String? // e.g. "JSS", "SSS", "Nursery"
   config           Json // full layout/section/design config as JSON
   isDefault        Boolean                   @default(false)
@@ -1492,15 +1551,16 @@ model ReportTemplate {
   @@index([schoolId, isDeleted])
 }
 
-// Links a template to a specific class arm
+// Links a template to a specific class arm for a specific result type
 model TemplateClassAssignment {
   id         String         @id @default(uuid())
   schoolId   String
   templateId String
   classId    String
+  type       String         @default("EXAM")
   template   ReportTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
 
-  @@unique([schoolId, classId])
+  @@unique([schoolId, classId, type])
 }
 
 // Persistent grading scale per school section
@@ -1508,12 +1568,14 @@ model GradingScale {
   id        String   @id @default(uuid())
   schoolId  String
   category  String?  @default("ALL") // Primary, JSS, SSS, ALL
+  type      String   @default("SUBJECT") // SUBJECT | FINAL
   passMark  Float    @default(40)
   grades    Json // [{grade, minScore, maxScore, remark, status}]
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([schoolId, category])
+  // Composite unique constraint to allow multiple scale types per category
+  @@unique([schoolId, category, type])
 }
 
 // Per-student, per-term comments from teacher / head teacher / principal
@@ -1540,67 +1602,67 @@ model StudentReportComment {
 
 // Tracks score entry state per class/subject/term (Not Started, In Progress, Submitted)
 model SubjectEntryStatus {
-  id           String @id @default(uuid())
+  id           String    @id @default(uuid())
   schoolId     String
   classId      String
   subjectId    String
   term         String
   academicYear String
-  entryType    String @default("NUMERIC") // NUMERIC, COMMENT, TRAIT
-  status       String @default("NOT_STARTED") // NOT_STARTED, IN_PROGRESS, SUBMITTED
+  entryType    String    @default("NUMERIC") // NUMERIC, COMMENT, TRAIT
+  status       String    @default("NOT_STARTED") // NOT_STARTED, IN_PROGRESS, SUBMITTED
   submittedAt  DateTime?
   submittedBy  String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
   @@unique([schoolId, classId, subjectId, term, academicYear])
   @@index([schoolId, classId])
 }
 
 // Tracks whether results are released for a class/term
 model ResultReleaseStatus {
-  id           String @id @default(uuid())
+  id           String    @id @default(uuid())
   schoolId     String
   classId      String
   term         String
   academicYear String
-  isReleased   Boolean @default(false)
+  isReleased   Boolean   @default(false)
   releasedAt   DateTime?
   releasedBy   String?
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
   @@unique([schoolId, classId, term, academicYear])
   @@index([schoolId])
 }
 
 // Stores affective/psychomotor trait scores per student/term
 model TraitRating {
-  id               String @id @default(uuid())
+  id               String   @id @default(uuid())
   schoolId         String
   studentProfileId String
   classId          String
   term             String
   academicYear     String
   domain           String // AFFECTIVE, PSYCHOMOTOR
-  ratings          Json   // e.g. {"Neatness": "A", "Punctuality": "B"}
+  ratings          Json // e.g. {"Neatness": "A", "Punctuality": "B"}
   createdAt        DateTime @default(now())
   updatedAt        DateTime @updatedAt
-  
+
   @@unique([schoolId, studentProfileId, domain, term, academicYear])
   @@index([schoolId, classId])
 }
 
 // Defines available traits and rating scales per domain
 model TraitConfiguration {
-  id           String @id @default(uuid())
-  schoolId     String
-  domain       String // AFFECTIVE, PSYCHOMOTOR
-  traits       String[] // ["Neatness", "Punctuality", ...]
-  ratingScale  Json // [{"rating": "A", "description": "Excellent"}]
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-  
+  id          String   @id @default(uuid())
+  schoolId    String
+  domain      String // AFFECTIVE, PSYCHOMOTOR
+  traits      String[] // ["Neatness", "Punctuality", ...]
+  ratingScale Json // [{"rating": "A", "description": "Excellent"}]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
   @@unique([schoolId, domain])
 }
 
@@ -1768,10 +1830,10 @@ model SchoolPin {
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
 
-  batch     SchoolPinBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
-  school    School?         @relation(fields: [schoolId], references: [id])
-  student   StudentProfile? @relation(fields: [studentId], references: [id])
-  usageLogs PinUsageLog[]
+  batch       SchoolPinBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
+  school      School?         @relation(fields: [schoolId], references: [id])
+  student     StudentProfile? @relation(fields: [studentId], references: [id])
+  usageLogs   PinUsageLog[]
   application Application?
 
   @@index([batchId])
@@ -2601,26 +2663,25 @@ model PromotionHistory {
 // --- PUBLIC APPLICATIONS (ADMISSION / RECRUITMENT) --------------------------
 
 model Application {
-  id              String   @id @default(uuid())
+  id              String @id @default(uuid())
   schoolId        String
-  pinId           String   @unique
-  applicationType String   // ADMISSION_APPLICATION, EMPLOYMENT
-  status          String   @default("PENDING") // PENDING, APPROVED, REJECTED
-  
-  formData        Json     // Stores all dynamic form inputs
-  
-  applicantName   String
-  applicantEmail  String?
-  applicantPhone  String?
-  
+  pinId           String @unique
+  applicationType String // ADMISSION_APPLICATION, EMPLOYMENT
+  status          String @default("PENDING") // PENDING, APPROVED, REJECTED
+
+  formData Json // Stores all dynamic form inputs
+
+  applicantName  String
+  applicantEmail String?
+  applicantPhone String?
+
   passportUrl          String?
   birthCertificateUrl  String?
   otherCertificatesUrl String?
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
-  
-  school          School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  pin             SchoolPin @relation(fields: [pinId], references: [id], onDelete: Cascade)
-}
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  school School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  pin    SchoolPin @relation(fields: [pinId], references: [id], onDelete: Cascade)
+}

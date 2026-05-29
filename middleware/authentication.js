@@ -3,7 +3,15 @@ const { isTokenValid } = require('../utils')
 const prisma = require('../db/prisma')
 
 const authenticateUser = async (req, res, next) => {
-    const token = req.signedCookies.token
+    let token = req.signedCookies?.token;
+
+    if (!token && req.headers.authorization && req.headers.authorization.startsWith('Bearer ')) {
+        token = req.headers.authorization.split(' ')[1];
+    }
+    
+    if (!token && req.query.token) {
+        token = req.query.token;
+    }
 
     if (!token) {
         throw new CustomError.UnauthenticatedError('Authentication Invalid')
@@ -41,8 +49,9 @@ const authenticateUser = async (req, res, next) => {
             role: payload.role,
             schoolId: payload.schoolId || null,
             groupId: payload.groupId || null,
-            branchId: payload.branchId || null, // Phase 1: assigned branch
-            activeBranchId: activeBranchId      // Phase 2: viewed branch
+            branchId: payload.branchId || null,       // Phase 1: assigned branch
+            activeBranchId: activeBranchId,           // Phase 2: viewed branch
+            originalSchoolId: payload.originalSchoolId || null  // Branch switching: true home school
         }
         next()
     } catch (error) {

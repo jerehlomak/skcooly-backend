@@ -809,9 +809,75 @@ const transcriptTemplate = (data) => {
   `;
 };
 
+const generateDynamicPDF = async (url) => {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+  } catch (err) {
+    console.error("Failed to launch Puppeteer:", err);
+    throw new Error("PDF generation service is currently unavailable.");
+  }
+
+  const page = await browser.newPage();
+  await page.setDefaultNavigationTimeout(120000); 
+  
+  try {
+      await page.goto(url, { waitUntil: 'networkidle0' });
+      await page.waitForSelector('#print-ready', { timeout: 120000 });
+      
+      const pdf = await page.pdf({ format: 'A4', printBackground: true });
+      await browser.close();
+      return pdf;
+  } catch (err) {
+      if (browser) await browser.close();
+      console.error("Puppeteer navigation/rendering error:", err);
+      throw err;
+  }
+};
+
+const generateDynamicPDFs = async (jobs) => {
+  let browser;
+  try {
+    browser = await puppeteer.launch({
+      headless: "new",
+      args: ['--no-sandbox', '--disable-setuid-sandbox']
+    });
+  } catch (err) {
+    console.error("Failed to launch Puppeteer:", err);
+    throw new Error("PDF generation service is currently unavailable.");
+  }
+
+  const results = [];
+  try {
+      for (const job of jobs) {
+          const page = await browser.newPage();
+          await page.setDefaultNavigationTimeout(60000);
+          try {
+              await page.goto(job.url, { waitUntil: 'networkidle0' });
+              await page.waitForSelector('#print-ready', { timeout: 60000 });
+              const pdf = await page.pdf({ format: 'A4', printBackground: true });
+              results.push({ filename: job.filename, buffer: pdf });
+          } catch (jobErr) {
+              console.error(`Failed to generate PDF for ${job.filename}:`, jobErr);
+          } finally {
+              await page.close();
+          }
+      }
+  } finally {
+      if (browser) await browser.close();
+  }
+  
+  return results;
+};
+
 module.exports = {
   generateResultPDF,
   generateTranscriptPDF,
+  generateDynamicPDF,
+  generateDynamicPDFs,
   template1,
   template2,
   template3,

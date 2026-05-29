@@ -101,17 +101,50 @@ const addParent = async (req, res) => {
 
 // ─── GET ALL PARENTS ──────────────────────────────────────────────────────────
 const getAllParents = async (req, res) => {
+    const { page, limit, search } = req.query;
+    
+    // Pagination defaults
+    const pageNumber = parseInt(page) || 1;
+    const limitNumber = parseInt(limit) || 10;
+    const isPaginated = page !== undefined || limit !== undefined;
+    const actualLimit = isPaginated ? limitNumber : undefined;
+    const skip = isPaginated ? (pageNumber - 1) * limitNumber : undefined;
+
+    let whereClause = { schoolId: req.user.schoolId, isDeleted: false };
+
+    if (search) {
+        whereClause = {
+            ...whereClause,
+            OR: [
+                { user: { name: { contains: search, mode: 'insensitive' } } },
+                { user: { email: { contains: search, mode: 'insensitive' } } },
+                { parentId: { contains: search, mode: 'insensitive' } },
+                { phone: { contains: search, mode: 'insensitive' } }
+            ]
+        };
+    }
+
+    const totalRecords = await prisma.parentProfile.count({ where: whereClause });
+
     const parents = await prisma.parentProfile.findMany({
-        where: { schoolId: req.user.schoolId, isDeleted: false },
+        where: whereClause,
         include: {
-            user: { select: { id: true, name: true, email: true, role: true } },
+            user: { select: { id: true, name: true, email: true, role: true, isRestricted: true, restrictionReason: true } },
             students: {
                 include: { user: { select: { name: true } } }
             }
         },
-        orderBy: { user: { createdAt: 'desc' } }
+        orderBy: { user: { createdAt: 'desc' } },
+        ...(isPaginated && { skip, take: actualLimit })
     });
-    res.status(StatusCodes.OK).json({ parents, count: parents.length });
+    
+    res.status(StatusCodes.OK).json({ 
+        parents, 
+        count: parents.length,
+        total: totalRecords,
+        page: pageNumber,
+        totalPages: isPaginated ? Math.ceil(totalRecords / limitNumber) : 1
+    });
 };
 
 // ─── GET SINGLE PARENT ────────────────────────────────────────────────────────

@@ -5,26 +5,42 @@ const { publishEvent, EVENTS } = require('../services/event-bus.service');
 
 // ─── GET ASSESSMENT STRUCTURES ──────────────────────────────────────────────
 const getAssessmentStructures = async (req, res) => {
-    // Return all categories for this school
+    const { category, classId } = req.query;
+
+    const whereClause = { schoolId: req.user.schoolId };
+    if (classId) {
+        whereClause.classId = classId;
+    } else if (category) {
+        whereClause.category = category;
+        whereClause.classId = null;
+    }
+
     const structures = await prisma.assessmentStructure.findMany({
-        where: { schoolId: req.user.schoolId }
+        where: whereClause
     });
 
-    // Convert array to a keyed object for the frontend: { "Nursery": [...], "Primary": [...] }
+    if (category || classId) {
+        return res.status(StatusCodes.OK).json({ parts: structures.length > 0 ? structures[0].parts : null });
+    }
+
     const config = {};
     structures.forEach(s => {
-        config[s.category] = s.parts;
+        const key = s.classId ? `CLASS_${s.classId}` : s.category;
+        config[key] = s.parts;
     });
 
-    res.status(StatusCodes.OK).json({ config });
+    res.status(StatusCodes.OK).json({ config, structures });
 };
 
 // ─── UPDATE ASSESSMENT STRUCTURES ───────────────────────────────────────────
 const updateAssessmentStructures = async (req, res) => {
-    const { category, parts } = req.body;
+    const { category, classId, parts } = req.body;
 
-    if (!category || !parts || !Array.isArray(parts)) {
-        throw new CustomError.BadRequestError('Please provide a valid category and parts array');
+    if (!category && !classId) {
+        throw new CustomError.BadRequestError('Please provide a valid category or classId');
+    }
+    if (!parts || !Array.isArray(parts)) {
+        throw new CustomError.BadRequestError('Please provide a valid parts array');
     }
 
     // Verify weights total 100
@@ -33,8 +49,16 @@ const updateAssessmentStructures = async (req, res) => {
         throw new CustomError.BadRequestError('Total weight must equal 100%');
     }
 
+    const whereClause = { schoolId: req.user.schoolId };
+    if (classId) {
+        whereClause.classId = classId;
+    } else {
+        whereClause.category = category;
+        whereClause.classId = null;
+    }
+
     const existing = await prisma.assessmentStructure.findFirst({
-        where: { category, schoolId: req.user.schoolId }
+        where: whereClause
     });
 
     let structure;
@@ -45,7 +69,7 @@ const updateAssessmentStructures = async (req, res) => {
         });
     } else {
         structure = await prisma.assessmentStructure.create({
-            data: { category, parts, schoolId: req.user.schoolId }
+            data: { category: category || 'CLASS_OVERRIDE', classId: classId || null, parts, schoolId: req.user.schoolId }
         });
     }
 
@@ -68,22 +92,74 @@ const getScoresRoster = async (req, res) => {
 
     if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${classId}`);
 
-    // Find the current assessment structure based directly on the class level name (case-insensitive)
+    // Find the current assessment structure based on class override OR class level name
     const category = cls.level;
-    const structureRecord = await prisma.assessmentStructure.findFirst({
+    let structureRecord = await prisma.assessmentStructure.findFirst({
         where: { 
             schoolId: req.user.schoolId,
-            category: { equals: category, mode: 'insensitive' }
+            classId: classId
         }
     });
+
+    if (!structureRecord) {
+        structureRecord = await prisma.assessmentStructure.findFirst({
+            where: { 
+                schoolId: req.user.schoolId,
+                category: { equals: category, mode: 'insensitive' },
+                classId: null
+            }
+        });
+    }
+
+    if (!structureRecord) {
+        // Fallback to Global Default (ALL)
+        structureRecord = await prisma.assessmentStructure.findFirst({
+            where: { 
+                schoolId: req.user.schoolId,
+                category: { equals: 'ALL', mode: 'insensitive' },
+                classId: null
+            }
+        });
+    }
+
     const structureDetails = structureRecord ? structureRecord.parts : [];
 
-    // 2. Get students in this class
-    const students = await prisma.studentProfile.findMany({
-        where: { classLevel: cls.level, status: 'Active', schoolId: req.user.schoolId },
-        include: { user: { select: { name: true } } },
-        orderBy: { user: { name: 'asc' } }
+    // Fetch the subject to see if it has a category constraint
+    const subject = await prisma.subject.findFirst({
+        where: { id: subjectId, schoolId: req.user.schoolId },
+        select: { categoryId: true }
     });
+
+    // 2. Get students in this specific class (arm)
+    let students = [];
+    const termRecord = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
+    });
+
+    if (termRecord) {
+        const enrollments = await prisma.studentTermEnrollment.findMany({
+            where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
+            include: { student: { include: { user: { select: { name: true } } } } }
+        });
+        if (enrollments.length > 0) {
+            students = enrollments.map(e => e.student).filter(s => s.status === 'Active' && !s.isDeleted);
+        }
+    }
+
+    if (students.length === 0) {
+        const studentWhere = { classId: classId, status: 'Active', schoolId: req.user.schoolId };
+        if (subject && subject.categoryId) studentWhere.subjectCategoryId = subject.categoryId;
+        students = await prisma.studentProfile.findMany({
+            where: studentWhere,
+            include: { user: { select: { name: true } } },
+            orderBy: { user: { name: 'asc' } }
+        });
+    } else {
+        if (subject && subject.categoryId) {
+            students = students.filter(s => s.subjectCategoryId === subject.categoryId);
+        }
+        students.sort((a, b) => a.user.name.localeCompare(b.user.name));
+    }
 
     // 3. Get existing results for the filters
     const existingResults = await prisma.studentResult.findMany({
@@ -111,6 +187,28 @@ const saveScores = async (req, res) => {
         // scoresData is an array of items: { studentProfileId, scores (Json object object mapping test to int) }
         if (!classId || !subjectId || !term || !academicYear || !scoresData) {
             throw new CustomError.BadRequestError('Missing required fields for saving scores');
+        }
+
+        // Verify term lock for Teachers
+        if (req.user && req.user.role === 'TEACHER') {
+            const termRecord = await prisma.academicTerm.findFirst({
+                where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
+            });
+            if (termRecord && termRecord.isLocked) {
+                return res.status(StatusCodes.FORBIDDEN).json({ msg: 'This term is locked. You cannot enter scores.' });
+            }
+
+            // Check activity deadline (applies to teachers only)
+            if (termRecord) {
+                const deadlineRecord = await prisma.activityDeadline.findFirst({
+                    where: { schoolId: req.user.schoolId, termId: termRecord.id, activity: 'SCORE_ENTRY', isActive: true }
+                });
+                if (deadlineRecord && new Date() > new Date(deadlineRecord.deadline)) {
+                    return res.status(StatusCodes.FORBIDDEN).json({
+                        msg: `Score entry deadline has passed (${new Date(deadlineRecord.deadline).toLocaleString()}). Please contact the school admin.`
+                    });
+                }
+            }
         }
 
         // Resolve actual teacher ID from the logged in user

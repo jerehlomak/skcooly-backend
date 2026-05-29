@@ -180,11 +180,87 @@ const adminResetPassword = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'User password has been successfully reset' });
 }
 
+// ─── RESTRICT / UNRESTRICT INDIVIDUAL USER ────────────────────────────────────
+const restrictUser = async (req, res) => {
+    const { id: targetUserId } = req.params;
+    const { isRestricted, reason } = req.body;
+
+    if (isRestricted === undefined) {
+        throw new CustomError.BadRequestError('isRestricted (boolean) is required');
+    }
+    if (isRestricted && !reason) {
+        throw new CustomError.BadRequestError('A restriction reason is required');
+    }
+
+    const targetUser = await prisma.user.findUnique({ where: { id: targetUserId } });
+    if (!targetUser) throw new CustomError.NotFoundError(`No user found with id: ${targetUserId}`);
+    if (targetUser.schoolId !== req.user.schoolId) {
+        throw new CustomError.UnauthorizedError('Not authorized to restrict this user');
+    }
+
+    // Protect super admins from being restricted
+    const PROTECTED_ROLES = ['SUPER_ADMIN', 'SCHOOL_SUPER_ADMIN', 'GROUP_ADMIN'];
+    if (PROTECTED_ROLES.includes(targetUser.role)) {
+        throw new CustomError.UnauthorizedError('This user account cannot be restricted');
+    }
+
+    const updated = await prisma.user.update({
+        where: { id: targetUserId },
+        data: {
+            isRestricted: Boolean(isRestricted),
+            restrictionReason: isRestricted ? reason.trim() : null,
+            restrictedAt: isRestricted ? new Date() : null,
+            restrictedById: isRestricted ? req.user.userId : null
+        },
+        select: { id: true, name: true, email: true, role: true, isRestricted: true, restrictionReason: true }
+    });
+
+    res.status(StatusCodes.OK).json({
+        msg: `User ${isRestricted ? 'restricted' : 'unrestricted'} successfully`,
+        user: updated
+    });
+};
+
+// ─── BULK RESTRICT BY ROLE ────────────────────────────────────────────────────
+const bulkRestrictUsers = async (req, res) => {
+    const { role, isRestricted, reason } = req.body;
+
+    if (!role) throw new CustomError.BadRequestError('role is required');
+    if (isRestricted === undefined) throw new CustomError.BadRequestError('isRestricted (boolean) is required');
+    if (isRestricted && !reason) throw new CustomError.BadRequestError('A restriction reason is required when restricting');
+
+    const PROTECTED_ROLES = ['SUPER_ADMIN', 'SCHOOL_SUPER_ADMIN', 'GROUP_ADMIN'];
+    if (PROTECTED_ROLES.includes(role)) {
+        throw new CustomError.UnauthorizedError('That role cannot be bulk restricted');
+    }
+
+    const result = await prisma.user.updateMany({
+        where: {
+            schoolId: req.user.schoolId,
+            role,
+            isDeleted: false
+        },
+        data: {
+            isRestricted: Boolean(isRestricted),
+            restrictionReason: isRestricted ? reason.trim() : null,
+            restrictedAt: isRestricted ? new Date() : null,
+            restrictedById: isRestricted ? req.user.userId : null
+        }
+    });
+
+    res.status(StatusCodes.OK).json({
+        msg: `${result.count} ${role.toLowerCase()}(s) ${isRestricted ? 'restricted' : 'unrestricted'} successfully`,
+        count: result.count
+    });
+};
+
 module.exports = {
     getAllUsers,
     getSingleUser,
     showCurrentUser,
     updateUser,
     updateUserPassword,
-    adminResetPassword
+    adminResetPassword,
+    restrictUser,
+    bulkRestrictUsers
 }

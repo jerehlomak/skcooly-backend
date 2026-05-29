@@ -109,9 +109,100 @@ const deleteTerm = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Success! Term deleted.' });
 };
 
+// ─── OPEN TERM (ROSTER ROLLOVER & ACTIVATE) ───────────────────────────────────
+const openTerm = async (req, res) => {
+    const { id } = req.params;
+    const schoolId = req.user.schoolId;
+
+    const term = await prisma.academicTerm.findFirst({
+        where: { id, schoolId },
+        include: { session: true }
+    });
+
+    if (!term) {
+        return res.status(StatusCodes.NOT_FOUND).json({ msg: `No term found with id ${id}` });
+    }
+
+    // 1. Deactivate and lock all other terms
+    await prisma.academicTerm.updateMany({
+        where: { schoolId },
+        data: { isActive: false, isLocked: true }
+    });
+
+    // 2. Activate and unlock this term
+    await prisma.academicTerm.update({
+        where: { id },
+        data: { isActive: true, isLocked: false }
+    });
+
+    // 3. Update School Settings for backward compatibility
+    await prisma.schoolSettings.updateMany({
+        where: { schoolId },
+        data: {
+            currentTerm: term.name,
+            currentYear: term.session.name
+        }
+    });
+
+    // 4. Rollover Active Student Roster
+    // Get all active students with a class assigned
+    const activeStudents = await prisma.studentProfile.findMany({
+        where: { schoolId, isDeleted: false, status: 'Active', classId: { not: null } }
+    });
+
+    // Use a transaction or batch insert
+    let enrolledCount = 0;
+    for (const student of activeStudents) {
+        // Upsert to ensure we don't duplicate if they are already enrolled in this term
+        await prisma.studentTermEnrollment.upsert({
+            where: {
+                studentProfileId_academicTermId: {
+                    studentProfileId: student.id,
+                    academicTermId: id
+                }
+            },
+            update: {
+                classId: student.classId,
+                sessionId: term.sessionId
+            },
+            create: {
+                schoolId,
+                studentProfileId: student.id,
+                academicTermId: id,
+                classId: student.classId,
+                sessionId: term.sessionId
+            }
+        });
+        enrolledCount++;
+    }
+
+    res.status(StatusCodes.OK).json({ msg: `Term opened successfully. Roster updated with ${enrolledCount} students.` });
+};
+
+// ─── TOGGLE LOCK TERM ─────────────────────────────────────────────────────────
+const toggleLock = async (req, res) => {
+    const { id } = req.params;
+    const { isLocked } = req.body;
+    const schoolId = req.user.schoolId;
+
+    const term = await prisma.academicTerm.findFirst({ where: { id, schoolId } });
+    if (!term) {
+        return res.status(StatusCodes.NOT_FOUND).json({ msg: `No term found with id ${id}` });
+    }
+
+    await prisma.academicTerm.update({
+        where: { id },
+        data: { isLocked }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: `Term ${isLocked ? 'locked' : 'unlocked'} successfully.` });
+};
+
 module.exports = {
     getAllTerms,
     createTerm,
     updateTerm,
-    deleteTerm
+    deleteTerm,
+    openTerm,
+    toggleLock
 };

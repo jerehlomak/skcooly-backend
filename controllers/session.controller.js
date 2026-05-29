@@ -75,8 +75,8 @@ const updateSession = async (req, res) => {
         where: { id },
         data: {
             ...(name && { name }),
-            ...(startDate && { startDate: new Date(startDate) }),
-            ...(endDate && { endDate: new Date(endDate) }),
+            ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
+            ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
             ...(isCurrent !== undefined && { isCurrent })
         }
     });

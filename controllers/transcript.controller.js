@@ -142,6 +142,110 @@ const generateTranscript = async (req, res) => {
     res.status(StatusCodes.OK).end(pdfBuffer);
 };
 
+// ─── GET TRANSCRIPT JSON (FOR UI) ───────────────────────────────────────
+const getTranscriptJSON = async (req, res) => {
+    const { studentId } = req.params;
+    const schoolId = req.user.schoolId;
+
+    // Check permissions
+    if (req.user.role === 'PARENT') {
+        const schoolSettings = await prisma.schoolSettings.findFirst({ where: { schoolId } });
+        if (!schoolSettings || !schoolSettings.parentTranscriptAccess) {
+            throw new CustomError.ForbiddenError('Transcripts are not currently available for view by parents.');
+        }
+        const student = await prisma.studentProfile.findUnique({
+            where: { id: studentId },
+            include: { parent: true }
+        });
+        if (!student || student.parentProfileId !== req.user.profileId) {
+            throw new CustomError.ForbiddenError('You can only view transcripts for your own children.');
+        }
+    } else if (req.user.role === 'STUDENT') {
+        const student = await prisma.studentProfile.findUnique({
+            where: { userId: req.user.id }
+        });
+        if (!student || student.id !== studentId) {
+            throw new CustomError.ForbiddenError('You can only view your own transcript.');
+        }
+    } else if (!['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER'].includes(req.user.role)) {
+        throw new CustomError.ForbiddenError('You do not have permission to view transcripts.');
+    }
+
+    const student = await prisma.studentProfile.findUnique({
+        where: { id: studentId, schoolId },
+        include: { user: true, classArm: true }
+    });
+    if (!student) throw new CustomError.NotFoundError(`Student not found`);
+
+    const school = await prisma.school.findUnique({ where: { id: schoolId } });
+    const settings = await prisma.schoolSettings.findFirst({ where: { schoolId } });
+
+    const allResults = await prisma.studentResult.findMany({
+        where: { studentProfileId: studentId, schoolId },
+        include: { subject: true },
+        orderBy: [{ academicYear: 'asc' }, { term: 'asc' }]
+    });
+
+    const sessionsTerms = new Set();
+    const subjectsMap = {};
+
+    allResults.forEach(r => {
+        const colKey = `${r.academicYear} - ${r.term}`;
+        sessionsTerms.add(colKey);
+        const subjName = r.subject.name;
+        if (!subjectsMap[subjName]) { subjectsMap[subjName] = {}; }
+        subjectsMap[subjName][colKey] = r.totalScore;
+    });
+
+    const columns = Array.from(sessionsTerms);
+    columns.sort(); 
+
+    const subjectsData = Object.keys(subjectsMap).map(subjName => {
+        const scores = columns.map(col => {
+            const score = subjectsMap[subjName][col];
+            return score !== undefined ? score : null;
+        });
+        return { name: subjName, scores };
+    });
+
+    const classIds = [...new Set(allResults.map(r => r.classId))];
+    if (student.classId && !classIds.includes(student.classId)) classIds.push(student.classId);
+
+    const legacyResults = await prisma.legacyResult.findMany({
+        where: { schoolId, classId: { in: classIds } },
+        include: { class: true }
+    });
+
+    const notes = legacyResults.map(lr => `Historical record imported for ${lr.class.name} (${lr.academicYear} ${lr.term}) from previous platform.`);
+    const uniqueNotes = [...new Set(notes)];
+
+    const responseData = {
+        school: {
+            name: settings?.schoolName || school.name,
+            motto: settings?.tagline || '',
+            address: settings?.address || school.address || '',
+            phone: settings?.phone || school.phone || '',
+            email: settings?.email || school.email || '',
+            logoUrl: settings?.logoUrl || school.logoUrl || ''
+        },
+        student: {
+            name: student.user.name,
+            admissionNo: student.admissionNo || 'N/A',
+            gender: student.gender || 'N/A',
+            dob: student.dateOfBirth ? new Date(student.dateOfBirth).toLocaleDateString() : '—',
+            admissionDate: student.createdAt ? new Date(student.createdAt).toLocaleDateString() : '—',
+            class: student.classArm ? student.classArm.name : '—',
+            classId: student.classId
+        },
+        columns,
+        subjects: subjectsData,
+        notes: uniqueNotes
+    };
+
+    res.status(StatusCodes.OK).json(responseData);
+};
+
 module.exports = {
-    generateTranscript
+    generateTranscript,
+    getTranscriptJSON
 };

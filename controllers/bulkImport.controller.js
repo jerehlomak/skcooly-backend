@@ -42,7 +42,7 @@ const downloadStaffTemplate = (req, res) => {
 // ─── DOWNLOAD STUDENT TEMPLATE ────────────────────────────────────────────────
 const downloadStudentTemplate = (req, res) => {
     const headers = [
-        'name', 'arabicName', 'admissionNo', 'classId', 'gender',
+        'name', 'admissionNo', 'classId', 'gender',
         'dateOfBirth', 'phone', 'religion', 'bloodGroup',
         'address', 'previousSchool', 'orphan'
     ];
@@ -270,7 +270,7 @@ const bulkImportStudents = async (req, res) => {
                             classLevel: cls.level,
                             classId,
                             gender,
-                            arabicName: String(row.arabicName || '').trim() || null,
+                            // arabicName removed
                             phone: String(row.phone || '').trim() || null,
                             dateOfBirth: row.dateOfBirth ? new Date(row.dateOfBirth) : null,
                             religion: String(row.religion || '').trim() || null,
