@@ -2,6 +2,7 @@ const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
 const { publishEvent, EVENTS } = require('../services/event-bus.service');
+const { checkExemption } = require('./exemption.controller');
 
 // ─── GET ASSESSMENT STRUCTURES ──────────────────────────────────────────────
 const getAssessmentStructures = async (req, res) => {
@@ -194,19 +195,23 @@ const saveScores = async (req, res) => {
             const termRecord = await prisma.academicTerm.findFirst({
                 where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
             });
-            if (termRecord && termRecord.isLocked) {
-                return res.status(StatusCodes.FORBIDDEN).json({ msg: 'This term is locked. You cannot enter scores.' });
-            }
-
-            // Check activity deadline (applies to teachers only)
             if (termRecord) {
-                const deadlineRecord = await prisma.activityDeadline.findFirst({
-                    where: { schoolId: req.user.schoolId, termId: termRecord.id, activity: 'SCORE_ENTRY', isActive: true }
-                });
-                if (deadlineRecord && new Date() > new Date(deadlineRecord.deadline)) {
-                    return res.status(StatusCodes.FORBIDDEN).json({
-                        msg: `Score entry deadline has passed (${new Date(deadlineRecord.deadline).toLocaleString()}). Please contact the school admin.`
+                const hasExemption = await checkExemption(req.user.schoolId, termRecord.id, req.user.id, 'SCORE_ENTRY', classId, subjectId);
+
+                if (!hasExemption) {
+                    if (termRecord.isLocked) {
+                        return res.status(StatusCodes.FORBIDDEN).json({ msg: 'This term is locked. You cannot enter scores.' });
+                    }
+
+                    // Check activity deadline
+                    const deadlineRecord = await prisma.activityDeadline.findFirst({
+                        where: { schoolId: req.user.schoolId, termId: termRecord.id, activity: 'SCORE_ENTRY', isActive: true }
                     });
+                    if (deadlineRecord && new Date() > new Date(deadlineRecord.deadline)) {
+                        return res.status(StatusCodes.FORBIDDEN).json({
+                            msg: `Score entry deadline has passed (${new Date(deadlineRecord.deadline).toLocaleString()}). Please contact the school admin.`
+                        });
+                    }
                 }
             }
         }

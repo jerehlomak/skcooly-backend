@@ -1,6 +1,8 @@
 const express = require('express');
 const router = express.Router();
 const {
+  advancedUpdateReleaseStatus,
+  getAdvancedReleaseStatus,
     getGradingScale,
     saveGradingScale,
     getStudentReportCard,
@@ -21,6 +23,7 @@ const {
     getTemplatePreview,
     saveResultTemplate,
     getResultTemplate,
+  assignTemplateSection,
     getAllTemplates,
     createResultTemplate,
     updateResultTemplate,
@@ -47,6 +50,7 @@ router.get('/template-preview', authenticateUser, getTemplatePreview);
 router.get('/template', authenticateUser, getResultTemplate);
 router.post('/template', authenticateUser, authorizePermissions('ADMIN'), createResultTemplate);
 router.put('/template/:id', authenticateUser, authorizePermissions('ADMIN'), updateResultTemplate);
+router.patch('/template/:id/assign', authenticateUser, authorizePermissions('ADMIN'), assignTemplateSection);
 router.delete('/template/:id', authenticateUser, authorizePermissions('ADMIN'), deleteResultTemplate);
 router.get('/class-report', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getClassReportCards);
 router.get('/admin-class', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getAdminClassResults);
@@ -65,10 +69,13 @@ router.delete('/comment-rules/:id', authenticateUser, authorizePermissions('ADMI
 router.post('/share', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), shareResultEndpoint);
 
 // Phase 1 Core Infrastructure
+router.get('/release-status', authenticateUser, authorizePermissions('ADMIN'), getAdvancedReleaseStatus);
 router.post('/compute', authenticateUser, authorizePermissions('ADMIN'), computeClassResultsEndpoint);
 router.post('/entry-status', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), updateEntryStatus);
 router.get('/entry-status', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getSubjectEntryStatus);
 router.post('/release-status', authenticateUser, authorizePermissions('ADMIN'), updateReleaseStatus);
+router.post('/release-status/advanced', authenticateUser, authorizePermissions('ADMIN'), advancedUpdateReleaseStatus);
+router.get('/release-status/advanced', authenticateUser, authorizePermissions('ADMIN'), getAdvancedReleaseStatus);
 
 // Trait Ratings
 router.get('/traits/config', authenticateUser, getTraitConfigurations);

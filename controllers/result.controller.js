@@ -121,41 +121,31 @@ const getStudentReportCard = async (req, res) => {
     // ── TASK 1.5: Release Gate — parents and students cannot see unreleased results ──
     if (req.user.role === 'STUDENT' || req.user.role === 'PARENT') {
         if (effectiveClassId) {
+            
             const releaseRecord = await prisma.resultReleaseStatus.findUnique({
-                where: {
-                    schoolId_classId_term_academicYear: {
-                        schoolId: req.user.schoolId,
-                        classId: effectiveClassId,
-                        term,
-                        academicYear
-                    }
-                }
+                where: { schoolId_classId_term_academicYear: { schoolId: req.user.schoolId, classId: effectiveClassId, term, academicYear } }
             });
             if (!releaseRecord || !releaseRecord.isReleased) {
-                return res.status(200).json({
-                    notReleased: true,
-                    message: 'Result not yet released for this term. Please check back later.'
-                });
+                return res.status(200).json({ notReleased: true, message: 'Result not yet released for this term. Please check back later.' });
             }
+            req.visibleTypes = releaseRecord.visibleTypes || ['CA', 'EXAM', 'FULL', 'COMMENT'];
+
         }
     }
 
+    
     // 2. Template for the class
     let templateConfig = null;
-    if (effectiveClassId) {
-        const assignment = await prisma.templateClassAssignment.findFirst({
-            where: { classId: effectiveClassId, schoolId: req.user.schoolId },
-            include: { template: true }
-        });
-        if (assignment) {
-            templateConfig = assignment.template.config;
-        } else {
-            const defaultTmpl = await prisma.reportTemplate.findFirst({
-                where: { schoolId: req.user.schoolId, isDefault: true, isDeleted: false }
-            });
-            if (defaultTmpl) templateConfig = defaultTmpl.config;
-        }
-    }
+    let sectionName = null;
+    if (student.classArm && student.classArm.level) sectionName = student.classArm.level;
+    const clsWithSection = await prisma.class.findUnique({ where: { id: effectiveClassId } });
+    if (clsWithSection && clsWithSection.level) sectionName = clsWithSection.level;
+
+    let template = null;
+    if (sectionName) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (template) templateConfig = template.config;
+
 
     // 3. Results (scores)
     const results = await prisma.studentResult.findMany({
@@ -379,21 +369,35 @@ const getStudentReportCard = async (req, res) => {
             passMark,
             cumulativeAverage
         },
-        attendance,
-        comments: comments || null,
-        traits,
-        annualResults,
-        templateConfig,
-        schoolSettings: schoolInfo ? {
-            schoolName: schoolInfo.name,
-            address: schoolInfo.address,
-            phone: schoolInfo.phone,
-            email: schoolInfo.email,
-            logoUrl: schoolInfo.logoUrl,
-            resultShowBorder: schoolSettingsRecord?.resultShowBorder ?? true,
-            resultShowSignature: schoolSettingsRecord?.resultShowSignature ?? true,
-            resultShowNextTermFees: schoolSettingsRecord?.resultShowNextTermFees ?? false,
-        } : null,
+        visibleTypes: req.visibleTypes || ['CA', 'EXAM', 'FULL', 'COMMENT'],
+          attendance,
+          comments: comments || null,
+          traits,
+          annualResults,
+          templateConfig,
+          schoolSettings: schoolInfo ? (() => {
+            let resultConfig = schoolSettingsRecord?.resultConfig || {};
+            let sectionDisplay = resultConfig.display?.[sectionName] || resultConfig.display?.['ALL'] || {};
+            if (!resultConfig.display?.['ALL'] && resultConfig.display) {
+                if (Object.keys(resultConfig.display).some(k => ['showBorder', 'showStudentPicture'].includes(k))) sectionDisplay = resultConfig.display;
+            }
+            let sectionSignatures = resultConfig.signatures?.[sectionName] || resultConfig.signatures?.['ALL'] || [];
+            if (!Array.isArray(sectionSignatures) && sectionSignatures.showSignature1 !== undefined) {
+                 let legacySigs = [];
+                 if (sectionSignatures.showSignature1) legacySigs.push({ id: 'sig1', roleName: sectionSignatures.signature1Label || 'Director', url: sectionSignatures.signature1Url });
+                 if (sectionSignatures.showSignature2) legacySigs.push({ id: 'sig2', roleName: sectionSignatures.signature2Label || 'Principal', url: sectionSignatures.signature2Url });
+                 sectionSignatures = legacySigs;
+            }
+            return {
+                schoolName: schoolInfo.name,
+                address: schoolInfo.address,
+                phone: schoolInfo.phone,
+                email: schoolInfo.email,
+                logoUrl: schoolInfo.logoUrl,
+                display: sectionDisplay,
+                signatures: sectionSignatures
+            };
+        })() : null,
         gradingScale: { grades, passMark }
     });
 };
@@ -603,9 +607,14 @@ const generateReportCardPDF = async (req, res) => {
         }
     };
 
-    const activeTemplate = await prisma.resultTemplate.findFirst({
-        where: { schoolId: req.user.schoolId, isActive: true }
-    });
+    let sectionName = null;
+    if (student.classArm && student.classArm.level) sectionName = student.classArm.level;
+    const clsWithSection = await prisma.class.findUnique({ where: { id: effectiveClassId } });
+    if (clsWithSection && clsWithSection.level) sectionName = clsWithSection.level;
+
+    let activeTemplate = null;
+    if (sectionName) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (!activeTemplate) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     const templateId = activeTemplate?.name || 'template1';
     const config = activeTemplate?.config || {};
 
@@ -1005,7 +1014,65 @@ const getSubjectEntryStatus = async (req, res) => {
     res.status(StatusCodes.OK).json({ statuses });
 };
 
+
+const advancedUpdateReleaseStatus = async (req, res) => {
+    const { classId, category, term, academicYear, isReleased, visibleTypes } = req.body;
+    if (!term || !academicYear || typeof isReleased !== 'boolean') {
+        throw new CustomError.BadRequestError('Missing term, academicYear, or isReleased');
+    }
+
+    let targetClasses = [];
+    if (classId) {
+        targetClasses = [{ id: classId }];
+    } else if (category && category !== 'ALL') {
+        targetClasses = await prisma.class.findMany({
+            where: { schoolId: req.user.schoolId, classLevel: { name: category } },
+            select: { id: true }
+        });
+    } else {
+        targetClasses = await prisma.class.findMany({
+            where: { schoolId: req.user.schoolId },
+            select: { id: true }
+        });
+    }
+
+    if (targetClasses.length === 0) return res.status(200).json({ msg: 'No classes found to update' });
+
+    const results = [];
+    for (const cls of targetClasses) {
+        const record = await prisma.resultReleaseStatus.upsert({
+            where: { schoolId_classId_term_academicYear: { schoolId: req.user.schoolId, classId: cls.id, term, academicYear } },
+            update: { isReleased, visibleTypes: visibleTypes || ['CA', 'EXAM', 'FULL', 'COMMENT'], releasedAt: isReleased ? new Date() : null, releasedBy: req.user.userId },
+            create: { schoolId: req.user.schoolId, classId: cls.id, term, academicYear, isReleased, visibleTypes: visibleTypes || ['CA', 'EXAM', 'FULL', 'COMMENT'], releasedAt: isReleased ? new Date() : null, releasedBy: req.user.userId }
+        });
+        results.push(record);
+    }
+    res.status(200).json({ msg: 'Release status updated for ' + results.length + ' classes' });
+};
+
+const getAdvancedReleaseStatus = async (req, res) => {
+    const { classId, category, term, academicYear } = req.query;
+    if (!term || !academicYear) throw new CustomError.BadRequestError('Missing term or academicYear');
+
+    let targetClassId = classId;
+    if (!targetClassId) {
+        const whereClause = { schoolId: req.user.schoolId };
+        if (category && category !== 'ALL') whereClause.classLevel = { name: category };
+        const cls = await prisma.class.findFirst({ where: whereClause, select: { id: true } });
+        if (cls) targetClassId = cls.id;
+    }
+
+    if (!targetClassId) return res.status(200).json({ status: { isReleased: false, visibleTypes: ['CA', 'EXAM', 'FULL', 'COMMENT'] } });
+
+    const record = await prisma.resultReleaseStatus.findUnique({
+        where: { schoolId_classId_term_academicYear: { schoolId: req.user.schoolId, classId: targetClassId, term, academicYear } }
+    });
+
+    res.status(200).json({ status: record || { isReleased: false, visibleTypes: ['CA', 'EXAM', 'FULL', 'COMMENT'] } });
+};
+
 const updateReleaseStatus = async (req, res) => {
+
     const { classId, term, academicYear, isReleased } = req.body;
     if (!classId || !term || !academicYear || typeof isReleased !== 'boolean') throw new CustomError.BadRequestError('Missing fields');
 
@@ -1124,10 +1191,27 @@ const getAllTemplates = async (req, res) => {
     res.status(StatusCodes.OK).json({ templates });
 };
 
-const getResultTemplate = async (req, res) => {
-    const template = await prisma.resultTemplate.findFirst({
-        where: { schoolId: req.user.schoolId, isActive: true }
+const assignTemplateSection = async (req, res) => {
+    const { id } = req.params;
+    const { sectionId } = req.body;
+    const assignedSectionId = sectionId === 'ALL' ? null : sectionId;
+    const template = await prisma.resultTemplate.updateMany({
+        where: { id, schoolId: req.user.schoolId },
+        data: { assignedSectionId }
     });
+    res.status(StatusCodes.OK).json({ msg: 'Template assigned', template });
+};
+
+const getResultTemplate = async (req, res) => {
+    const { classId } = req.query;
+    let targetSection = null;
+    if (classId) {
+        const cls = await prisma.class.findUnique({ where: { id: classId }, include: { classLevel: true } });
+        if (cls && cls.classLevel) targetSection = cls.classLevel.name;
+    }
+    let template = null;
+    if (targetSection) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: targetSection }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     res.status(StatusCodes.OK).json({ template });
 };
 
@@ -1194,20 +1278,19 @@ const deleteResultTemplate = async (req, res) => {
 };
 
 const getCommentRules = async (req, res) => {
-    const rules = await prisma.commentRule.findMany({
-        where: { schoolId: req.user.schoolId },
-        orderBy: [{ role: 'asc' }, { minScore: 'desc' }]
-    });
+    const { category } = req.query;
+    const where = { schoolId: req.user.schoolId };
+    if (category && category !== 'ALL') where.category = category;
+    else where.category = null;
+    const rules = await prisma.commentRule.findMany({ where, orderBy: [{ role: 'asc' }, { minScore: 'desc' }] });
     res.status(StatusCodes.OK).json({ rules });
 };
 
 const saveCommentRule = async (req, res) => {
-    const { role, minScore, maxScore, comment } = req.body;
-    if (!role || minScore === undefined || maxScore === undefined || !comment)
-        throw new CustomError.BadRequestError('role, minScore, maxScore, and comment are required');
-
+    const { role, minScore, maxScore, comment, category } = req.body;
+    if (!role || minScore === undefined || maxScore === undefined || !comment) throw new CustomError.BadRequestError('Missing fields');
     const rule = await prisma.commentRule.create({
-        data: { schoolId: req.user.schoolId, role, minScore: parseFloat(minScore), maxScore: parseFloat(maxScore), comment }
+        data: { schoolId: req.user.schoolId, role, minScore: parseFloat(minScore), maxScore: parseFloat(maxScore), comment, category: category === 'ALL' ? null : category }
     });
     res.status(StatusCodes.CREATED).json({ rule });
 };
@@ -1352,6 +1435,8 @@ module.exports = {
     updateEntryStatus,
     getSubjectEntryStatus,
     updateReleaseStatus,
+    advancedUpdateReleaseStatus,
+    getAdvancedReleaseStatus,
     getTraitConfigurations,
     saveTraitConfiguration,
     getTraitRatings,
@@ -1364,6 +1449,7 @@ module.exports = {
     updateResultTemplate,
     deleteResultTemplate,
     getResultTemplate,
+    assignTemplateSection,
     getCommentRules,
     saveCommentRule,
     deleteCommentRule,

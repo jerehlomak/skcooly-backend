@@ -117,8 +117,27 @@ const deleteSession = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Session deleted successfully' });
 };
 
+
+const setCurrentSession = async (req, res) => {
+    const { id } = req.params;
+    const schoolId = req.user.schoolId;
+
+    await prisma.academicSession.updateMany({
+        where: { schoolId },
+        data: { isCurrent: false }
+    });
+
+    const session = await prisma.academicSession.update({
+        where: { id },
+        data: { isCurrent: true }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: 'Session marked as current successfully', session });
+};
+
 module.exports = {
     createSession,
+    setCurrentSession,
     getAllSessions,
     updateSession,
     deleteSession

@@ -135,7 +135,17 @@ const openTerm = async (req, res) => {
         data: { isActive: true, isLocked: false }
     });
 
-    // 3. Update School Settings for backward compatibility
+    // 3. Update Session to be current
+    await prisma.academicSession.updateMany({
+        where: { schoolId },
+        data: { isCurrent: false }
+    });
+    await prisma.academicSession.update({
+        where: { id: term.sessionId },
+        data: { isCurrent: true }
+    });
+
+    // 4. Update School Settings for backward compatibility
     await prisma.schoolSettings.updateMany({
         where: { schoolId },
         data: {

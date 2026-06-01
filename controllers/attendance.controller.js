@@ -45,7 +45,7 @@ const getAttendanceRoster = async (req, res) => {
     const students = await prisma.studentProfile.findMany({
         where: { classId, status: 'Active', schoolId: req.user.schoolId },
         include: { user: { select: { name: true } } },
-        orderBy: { admissionNo: 'asc' },
+        orderBy: { user: { name: 'asc' } },
     });
 
     // Existing records for that date
@@ -153,7 +153,7 @@ const getStudentHistory = async (req, res) => {
     const students = await prisma.studentProfile.findMany({
         where: { classId, status: 'Active', schoolId: req.user.schoolId },
         include: { user: { select: { name: true } }, attendanceRecords: { where: { date: { startsWith: prefix } } } },
-        orderBy: { admissionNo: 'asc' },
+        orderBy: { user: { name: 'asc' } },
     });
 
     const data = students.map(s => ({

@@ -83,7 +83,7 @@ const showCurrentUser = async (req, res) => {
 
     let schoolData = null;
     if (user.schoolId) {
-        schoolData = await prisma.school.findUnique({
+        const school = await prisma.school.findUnique({
             where: { id: user.schoolId },
             include: {
                 plan: true,
@@ -91,6 +91,8 @@ const showCurrentUser = async (req, res) => {
                 group: { select: { id: true, name: true } }
             }
         });
+        const schoolSettings = school ? await prisma.schoolSettings.findFirst({ where: { schoolId: user.schoolId } }) : null;
+        schoolData = school ? { ...school, logoUrl: schoolSettings?.logoUrl || null, blockedFeatures: schoolSettings?.blockedFeatures || [] } : null;
     }
 
     res.status(StatusCodes.OK).json({ user: { ...user, school: schoolData } })

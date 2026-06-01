@@ -10,7 +10,7 @@ const { authenticateUser, authorizePermissions } = require('../middleware/authen
 
 // Template downloads
 router.get('/template/staff', authenticateUser, authorizePermissions('ADMIN'), downloadStaffTemplate);
-router.get('/template/student', authenticateUser, authorizePermissions('ADMIN'), downloadStudentTemplate);
+router.get('/template/students', authenticateUser, authorizePermissions('ADMIN'), downloadStudentTemplate);
 
 // Bulk import uploads
 router.post('/staff', authenticateUser, authorizePermissions('ADMIN'), bulkImportStaff);

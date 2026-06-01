@@ -25,14 +25,14 @@ const addSubject = async (req, res) => {
         data: {
             name: name.trim(),
             code: finalCode,
-            categoryId: categoryId || null,
+            
             type: type || null,
             description: description || null,
             teacherId: teacherId || null,
             schoolId: req.user.schoolId,
             // Link to classes if provided
             classes: classIds && classIds.length > 0
-                ? { create: classIds.map(cid => ({ classId: cid, teacherId: teacherId || null })) }
+                ? { create: classIds.map(cid => ({ classId: cid, teacherId: teacherId || null, categoryId: categoryId || null })) }
                 : undefined
         },
         include: { classes: { include: { class: true } }, teacher: { include: { user: { select: { name: true } } } } }
@@ -50,7 +50,7 @@ const getAllSubjects = async (req, res) => {
     const where = {
         schoolId: req.user.schoolId,
         isDeleted: false,
-        ...(category && category !== 'all' ? { categoryId: category } : {}),
+        ...(category && category !== 'all' ? { classes: { some: { categoryId: category } } } : {}),
         ...(classId && classId !== 'all' ? { classes: { some: { classId } } } : {}),
         ...(search && {
             OR: [
@@ -66,7 +66,7 @@ const getAllSubjects = async (req, res) => {
         where,
         include: {
             classes: { include: { class: true } },
-            category: true,
+            
             teacher: { include: { user: { select: { name: true } } } }
         },
         orderBy: { name: 'asc' },
@@ -88,7 +88,7 @@ const getSubject = async (req, res) => {
         where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: {
             classes: { include: { class: true } },
-            category: true,
+            
             teacher: { include: { user: { select: { name: true, email: true } } } }
         }
     })
@@ -107,7 +107,7 @@ const updateSubject = async (req, res) => {
     const updateData = {
         ...(name && { name: name.trim() }),
         ...(code !== undefined && { code: code ? code.trim().toUpperCase() : null }),
-        ...(categoryId && { categoryId }),
+        
         ...(type !== undefined && { type }),
         ...(description !== undefined && { description }),
         ...(teacherId !== undefined && { teacherId: teacherId || null }),

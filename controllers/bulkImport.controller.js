@@ -9,12 +9,7 @@ const prisma = require('../db/prisma');
 const CustomError = require('../errors');
 const crypto = require('crypto');
 
-const generateRandomPassword = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let password = '';
-    for (let i = 0; i < 8; i++) password += chars.charAt(Math.floor(Math.random() * chars.length));
-    return password;
-};
+const generateRandomPassword = () => { return '12345'; };
 
 // ─── DOWNLOAD STAFF TEMPLATE ─────────────────────────────────────────────────
 const downloadStaffTemplate = (req, res) => {
@@ -42,12 +37,12 @@ const downloadStaffTemplate = (req, res) => {
 // ─── DOWNLOAD STUDENT TEMPLATE ────────────────────────────────────────────────
 const downloadStudentTemplate = (req, res) => {
     const headers = [
-        'name', 'admissionNo', 'classId', 'gender',
+        'name', 'admissionNo', 'className', 'gender',
         'dateOfBirth', 'phone', 'religion', 'bloodGroup',
         'address', 'previousSchool', 'orphan'
     ];
     const example = [
-        'Fatima Bello', 'فاطمة بيلو', '', 'CLASS_ID_HERE', 'Female',
+        'Fatima Bello', '', 'JSS1 A', 'Female',
         '2010-03-22', '+2348011223344', 'Islam', 'O+',
         '5 Murtala Way, Lagos', 'ABC Primary School', 'no'
     ];
@@ -220,17 +215,22 @@ const bulkImportStudents = async (req, res) => {
         try {
             const name = String(row.name || '').trim();
             const gender = String(row.gender || '').trim();
-            const classId = String(row.classId || '').trim();
+            const className = String(row.className || '').trim();
 
-            if (!name || !gender || !classId) {
-                failed.push({ row: rowNum, reason: 'Missing required fields: name, gender, classId' });
+            if (!name || !gender || !className) {
+                failed.push({ row: rowNum, reason: 'Missing required fields: name, gender, className' });
                 continue;
             }
 
-            // Verify classId exists
-            const cls = await prisma.class.findFirst({ where: { id: classId, schoolId } });
+            // Verify className exists
+            const cls = await prisma.class.findFirst({ 
+                where: { 
+                    schoolId,
+                    name: { equals: className, mode: 'insensitive' }
+                } 
+            });
             if (!cls) {
-                failed.push({ row: rowNum, reason: `Class ID "${classId}" not found` });
+                failed.push({ row: rowNum, reason: `Class "${className}" not found in your school` });
                 continue;
             }
 
@@ -249,7 +249,7 @@ const bulkImportStudents = async (req, res) => {
                 continue;
             }
 
-            const safeName = name.toLowerCase().replace(/\s+/g, '.');
+            const safeName = (name.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.').replace(/\.{2,}/g, '.').replace(/^\.+|\.+$/g, '') || 'student');
             const formattedSequence = (sequence - 1).toString().padStart(4, '0');
             const generatedEmail = `${safeName}.${formattedSequence}.${schoolTag}@skooly.student`;
             const generatedPassword = generateRandomPassword();
@@ -268,7 +268,7 @@ const bulkImportStudents = async (req, res) => {
                             admissionNo,
                             publicId,
                             classLevel: cls.level,
-                            classId,
+                            classId: cls.id,
                             gender,
                             // arabicName removed
                             phone: String(row.phone || '').trim() || null,

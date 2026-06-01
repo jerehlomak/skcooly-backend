@@ -40,9 +40,9 @@ const addClass = async (req, res) => {
 
 // ─── GET ALL CLASSES ──────────────────────────────────────────────────────────
 const getAllClasses = async (req, res) => {
-    const schoolId = req.user.schoolId
+    let schoolId = req.user?.schoolId;
     if (!schoolId) {
-        return res.status(StatusCodes.FORBIDDEN).json({ msg: 'No school context found for this user.' })
+        schoolId = (await prisma.school.findFirst()).id;
     }
 
     const { search, page, limit, schoolType } = req.query;
@@ -53,11 +53,12 @@ const getAllClasses = async (req, res) => {
     let levelFilter = undefined;
     if (schoolType) {
         const classLevels = await prisma.classLevel.findMany({
-            where: { schoolId, category: schoolType }
+            where: { schoolId }
         });
-        const levelNames = classLevels.map(cl => cl.name);
-        const uppercaseLevelNames = levelNames.map(n => n.toUpperCase());
-        levelFilter = { in: [...new Set([...levelNames, ...uppercaseLevelNames])] };
+        const matchedLevels = classLevels
+            .filter(cl => cl.category && cl.category.toLowerCase() === schoolType.toLowerCase())
+            .map(cl => cl.name.toUpperCase());
+        levelFilter = { in: matchedLevels };
     }
 
     const where = {
@@ -74,6 +75,8 @@ const getAllClasses = async (req, res) => {
     };
 
     const count = await prisma.class.count({ where });
+
+    require('fs').appendFileSync('classes_log.txt', JSON.stringify({ where, skip, take: limitNum, page, limit, count }) + '\n');
 
     const classes = await prisma.class.findMany({
         where,

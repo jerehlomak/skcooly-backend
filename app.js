@@ -102,12 +102,18 @@ app.post(
     handlePaystackWebhook
 );
 
-app.use(express.json())
+app.use(express.json({ limit: '20mb' }))
+app.use(express.urlencoded({ limit: '20mb', extended: true }))
 app.use(cookieParser(process.env.JWT_SECRET))
 
 app.use(express.static('./public'))
 
-app.use(expressFileupload())
+app.use(expressFileupload({
+    limits: { fileSize: 20 * 1024 * 1024 }, // 20MB per file
+    abortOnLimit: true,
+    responseOnLimit: 'File size limit exceeded (max 20MB)',
+    useTempFiles: false,
+}))
 
 app.get('/', (req, res) => {
     res.send('ecommercee')
@@ -161,6 +167,7 @@ app.use('/api/v1/sessions', sessionRouter)
 app.use('/api/v1/subject-categories', subjectCategoryRouter)
 app.use('/api/v1/terms', termRouter)
 app.use('/api/v1/deadlines', require('./routes/deadline.route'))
+app.use('/api/v1/exemptions', require('./routes/exemption.route'))
 const recoveryRouter = require('./routes/recovery.route')
 
 app.use('/api/v1/bulk-import', bulkImportRouter) // Phase 3: Excel bulk import

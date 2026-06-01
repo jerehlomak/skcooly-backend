@@ -50,6 +50,9 @@ const login = async (req, res) => {
         include: { plan: true, featureFlags: true, group: { select: { id: true, name: true } } }
     })
 
+    // Fetch SchoolSettings for logoUrl and blockedFeatures
+    const schoolSettings = school ? await prisma.schoolSettings.findFirst({ where: { schoolId: school.id } }) : null;
+
     if (!school) {
         throw new CustomError.UnauthenticatedError('Invalid School ID')
     }
@@ -124,7 +127,7 @@ const login = async (req, res) => {
         role: user.role,
         schoolId: user.schoolId || null,
         branchId: user.branchId || null, // Phase 1: null for school-scope, set for branch users
-        school: school,
+        school: { ...school, logoUrl: schoolSettings?.logoUrl || null, blockedFeatures: schoolSettings?.blockedFeatures || [] },
         studentProfile: user.studentProfile,
         teacherProfile: user.teacherProfile,
         parentProfile: user.parentProfile,
@@ -288,6 +291,9 @@ const switchSchool = async (req, res) => {
         });
     }
 
+    // Fetch SchoolSettings for the target school
+    const targetSchoolSettings = targetSchool ? await prisma.schoolSettings.findFirst({ where: { schoolId: targetSchool.id } }) : null;
+
     if (!targetSchool) {
         throw new CustomError.NotFoundError('Branch not found or access denied');
     }
@@ -312,7 +318,7 @@ const switchSchool = async (req, res) => {
         schoolId: targetSchool.id,
         originalSchoolId: isReturningToMain ? undefined : mainSchoolId,
         branchId: dbUser.branchId || null,
-        school: targetSchool,
+        school: { ...targetSchool, logoUrl: targetSchoolSettings?.logoUrl || null, blockedFeatures: targetSchoolSettings?.blockedFeatures || [] },
     };
 
     res.status(StatusCodes.OK).json({ user: userContextData });

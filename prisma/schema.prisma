@@ -27,6 +27,7 @@ model SchoolSettings {
   timezone         String?     @default("Africa/Lagos")
   rulesContent     String?     @db.Text
   formTeacherTitle String?     @default("Form Teacher")
+  blockedFeatures  String[]    @default([])
 
   // Result Module settings
   resultSubjectPosition   Boolean @default(false)
@@ -58,12 +59,12 @@ model AcademicSession {
   classes  Class[]
   students StudentProfile[]
 
-  isDeleted        Boolean            @default(false)
-  deletedAt        DateTime?
-  createdAt        DateTime           @default(now())
-  updatedAt        DateTime           @updatedAt
-  AcademicTerm     AcademicTerm[]
-  PromotionHistory PromotionHistory[]
+  isDeleted              Boolean                 @default(false)
+  deletedAt              DateTime?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  AcademicTerm           AcademicTerm[]
+  PromotionHistory       PromotionHistory[]
   studentTermEnrollments StudentTermEnrollment[]
 
   @@index([schoolId, isDeleted])
@@ -146,12 +147,13 @@ model AcademicTerm {
   session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
-  createdAt     DateTime     @default(now())
-  updatedAt     DateTime     @updatedAt
-  Transaction   Transaction? @relation(fields: [transactionId], references: [id])
-  transactionId String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  Transaction            Transaction?            @relation(fields: [transactionId], references: [id])
+  transactionId          String?
   studentTermEnrollments StudentTermEnrollment[]
   activityDeadlines      ActivityDeadline[]
+  ActivityExemption      ActivityExemption[]
 
   @@unique([schoolId, sessionId, name])
   @@index([schoolId, isActive])
@@ -161,14 +163,14 @@ model AcademicTerm {
 model ActivityDeadline {
   id               String   @id @default(uuid())
   schoolId         String
-  termId           String   // Which term this deadline belongs to
-  activity         String   // e.g. SCORE_ENTRY | FEE_ENTRY | ATTENDANCE | CBT
-  label            String?  // Optional display label, e.g. "First Term Score Deadline"
+  termId           String // Which term this deadline belongs to
+  activity         String // e.g. SCORE_ENTRY | FEE_ENTRY | ATTENDANCE | CBT
+  label            String? // Optional display label, e.g. "First Term Score Deadline"
   deadline         DateTime // Exact date + time when the activity locks
   warningLeadHours Int      @default(48) // Hours before deadline to show warning
   isActive         Boolean  @default(true)
 
-  term      AcademicTerm @relation(fields: [termId], references: [id], onDelete: Cascade)
+  term AcademicTerm @relation(fields: [termId], references: [id], onDelete: Cascade)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -177,19 +179,42 @@ model ActivityDeadline {
   @@index([schoolId, isActive])
 }
 
+/// Allows specific users (teachers) to bypass term locks and activity deadlines
+model ActivityExemption {
+  id               String   @id @default(uuid())
+  schoolId         String
+  termId           String // Which term this exemption applies to
+  userId           String // The staff member who is exempted
+  activity         String // e.g. SCORE_ENTRY | ATTENDANCE | ALL
+  classId          String? // Optional: restrict exemption to a specific class
+  subjectId        String? // Optional: restrict exemption to a specific subject
+  expiresAt        DateTime // When the exemption automatically ends
+  grantedByAdminId String // Admin who granted it
+
+  term    AcademicTerm @relation(fields: [termId], references: [id], onDelete: Cascade)
+  user    User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  class   Class?       @relation(fields: [classId], references: [id], onDelete: SetNull)
+  subject Subject?     @relation(fields: [subjectId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId, termId, userId])
+}
+
 model StudentTermEnrollment {
-  id               String          @id @default(uuid())
+  id               String   @id @default(uuid())
   schoolId         String
   studentProfileId String
   academicTermId   String
   classId          String
   sessionId        String
-  createdAt        DateTime        @default(now())
-  
-  student          StudentProfile  @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
-  term             AcademicTerm    @relation(fields: [academicTermId], references: [id], onDelete: Cascade)
-  class            Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
-  session          AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  createdAt        DateTime @default(now())
+
+  student StudentProfile  @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  term    AcademicTerm    @relation(fields: [academicTermId], references: [id], onDelete: Cascade)
+  class   Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
 
   @@unique([studentProfileId, academicTermId])
   @@index([schoolId])
@@ -384,32 +409,34 @@ model User {
   school             School?          @relation(fields: [schoolId], references: [id])
   branch             Branch?          @relation(fields: [branchId], references: [id])
 
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
+  isDeleted         Boolean             @default(false)
+  deletedAt         DateTime?
+  ActivityExemption ActivityExemption[]
 
   @@index([schoolId, isDeleted])
   @@index([branchId])
 }
 
 model StudentProfile {
-  id                    String                 @id @default(uuid())
+  id                    String                  @id @default(uuid())
   schoolId              String? // tenant isolation
-  userId                String                 @unique
-  enrollmentDate        DateTime               @default(now())
+  userId                String                  @unique
+  enrollmentDate        DateTime                @default(now())
   admissionNo           String
   classLevel            String
   gender                String
   phone                 String?
-  status                String                 @default("Active")
+  status                String                  @default("Active")
   address               String?
-  admissionDate         DateTime               @default(now())
+  admissionDate         DateTime                @default(now())
   bloodGroup            String?
   genotype              String?
   dateOfBirth           DateTime?
-  publicId              String?                @unique
-  orphan                Boolean                @default(false)
+  publicId              String?                 @unique
+  orphan                Boolean                 @default(false)
   parentProfileId       String?
   previousSchool        String?
+  profilePicture        String?                 @db.Text
   religion              String?
   classId               String? // specific class arm relation
   sessionId             String? // enrollment session
@@ -422,12 +449,12 @@ model StudentProfile {
   ledgerEntries         StudentLedger[]
   transactions          Transaction[]
   termEnrollments       StudentTermEnrollment[]
-  parent                ParentProfile?         @relation(fields: [parentProfileId], references: [id])
-  user                  User                   @relation(fields: [userId], references: [id])
-  classArm              Class?                 @relation("ClassStudents", fields: [classId], references: [id])
-  school                School?                @relation(fields: [schoolId], references: [id])
-  session               AcademicSession?       @relation(fields: [sessionId], references: [id])
-  subjectCategory       SubjectCategory?       @relation("StudentSubjectCategory", fields: [subjectCategoryId], references: [id])
+  parent                ParentProfile?          @relation(fields: [parentProfileId], references: [id])
+  user                  User                    @relation(fields: [userId], references: [id])
+  classArm              Class?                  @relation("ClassStudents", fields: [classId], references: [id])
+  school                School?                 @relation(fields: [schoolId], references: [id])
+  session               AcademicSession?        @relation(fields: [sessionId], references: [id])
+  subjectCategory       SubjectCategory?        @relation("StudentSubjectCategory", fields: [subjectCategoryId], references: [id])
 
   isDeleted                  Boolean                      @default(false)
   deletedAt                  DateTime?
@@ -525,31 +552,32 @@ model ParentProfile {
 }
 
 model Class {
-  id                   String             @id @default(uuid())
-  schoolId             String? // tenant isolation
-  sessionId            String? // Reference to AcademicSession
-  name                 String
-  level                String
-  section              String?
-  status               String             @default("Active")
-  formTeacherId        String?
-  createdAt            DateTime           @default(now())
-  updatedAt            DateTime           @updatedAt
-  session              AcademicSession?   @relation(fields: [sessionId], references: [id])
-  formTeacher          TeacherProfile?    @relation("FormTeacher", fields: [formTeacherId], references: [id])
-  subjects             ClassSubject[]
-  legacyResults        LegacyResult[]
-  students             StudentProfile[]   @relation("ClassStudents")
-  attendanceRecords    AttendanceRecord[] @relation("ClassAttendance")
-  exams                Exam[]
-  assignments          Assignment[]
-  lessonResources      LessonResource[]
-  promotionHistoryFrom PromotionHistory[] @relation("FromClass")
-  promotionHistoryTo   PromotionHistory[] @relation("ToClass")
+  id                     String                  @id @default(uuid())
+  schoolId               String? // tenant isolation
+  sessionId              String? // Reference to AcademicSession
+  name                   String
+  level                  String
+  section                String?
+  status                 String                  @default("Active")
+  formTeacherId          String?
+  createdAt              DateTime                @default(now())
+  updatedAt              DateTime                @updatedAt
+  session                AcademicSession?        @relation(fields: [sessionId], references: [id])
+  formTeacher            TeacherProfile?         @relation("FormTeacher", fields: [formTeacherId], references: [id])
+  subjects               ClassSubject[]
+  legacyResults          LegacyResult[]
+  students               StudentProfile[]        @relation("ClassStudents")
+  attendanceRecords      AttendanceRecord[]      @relation("ClassAttendance")
+  exams                  Exam[]
+  assignments            Assignment[]
+  lessonResources        LessonResource[]
+  promotionHistoryFrom   PromotionHistory[]      @relation("FromClass")
+  promotionHistoryTo     PromotionHistory[]      @relation("ToClass")
   studentTermEnrollments StudentTermEnrollment[]
 
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
+  isDeleted         Boolean             @default(false)
+  deletedAt         DateTime?
+  ActivityExemption ActivityExemption[]
 
   @@index([schoolId, isDeleted])
 }
@@ -588,24 +616,26 @@ model Subject {
   teacher        TeacherProfile?  @relation("SubjectTeacher", fields: [teacherId], references: [id])
   category       SubjectCategory? @relation(fields: [categoryId], references: [id])
 
-  isDeleted      Boolean          @default(false)
-  deletedAt      DateTime?
-  QuestionBank   QuestionBank[]
-  Exam           Exam[]
-  Assignment     Assignment[]
-  LessonResource LessonResource[]
+  isDeleted         Boolean             @default(false)
+  deletedAt         DateTime?
+  QuestionBank      QuestionBank[]
+  Exam              Exam[]
+  Assignment        Assignment[]
+  LessonResource    LessonResource[]
+  ActivityExemption ActivityExemption[]
 
   @@index([schoolId, isDeleted])
 }
 
 model ClassSubject {
-  id        String          @id @default(uuid())
-  classId   String
-  subjectId String
-  teacherId String? // NEW: specific teacher handling this subject in this class
-  class     Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
-  subject   Subject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  teacher   TeacherProfile? @relation("ClassSubjectTeacher", fields: [teacherId], references: [id])
+  id         String          @id @default(uuid())
+  classId    String
+  categoryId String?
+  subjectId  String
+  teacherId  String? // NEW: specific teacher handling this subject in this class
+  class      Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject    Subject         @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  teacher    TeacherProfile? @relation("ClassSubjectTeacher", fields: [teacherId], references: [id])
 
   @@unique([classId, subjectId])
 }
@@ -757,8 +787,8 @@ model SchoolType {
   defaultClasses Json?    @default("[]")
 
   // School ownership — null means platform-level (legacy), set means school-specific
-  schoolId       String?
-  school         School?  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  schoolId String?
+  school   School? @relation(fields: [schoolId], references: [id], onDelete: Cascade)
 
   // reverse relation (optional)
   settings SchoolSettings[]
@@ -924,7 +954,7 @@ model School {
   updatedAt                  DateTime                     @updatedAt
   groupId                    String?
   group                      SchoolGroup?                 @relation(fields: [groupId], references: [id])
-  parentId                   String?                      // Link to main school if this is a branch
+  parentId                   String? // Link to main school if this is a branch
   parent                     School?                      @relation("MainSchoolToBranch", fields: [parentId], references: [id])
   branchSchools              School[]                     @relation("MainSchoolToBranch")
   plan                       SubscriptionPlan?            @relation(fields: [planId], references: [id])
@@ -1210,13 +1240,14 @@ model StudentTermResult {
 }
 
 model ResultTemplate {
-  id        String   @id @default(uuid())
-  schoolId  String
-  name      String // e.g. "Template 1", "Original"
-  isActive  Boolean  @default(false)
-  config    Json // Stores all the toggles, colors, etc.
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id                String   @id @default(uuid())
+  schoolId          String
+  name              String // e.g. "Template 1", "Original"
+  isActive          Boolean  @default(false)
+  config            Json // Stores all the toggles, colors, etc.
+  assignedSectionId String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
 
   @@unique([schoolId, name])
   @@index([schoolId])
@@ -1225,6 +1256,7 @@ model ResultTemplate {
 model CommentRule {
   id        String   @id @default(uuid())
   schoolId  String
+  category  String? // e.g. "Primary"
   role      String // "Class Teacher", "Head Teacher", "Principal"
   minScore  Float
   maxScore  Float
@@ -1627,6 +1659,7 @@ model ResultReleaseStatus {
   term         String
   academicYear String
   isReleased   Boolean   @default(false)
+  visibleTypes Json?
   releasedAt   DateTime?
   releasedBy   String?
   createdAt    DateTime  @default(now())

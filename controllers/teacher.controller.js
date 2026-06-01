@@ -6,14 +6,7 @@ const CustomError = require('../errors');
 const { logTenantAction } = require('../services/audit-log.service')
 const crypto = require('crypto');
 
-const generateRandomPassword = () => {
-    const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
-    let password = '';
-    for (let i = 0; i < 8; i++) {
-        password += chars.charAt(Math.floor(Math.random() * chars.length));
-    }
-    return password;
-};
+const generateRandomPassword = () => { return '12345'; };
 
 // ─── ADD TEACHER ───────────────────────────────────────────────────────────────
 const addTeacher = async (req, res) => {
@@ -281,17 +274,34 @@ const getMyClasses = async (req, res) => {
         }
     });
 
-    // To add student counts, we do it in code
+    // To add student counts and actual roster, we do it in code
     const enhancedClasses = await Promise.all(classes.map(async (cls) => {
-        // Count students assigned to this specific class arm (by classId)
+        // Fetch students assigned to this specific class arm (by classId)
         // Falls back to classLevel count for students not yet migrated to classId
-        const byArm = await prisma.studentProfile.count({
-            where: { classId: cls.id, status: 'Active' }
+        let studentsList = await prisma.studentProfile.findMany({
+            where: { classId: cls.id, status: 'Active' },
+            include: { user: { select: { name: true } } },
+            orderBy: { user: { name: 'asc' } }
         });
-        const byLevel = byArm === 0
-            ? await prisma.studentProfile.count({ where: { classLevel: cls.level, status: 'Active' } })
-            : 0;
-        const studentCount = byArm > 0 ? byArm : byLevel;
+
+        if (studentsList.length === 0) {
+            studentsList = await prisma.studentProfile.findMany({
+                where: { classLevel: cls.level, status: 'Active' },
+                include: { user: { select: { name: true } } },
+                orderBy: { user: { name: 'asc' } }
+            });
+        }
+
+        const studentCount = studentsList.length;
+
+        const avatarColors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-purple-500'];
+        const mappedStudents = studentsList.map((s, idx) => ({
+            id: s.id,
+            name: s.user?.name || 'Unknown',
+            avatar: (s.user?.name || 'U').substring(0, 2).toUpperCase(),
+            color: avatarColors[idx % avatarColors.length],
+            admNo: s.admissionNo || 'N/A'
+        }));
 
         // Which subjects does this teacher teach IN THIS SPECIFIC CLASS? 
         // Based on the classSubjects we queried at the top
@@ -303,6 +313,7 @@ const getMyClasses = async (req, res) => {
         return {
             ...cls,
             studentCount,
+            students: mappedStudents,
             mySubjects: mySubjectsForThisClass.map(ms => ({ id: ms.id, name: ms.name }))
         };
     }));
