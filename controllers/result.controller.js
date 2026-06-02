@@ -212,9 +212,17 @@ const getStudentReportCard = async (req, res) => {
     const schoolSettingsRecord = await prisma.schoolSettings.findFirst({
         where: { schoolId: req.user.schoolId }
     });
+    
+    // Fetch trait configuration
+    const traitConfiguration = await prisma.traitConfiguration.findMany({
+        where: { schoolId: req.user.schoolId }
+    });
 
     // 7. Class context for position/average
     let classAverage = null;
+    let highestAvg = null;
+    let lowestAvg = null;
+    let studentsInClass = null;
     let overallPosition = null;
     if (effectiveClassId) {
         const allClassResults = await prisma.studentResult.findMany({
@@ -238,6 +246,11 @@ const getStudentReportCard = async (req, res) => {
 
         const allAvgs = averages.map(a => a.avg);
         classAverage = allAvgs.length > 0 ? (allAvgs.reduce((s, v) => s + v, 0) / allAvgs.length).toFixed(1) : null;
+        if (allAvgs.length > 0) {
+            highestAvg = Math.max(...allAvgs).toFixed(1);
+            lowestAvg = Math.min(...allAvgs).toFixed(1);
+        }
+        studentsInClass = allAvgs.length;
 
         // Subject position logic
         if (schoolSettingsRecord?.resultSubjectPosition) {
@@ -249,9 +262,12 @@ const getStudentReportCard = async (req, res) => {
              Object.values(subjectScores).forEach(arr => arr.sort((a,b) => b.score - a.score));
              enrichedResults.forEach(er => {
                  const ranks = subjectScores[er.subjectId];
-                 if (ranks) {
+                 if (ranks && ranks.length > 0) {
                      const r = ranks.findIndex(x => x.sid === studentProfileId);
                      if (r >= 0) er.subjectPosition = r + 1;
+                     er.highestScore = ranks[0].score;
+                     er.lowestScore = ranks[ranks.length - 1].score;
+                     er.classAvgScore = Number((ranks.reduce((sum, item) => sum + item.score, 0) / ranks.length).toFixed(1));
                  }
              });
         }
@@ -366,6 +382,9 @@ const getStudentReportCard = async (req, res) => {
             average,
             overallPosition,
             classAverage,
+            highestAvg,
+            lowestAvg,
+            studentsInClass,
             passMark,
             cumulativeAverage
         },
@@ -389,13 +408,14 @@ const getStudentReportCard = async (req, res) => {
                  sectionSignatures = legacySigs;
             }
             return {
-                schoolName: schoolInfo.name,
-                address: schoolInfo.address,
-                phone: schoolInfo.phone,
-                email: schoolInfo.email,
-                logoUrl: schoolInfo.logoUrl,
+                schoolName: schoolSettingsRecord?.schoolName || schoolInfo.name,
+                address: schoolSettingsRecord?.address || schoolInfo.address,
+                phone: schoolSettingsRecord?.phone || schoolInfo.phone,
+                email: schoolSettingsRecord?.email || schoolInfo.email,
+                logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo.logoUrl,
                 display: sectionDisplay,
-                signatures: sectionSignatures
+                signatures: sectionSignatures,
+                traitConfiguration: traitConfiguration
             };
         })() : null,
         gradingScale: { grades, passMark }
@@ -515,6 +535,9 @@ const generateReportCardPDF = async (req, res) => {
     });
 
     let classAverage = null;
+    let highestAvg = null;
+    let lowestAvg = null;
+    let studentsInClass = null;
     let overallPosition = null;
     if (effectiveClassId) {
         const allClassResults = await prisma.studentResult.findMany({
@@ -537,6 +560,11 @@ const generateReportCardPDF = async (req, res) => {
 
         const allAvgs = averages.map(a => a.avg);
         classAverage = allAvgs.length > 0 ? (allAvgs.reduce((s, v) => s + v, 0) / allAvgs.length).toFixed(1) : null;
+        if (allAvgs.length > 0) {
+            highestAvg = Math.max(...allAvgs).toFixed(1);
+            lowestAvg = Math.min(...allAvgs).toFixed(1);
+        }
+        studentsInClass = allAvgs.length;
     }
 
     const schoolInfo = await prisma.school.findUnique({
@@ -575,11 +603,11 @@ const generateReportCardPDF = async (req, res) => {
 
     const templateData = {
         school: {
-            name: schoolInfo?.name,
-            motto: "Knowledge and Integrity",
-            address: schoolInfo?.address,
-            phone: schoolInfo?.phone,
-            logoUrl: schoolInfo?.logoUrl
+            name: schoolSettingsRecord?.schoolName || schoolInfo?.name,
+            motto: schoolSettingsRecord?.tagline || "Knowledge and Integrity",
+            address: schoolSettingsRecord?.address || schoolInfo?.address,
+            phone: schoolSettingsRecord?.phone || schoolInfo?.phone,
+            logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl
         },
         student: {
             name: student.user.name,
@@ -798,7 +826,7 @@ const getAdminClassResults = async (req, res) => {
         include: { subject: { select: { name: true, code: true } } }
     });
 
-    const gradingScale = await prisma.gradingScale.findUnique({
+    const gradingScale = await prisma.gradingScale.findFirst({
         where: { schoolId: req.user.schoolId }
     });
 
@@ -859,7 +887,7 @@ const getBroadsheet = async (req, res) => {
     });
 
     // Get grading scale
-    const gradingScaleRecord = await prisma.gradingScale.findUnique({
+    const gradingScaleRecord = await prisma.gradingScale.findFirst({
         where: { schoolId: req.user.schoolId }
     });
     const grades = gradingScaleRecord ? gradingScaleRecord.grades : [];
@@ -1419,7 +1447,7 @@ const batchExportPDF = async (req, res) => {
         }
     } catch (err) {
         console.error("Batch Export Error:", err);
-        throw new CustomError.InternalServerError('Failed to generate batch export');
+        throw new Error(`Failed to generate batch export: ${err.message}`);
     }
 };
 

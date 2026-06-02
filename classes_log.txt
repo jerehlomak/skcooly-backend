@@ -144,3 +144,168 @@
 {"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
 {"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
 {"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"page":"1","limit":"10","count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"page":"1","limit":"10","count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null},"level":{"in":["PRIMARY 1","PRIMARY 2","PRIMARY 4","PRIMARY 3","PRIMARY 5"]}},"skip":0,"take":10,"count":3}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}
+{"where":{"schoolId":"28018997-f868-4717-8eef-994166f226f3","isDeleted":false,"NOT":{"schoolId":null}},"skip":0,"take":10,"count":8}

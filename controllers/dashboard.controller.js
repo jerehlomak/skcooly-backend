@@ -161,7 +161,13 @@ const getDashboardStats = async (req, res) => {
                     students: {
                         include: {
                             user: { select: { name: true } },
-                            classArm: { select: { name: true, level: true } }
+                            classArm: { 
+                                select: { 
+                                    name: true, 
+                                    level: true, 
+                                    _count: { select: { subjects: true } } 
+                                } 
+                            }
                         }
                     }
                 }
@@ -203,6 +209,7 @@ const getDashboardStats = async (req, res) => {
                 name: s.user.name,
                 admissionNumber: s.admissionNo,
                 classLevel: s.classArm || { name: s.classLevel },
+                subjects: s.classArm?._count?.subjects || 0,
                 isActive: s.status === 'Active',
                 photo: null
             }));

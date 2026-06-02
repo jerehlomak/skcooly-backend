@@ -825,7 +825,7 @@ const generateDynamicPDF = async (url) => {
   await page.setDefaultNavigationTimeout(120000); 
   
   try {
-      await page.goto(url, { waitUntil: 'networkidle0' });
+      await page.goto(url, { waitUntil: 'networkidle2' });
       await page.waitForSelector('#print-ready', { timeout: 120000 });
       
       const pdf = await page.pdf({ format: 'A4', printBackground: true });
@@ -852,20 +852,30 @@ const generateDynamicPDFs = async (jobs) => {
 
   const results = [];
   try {
-      for (const job of jobs) {
-          const page = await browser.newPage();
-          await page.setDefaultNavigationTimeout(60000);
-          try {
-              await page.goto(job.url, { waitUntil: 'networkidle0' });
-              await page.waitForSelector('#print-ready', { timeout: 60000 });
-              const pdf = await page.pdf({ format: 'A4', printBackground: true });
-              results.push({ filename: job.filename, buffer: pdf });
-          } catch (jobErr) {
-              console.error(`Failed to generate PDF for ${job.filename}:`, jobErr);
-          } finally {
-              await page.close();
-          }
-      }
+    const CHUNK_SIZE = 5;
+    for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
+        const chunk = jobs.slice(i, i + CHUNK_SIZE);
+        const chunkPromises = chunk.map(async (job) => {
+            const page = await browser.newPage();
+            await page.setDefaultNavigationTimeout(60000);
+            try {
+                await page.goto(job.url, { waitUntil: 'networkidle2' });
+                await page.waitForSelector('#print-ready', { timeout: 60000 });
+                const pdf = await page.pdf({ format: 'A4', printBackground: true });
+                return { filename: job.filename, buffer: pdf };
+            } catch (jobErr) {
+                console.error(`Failed to generate PDF for ${job.filename}:`, jobErr);
+                return null;
+            } finally {
+                await page.close();
+            }
+        });
+
+        const chunkResults = await Promise.all(chunkPromises);
+        for (const res of chunkResults) {
+            if (res) results.push(res);
+        }
+    }
   } finally {
       if (browser) await browser.close();
   }

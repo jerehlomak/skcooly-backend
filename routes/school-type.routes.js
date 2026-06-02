@@ -3,14 +3,15 @@ const router = express.Router();
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
 const schoolTypeController = require('../controllers/school-type.controller');
 
-// All routes require authentication and school-admin level access
+// All routes require authentication
 router.use(authenticateUser);
-router.use(authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'));
+
+const adminAuth = authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN');
 
 router.get('/', schoolTypeController.listSchoolTypes);
-router.post('/', schoolTypeController.createSchoolType);
-router.patch('/:id', schoolTypeController.updateSchoolType);
-router.delete('/:id', schoolTypeController.deleteSchoolType);
-router.post('/:id/default', schoolTypeController.setDefaultSchoolType);
+router.post('/', adminAuth, schoolTypeController.createSchoolType);
+router.patch('/:id', adminAuth, schoolTypeController.updateSchoolType);
+router.delete('/:id', adminAuth, schoolTypeController.deleteSchoolType);
+router.post('/:id/default', adminAuth, schoolTypeController.setDefaultSchoolType);
 
 module.exports = router;

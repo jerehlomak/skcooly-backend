@@ -77,7 +77,7 @@ const addParent = async (req, res) => {
         // Assign students to this parent if provided
         if (studentIds && Array.isArray(studentIds) && studentIds.length > 0) {
             await tx.studentProfile.updateMany({
-                where: { id: { in: studentIds }, schoolId: req.user.schoolId },
+                where: { userId: { in: studentIds }, schoolId: req.user.schoolId },
                 data: { parentProfileId: parentUser.parentProfile.id }
             });
         }
@@ -208,10 +208,10 @@ const updateParent = async (req, res) => {
                 data: { parentProfileId: null }
             });
 
-            // Then reconnect the selected ones — query by id (which is StudentProfile.id)
+            // Then reconnect the selected ones — query by userId (since frontend sends User.id)
             if (studentIds.length > 0) {
                 await prisma.studentProfile.updateMany({
-                    where: { id: { in: studentIds }, schoolId: req.user.schoolId },
+                    where: { userId: { in: studentIds }, schoolId: req.user.schoolId },
                     data: { parentProfileId: parentUser.parentProfile.id }
                 });
             }
