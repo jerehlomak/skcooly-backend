@@ -71,15 +71,18 @@ model AcademicSession {
 }
 
 model Section {
-  id       String  @id @default(cuid())
-  schoolId String? // tenant isolation
-  name     String // e.g. "Primary", "Junior Secondary"
-  type     String? // e.g. "Primary", "Secondary"
+  id        String  @id @default(cuid())
+  schoolId  String? // tenant isolation
+  name      String // e.g. "Primary", "Junior Secondary"
+  shortCode String? // e.g. "PRI", "JSS"
+  type      String? // e.g. "Primary", "Secondary"
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
+
+  classes   Class[]
 
   @@index([schoolId, isDeleted])
 }
@@ -558,12 +561,15 @@ model Class {
   name                   String
   level                  String
   section                String?
+  sectionId              String?
+  order                  Int                     @default(0)
   status                 String                  @default("Active")
   formTeacherId          String?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   session                AcademicSession?        @relation(fields: [sessionId], references: [id])
   formTeacher            TeacherProfile?         @relation("FormTeacher", fields: [formTeacherId], references: [id])
+  sectionRel             Section?                @relation(fields: [sectionId], references: [id])
   subjects               ClassSubject[]
   legacyResults          LegacyResult[]
   students               StudentProfile[]        @relation("ClassStudents")

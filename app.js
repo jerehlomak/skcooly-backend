@@ -62,6 +62,7 @@ const termRouter = require('./routes/term.route')
 const studentFinanceRouter = require('./routes/studentFinance.route') // Phase 6 (Student Wallet & Ledger)
 const legacyResultRouter = require('./routes/legacy-result.routes')
 const transcriptRouter = require('./routes/transcript.routes')
+const sectionRouter = require('./routes/section.route')
 
 
 // middleware 
@@ -166,6 +167,7 @@ app.use('/api/v1/payroll', payrollRouter)           // Payroll Module
 app.use('/api/v1/sessions', sessionRouter)
 app.use('/api/v1/subject-categories', subjectCategoryRouter)
 app.use('/api/v1/terms', termRouter)
+app.use('/api/v1/sections', sectionRouter)
 app.use('/api/v1/deadlines', require('./routes/deadline.route'))
 app.use('/api/v1/exemptions', require('./routes/exemption.route'))
 const recoveryRouter = require('./routes/recovery.route')

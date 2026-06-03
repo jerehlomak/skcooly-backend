@@ -6,14 +6,21 @@ const { logTenantAction } = require('../services/audit-log.service')
 
 // ─── CREATE CLASS ─────────────────────────────────────────────────────────────
 const addClass = async (req, res) => {
-    const { name, level, arms, sessionId, arabicName, section } = req.body
-    if (!name || !level) throw new CustomError.BadRequestError('Class name and level are required')
+    const { name, sectionId, arms, sessionId, order } = req.body
+    if (!name || !sectionId) throw new CustomError.BadRequestError('Class base name and section are required')
+
+    const section = await prisma.section.findUnique({ where: { id: sectionId } })
+    if (!section) throw new CustomError.BadRequestError('Invalid section selected')
+
+    // Store the base name as the "level" for backward compatibility
+    const baseLevel = name.trim().toUpperCase()
 
     if (arms && Array.isArray(arms) && arms.length > 0) {
-        const classesToCreate = arms.map(arm => ({
+        const classesToCreate = arms.map((arm, index) => ({
             name: `${name} ${arm}`.trim().toUpperCase(),
-            level: level.trim().toUpperCase(),
-            section: section ? section.trim() : null,
+            level: baseLevel,
+            sectionId: sectionId,
+            order: order !== undefined ? order + index : 0,
             sessionId: sessionId || null,
             status: 'Active',
             schoolId: req.user.schoolId
@@ -22,14 +29,16 @@ const addClass = async (req, res) => {
         return res.status(StatusCodes.CREATED).json({ msg: 'Classes created successfully', classes: newClasses })
     }
 
-    const existing = await prisma.class.findFirst({ where: { name, schoolId: req.user.schoolId } })
-    if (existing) throw new CustomError.BadRequestError(`A class named "${name}" already exists for this school`)
+    const className = name.trim().toUpperCase()
+    const existing = await prisma.class.findFirst({ where: { name: className, schoolId: req.user.schoolId } })
+    if (existing) throw new CustomError.BadRequestError(`A class named "${className}" already exists for this school`)
 
     const newClass = await prisma.class.create({
         data: {
-            name: name.trim().toUpperCase(),
-            level: level.trim().toUpperCase(),
-            section: section?.trim() || null,
+            name: className,
+            level: baseLevel,
+            sectionId: sectionId,
+            order: order !== undefined ? order : 0,
             sessionId: sessionId || null,
             status: 'Active',
             schoolId: req.user.schoolId
@@ -45,60 +54,36 @@ const getAllClasses = async (req, res) => {
         schoolId = (await prisma.school.findFirst()).id;
     }
 
-    const { search, page, limit, schoolType } = req.query;
+    const { search, page, limit, sectionId } = req.query;
     const pageNum = parseInt(page) || 1;
-    const limitNum = parseInt(limit) || 10;
+    const limitNum = parseInt(limit) || 200;
     const skip = (pageNum - 1) * limitNum;
-
-    let levelFilter = undefined;
-    if (schoolType) {
-        const classLevels = await prisma.classLevel.findMany({
-            where: { schoolId }
-        });
-        const matchedLevels = classLevels
-            .filter(cl => cl.category && cl.category.toLowerCase() === schoolType.toLowerCase())
-            .map(cl => cl.name.toUpperCase());
-        levelFilter = { in: matchedLevels };
-    }
 
     const where = {
         schoolId,
         isDeleted: false,
-        NOT: { schoolId: null },
-        ...(levelFilter && { level: levelFilter }),
-        ...(search && {
-            OR: [
-                { name: { contains: search, mode: 'insensitive' } },
-                { level: { contains: search, mode: 'insensitive' } },
-            ]
-        })
+        ...(search ? { name: { contains: search, mode: 'insensitive' } } : {}),
+        ...(sectionId ? { sectionId } : {})
     };
 
-    const count = await prisma.class.count({ where });
+    const [classes, total] = await Promise.all([
+        prisma.class.findMany({
+            where,
+            skip,
+            take: limitNum,
+            orderBy: [{ sectionId: 'asc' }, { order: 'asc' }, { name: 'asc' }],
+            include: {
+                formTeacher: { select: { id: true, user: { select: { name: true } } } },
+                sectionRel: { select: { id: true, name: true, shortCode: true, type: true } },
+                session: { select: { id: true, name: true } },
+                students: { where: { isDeleted: false }, select: { id: true } },
+                subjects: { select: { id: true } }
+            }
+        }),
+        prisma.class.count({ where })
+    ]);
 
-    require('fs').appendFileSync('classes_log.txt', JSON.stringify({ where, skip, take: limitNum, page, limit, count }) + '\n');
-
-    const classes = await prisma.class.findMany({
-        where,
-        include: {
-            subjects: {
-                include: {
-                    subject: true,
-                    teacher: { include: { user: { select: { name: true } } } }
-                }
-            },
-            formTeacher: { include: { user: { select: { name: true } } } }
-        },
-        orderBy: { name: 'asc' },
-        ...(page && limit ? { skip, take: limitNum } : {})
-    });
-    
-    res.status(StatusCodes.OK).json({ 
-        classes, 
-        count: page && limit ? count : classes.length,
-        totalPages: page && limit ? Math.ceil(count / limitNum) : 1,
-        currentPage: pageNum
-    });
+    res.status(StatusCodes.OK).json({ classes, total, page: pageNum, pages: Math.ceil(total / limitNum) });
 }
 
 // ─── GET SINGLE CLASS ─────────────────────────────────────────────────────────
@@ -107,34 +92,47 @@ const getClass = async (req, res) => {
     const cls = await prisma.class.findFirst({
         where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: {
-            subjects: {
-                include: {
-                    subject: true,
-                    teacher: { include: { user: { select: { name: true } } } }
-                }
-            },
-            formTeacher: { include: { user: { select: { name: true } } } }
+            formTeacher: { include: { user: { select: { id: true, name: true, email: true } } } },
+            sectionRel: true,
+            session: true,
+            subjects: { include: { subject: true, teacher: { include: { user: { select: { name: true } } } } } },
+            students: { where: { isDeleted: false }, include: { user: { select: { name: true } } } }
         }
     })
-    if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${id}`)
+    if (!cls) throw new CustomError.NotFoundError('Class not found')
     res.status(StatusCodes.OK).json({ class: cls })
 }
 
 // ─── UPDATE CLASS ─────────────────────────────────────────────────────────────
 const updateClass = async (req, res) => {
     const { id } = req.params
-    const { name, level, section, sessionId, status } = req.body
+    const { name, level, sectionId, sessionId, status, section } = req.body
+
+    const updateData = {}
+    if (name !== undefined) updateData.name = name.trim().toUpperCase()
+    if (level !== undefined) updateData.level = level.trim().toUpperCase()
+    if (sectionId !== undefined) updateData.sectionId = sectionId || null
+    if (sessionId !== undefined) updateData.sessionId = sessionId || null
+    if (status !== undefined) updateData.status = status
+    if (section !== undefined) updateData.section = section || null
+
+    // If sectionId provided, update the level from the section name for consistency
+    if (sectionId) {
+        const sec = await prisma.section.findUnique({ where: { id: sectionId } })
+        if (!sec) throw new CustomError.BadRequestError('Invalid section selected')
+    }
+
     await prisma.class.updateMany({
         where: { id, schoolId: req.user.schoolId },
-        data: {
-            ...(name && { name: name.trim().toUpperCase() }),
-            ...(level && { level: level.trim().toUpperCase() }),
-            ...(section !== undefined && { section }),
-            ...(sessionId !== undefined && { sessionId }),
-            ...(status && { status })
-        }
+        data: updateData
     })
-    res.status(StatusCodes.OK).json({ msg: 'Class updated successfully' })
+
+    const updated = await prisma.class.findFirst({
+        where: { id },
+        include: { sectionRel: true, session: true }
+    })
+
+    res.status(StatusCodes.OK).json({ msg: 'Class updated successfully', class: updated })
 }
 
 // ─── ASSIGN FORM TEACHER ──────────────────────────────────────────────────────
@@ -195,4 +193,3 @@ const deleteClass = async (req, res) => {
 }
 
 module.exports = { addClass, getAllClasses, getClass, updateClass, deleteClass, assignFormTeacher, assignSubjectTeacher }
-
