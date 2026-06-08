@@ -1,0 +1,322 @@
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] 🌐 i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 💙
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Success fetching 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Success fetching 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Chunk complete. Total data so far: 13
+[log] [PrintBatch] All data fetched. Length: 13. Setting data...
+[log] [PrintBatch] Appending #print-ready (success)
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] 🌐 i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 💙
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Success fetching 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Success fetching 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Chunk complete. Total data so far: 13
+[log] [PrintBatch] All data fetched. Length: 13. Setting data...
+[log] [PrintBatch] Appending #print-ready (success)
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] 🌐 i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 💙
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Success fetching 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Chunk complete. Total data so far: 13
+[log] [PrintBatch] All data fetched. Length: 13. Setting data...
+[log] [PrintBatch] Appending #print-ready (success)
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] 🌐 i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 💙
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Success fetching 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Chunk complete. Total data so far: 13
+[log] [PrintBatch] All data fetched. Length: 13. Setting data...
+[log] [PrintBatch] Appending #print-ready (success)
+[log] [PrintBatch] Success fetching 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Success fetching 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Success fetching 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Chunk complete. Total data so far: 13
+[log] [PrintBatch] All data fetched. Length: 13. Setting data...
+[log] [PrintBatch] Appending #print-ready (success)
+[debug] [vite] connecting...
+[debug] [vite] connected.
+[info] %cDownload the React DevTools for a better development experience: https://react.dev/link/react-devtools font-weight:bold
+[info] 🌐 i18next is made possible by our own product, Locize — consider powering your project with managed localization (AI, CDN, integrations): https://locize.com 💙
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[error] Failed to load resource: the server responded with a status of 401 (Unauthorized)
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Fetching student 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Fetching student 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Fetching student 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Fetching student 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Fetching student 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching 6e41419d-1626-49dc-8166-91c8c91718c4
+[log] [PrintBatch] Success fetching 5da89013-5744-4c22-b4a6-8df345d23bf8
+[log] [PrintBatch] Success fetching 5469b2b4-c7a5-4a40-9513-33016022dc9d
+[log] [PrintBatch] Success fetching 1c574bc1-daaf-4f9b-a46d-4d93302472b3
+[log] [PrintBatch] Success fetching 09e42aa1-7609-418d-b397-bf7f11445ebd
+[log] [PrintBatch] Chunk complete. Total data so far: 5
+[log] [PrintBatch] Fetching student e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Fetching student 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Fetching student 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Fetching student 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Fetching student b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching e187ec3e-78fc-4401-8569-41fd4733132e
+[log] [PrintBatch] Success fetching 26a9a41a-9cb8-4b06-b8cf-6106fabe09e8
+[log] [PrintBatch] Success fetching 789ab60d-34f7-4c38-8772-3d8a3302cd0e
+[log] [PrintBatch] Success fetching b02ea046-2c04-4c9e-83a4-94bc407dd83e
+[log] [PrintBatch] Success fetching 16fb180a-4dc8-4508-8ec5-8edd1ae2d65b
+[log] [PrintBatch] Chunk complete. Total data so far: 10
+[log] [PrintBatch] Fetching student 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Fetching student 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Fetching student 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Success fetching 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Success fetching 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Success fetching 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Chunk complete. Total data so far: 13
+[log] [PrintBatch] All data fetched. Length: 13. Setting data...
+[log] [PrintBatch] Appending #print-ready (success)
+[log] [PrintBatch] Success fetching 34a9cc84-3d18-46ee-a89c-5682b8eefd33
+[log] [PrintBatch] Success fetching 9fda6518-7536-4453-99f5-d2d35f299353
+[log] [PrintBatch] Success fetching 96457abd-59d2-4652-afb6-2a4f63932d6e
+[log] [PrintBatch] Chunk complete. Total data so far: 13
+[log] [PrintBatch] All data fetched. Length: 13. Setting data...
+[log] [PrintBatch] Appending #print-ready (success)

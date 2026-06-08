@@ -127,7 +127,7 @@ const login = async (req, res) => {
         role: user.role,
         schoolId: user.schoolId || null,
         branchId: user.branchId || null, // Phase 1: null for school-scope, set for branch users
-        school: { ...school, logoUrl: schoolSettings?.logoUrl || null, blockedFeatures: schoolSettings?.blockedFeatures || [] },
+        school: { ...school, blockedFeatures: schoolSettings?.blockedFeatures || [] },
         studentProfile: user.studentProfile,
         teacherProfile: user.teacherProfile,
         parentProfile: user.parentProfile,
@@ -318,7 +318,7 @@ const switchSchool = async (req, res) => {
         schoolId: targetSchool.id,
         originalSchoolId: isReturningToMain ? undefined : mainSchoolId,
         branchId: dbUser.branchId || null,
-        school: { ...targetSchool, logoUrl: targetSchoolSettings?.logoUrl || null, blockedFeatures: targetSchoolSettings?.blockedFeatures || [] },
+        school: { ...targetSchool, blockedFeatures: targetSchoolSettings?.blockedFeatures || [] },
     };
 
     res.status(StatusCodes.OK).json({ user: userContextData });

@@ -822,13 +822,20 @@ const generateDynamicPDF = async (url) => {
   }
 
   const page = await browser.newPage();
-  await page.setDefaultNavigationTimeout(120000); 
+  await page.setDefaultNavigationTimeout(300000); 
+
+  page.on('console', msg => {
+      require('fs').appendFileSync('puppeteer-console.log', `[${msg.type()}] ${msg.text()}\n`);
+  });
+  page.on('pageerror', err => {
+      require('fs').appendFileSync('puppeteer-console.log', `[PAGE ERROR] ${err.toString()}\n`);
+  });
   
   try {
-      await page.goto(url, { waitUntil: 'networkidle2' });
-      await page.waitForSelector('#print-ready', { timeout: 120000 });
+      await page.goto(url, { waitUntil: 'networkidle2', timeout: 300000 });
+      await page.waitForSelector('#print-ready', { timeout: 300000 });
       
-      const pdf = await page.pdf({ format: 'A4', printBackground: true });
+      const pdf = await page.pdf({ format: 'A4', printBackground: true, timeout: 300000 });
       await browser.close();
       return pdf;
   } catch (err) {

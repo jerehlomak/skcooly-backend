@@ -12,16 +12,31 @@ const generateRandomPassword = () => { return '12345'; };
 const addTeacher = async (req, res) => {
     const { name, email, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
 
-    if (!name || !gender || !email) {
-        throw new CustomError.BadRequestError('Please provide name, email, and gender');
+    if (!name || !gender) {
+        throw new CustomError.BadRequestError('Please provide name and gender');
+    }
+
+    let generatedEmail = email;
+    if (!generatedEmail) {
+        const school = await prisma.school.findUnique({
+            where: { id: req.user.schoolId },
+            select: { schoolCode: true }
+        });
+        const schoolTag = (school?.schoolCode || req.user.schoolId.slice(0, 8))
+            .toLowerCase().replace(/[^a-z0-9]/g, '');
+        const safeName = (name.toLowerCase()
+            .normalize('NFD').replace(/[\u0300-\u036f]/g, '')
+            .replace(/[^a-z0-9]/g, '.').replace(/\.{2,}/g, '.').replace(/^\.+|\.+$/g, '') || 'staff');
+        const sequenceTag = crypto.randomUUID().slice(0, 4);
+        generatedEmail = `${safeName}.${sequenceTag}.${schoolTag}@skooly.staff`;
     }
 
     const emailAlreadyExist = await prisma.user.findUnique({
-        where: { email },
+        where: { email: generatedEmail },
     });
 
     if (emailAlreadyExist) {
-        throw new CustomError.BadRequestError(`User with email "${email}" already exists. Please choose a different email.`);
+        throw new CustomError.BadRequestError(`User with email "${generatedEmail}" already exists. Please choose a different email or let the system generate one.`);
     }
 
     const currentYear = new Date().getFullYear();
@@ -66,7 +81,7 @@ const addTeacher = async (req, res) => {
         return await tx.user.create({
             data: {
                 name,
-                email, // Use provided email
+                email: generatedEmail, // Use provided email
                 password: hashedPassword,
                 role: req.body.staffType === 'ADMIN' ? 'ADMIN' : 'TEACHER',
                 schoolId: req.user.schoolId,
@@ -98,9 +113,9 @@ const addTeacher = async (req, res) => {
     });
 
     res.status(StatusCodes.CREATED).json({
-        msg: 'Teacher account created securely',
+        msg: 'Teacher added successfully',
         teacher: newTeacher,
-        credentials: { employeeId, loginEmail: email, generatedPassword }
+        credentials: { employeeId, loginEmail: generatedEmail, generatedPassword }
     });
 };
 

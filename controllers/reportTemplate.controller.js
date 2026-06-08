@@ -104,6 +104,11 @@ const createTemplate = async (req, res) => {
             where: { schoolId: req.user.schoolId, isDefault: true, type: templateType },
             data: { isDefault: false }
         });
+
+        // Clear existing class assignments for this type so this template applies everywhere globally
+        await prisma.templateClassAssignment.deleteMany({
+            where: { schoolId: req.user.schoolId, type: templateType }
+        });
     }
 
     const template = await prisma.reportTemplate.create({
@@ -135,6 +140,11 @@ const updateTemplate = async (req, res) => {
         await prisma.reportTemplate.updateMany({
             where: { schoolId: req.user.schoolId, isDefault: true, type: existing.type, id: { not: id } },
             data: { isDefault: false }
+        });
+
+        // Clear existing class assignments for this type so this template applies everywhere globally
+        await prisma.templateClassAssignment.deleteMany({
+            where: { schoolId: req.user.schoolId, type: existing.type }
         });
     }
 

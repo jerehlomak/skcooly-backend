@@ -6,10 +6,17 @@ const { uploadBufferToCloudinary } = require('../services/cloudinary-upload.serv
 const { shareResult } = require('../services/sharing.service');
 const jwt = require('jsonwebtoken');
 
-// ─── GRADING SCALE ────────────────────────────────────────────────────────────
+const getGradingScaleType = (resultType) => {
+    if (resultType === 'COMMENT_BASED' || resultType === 'COMMENT_EXAM' || resultType === 'COMMENT_CA') return 'COMMENT_BASED';
+    if (!resultType || resultType === 'FULL') return 'EXAM';
+    if (resultType === 'CA_ONLY') return 'FULL_CA';
+    return 'INDIVIDUAL_CA';
+};
+
+// 🌟🌟🌟 GRADING SCALE 🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟
 const getGradingScale = async (req, res) => {
     const category = req.query.category || 'ALL';
-    const type = req.query.type || 'SUBJECT';
+    const type = req.query.type || 'EXAM';
     
     const scale = await prisma.gradingScale.findUnique({
         where: { schoolId_category_type: { schoolId: req.user.schoolId, category, type } }
@@ -30,7 +37,7 @@ const getGradingScale = async (req, res) => {
 };
 
 const saveGradingScale = async (req, res) => {
-    const { passMark, grades, category = 'ALL', type = 'SUBJECT' } = req.body;
+    const { passMark, grades, category = 'ALL', type = 'EXAM' } = req.body;
 
     if (!grades || !Array.isArray(grades)) {
         throw new CustomError.BadRequestError('grades array is required');
@@ -157,19 +164,21 @@ const getStudentReportCard = async (req, res) => {
     // 4. Grading scale — look up by category first, then fall back to 'ALL'
     const studentCategory = results[0]?.category || null;
     let gradingScaleRecord = null;
+    const scaleType = getGradingScaleType(req.query.resultType);
+    
     if (studentCategory) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: studentCategory }
+            where: { schoolId: req.user.schoolId, category: studentCategory, type: scaleType }
         });
     }
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: 'ALL' }
+            where: { schoolId: req.user.schoolId, category: 'ALL', type: scaleType }
         });
     }
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId }
+            where: { schoolId: req.user.schoolId, type: scaleType }
         });
     }
     const grades = gradingScaleRecord?.grades ?? [];
@@ -301,19 +310,29 @@ const getStudentReportCard = async (req, res) => {
 
     if (schoolSettingsRecord?.resultAutomaticComments && totalSubjects > 0) {
         const avgScore = totalScore / totalSubjects;
-        const autoGrade = computeGrade(avgScore, grades);
+        const commentRules = await prisma.commentRule.findMany({
+            where: { schoolId: req.user.schoolId }
+        });
         
-        let autoTeacherComment = `An ${autoGrade.remark?.toLowerCase() || 'average'} performance. Keep it up!`;
-        if (autoGrade.grade === 'F' || autoGrade.grade === 'E') {
-            autoTeacherComment = `Needs improvement. More focus is encouraged.`;
-        }
+        let autoTeacherComment = '';
+        let autoHeadComment = '';
+        let autoPrincipalComment = '';
+        
+        const teacherRule = commentRules.find(r => r.role === 'Class Teacher' && avgScore >= r.minScore && avgScore <= r.maxScore);
+        if (teacherRule) autoTeacherComment = teacherRule.comment;
+        
+        const headRule = commentRules.find(r => r.role === 'Head Teacher' && avgScore >= r.minScore && avgScore <= r.maxScore);
+        if (headRule) autoHeadComment = headRule.comment;
+        
+        const principalRule = commentRules.find(r => r.role === 'Principal' && avgScore >= r.minScore && avgScore <= r.maxScore);
+        if (principalRule) autoPrincipalComment = principalRule.comment;
 
         if (!comments) {
-            comments = { teacherComment: autoTeacherComment, principalComment: autoGrade.remark, headComment: autoGrade.remark };
+            comments = { teacherComment: autoTeacherComment, principalComment: autoPrincipalComment, headComment: autoHeadComment };
         } else {
             if (!comments.teacherComment) comments.teacherComment = autoTeacherComment;
-            if (!comments.principalComment) comments.principalComment = autoGrade.remark;
-            if (!comments.headComment) comments.headComment = autoGrade.remark;
+            if (!comments.principalComment) comments.principalComment = autoPrincipalComment;
+            if (!comments.headComment) comments.headComment = autoHeadComment;
         }
     }
 
@@ -326,32 +345,45 @@ const getStudentReportCard = async (req, res) => {
     let annualResults = [];
     let cumulativeAverage = null;
 
-    if (term === 'Third Term') {
+    if (term === 'Third Term' || req.query.isCumulative === 'true' || req.query.resultType === 'CUMULATIVE') {
+        const allTerms = await prisma.academicTerm.findMany({
+            where: { schoolId: req.user.schoolId, session: { name: academicYear } },
+            orderBy: { createdAt: 'asc' }
+        });
+        
         const allTermsResults = await prisma.studentResult.findMany({
             where: { studentProfileId, academicYear, schoolId: req.user.schoolId },
             include: { subject: { select: { name: true, id: true } } }
         });
 
+        const uniqueTermsFromResults = [...new Set(allTermsResults.map(r => r.term))];
+        const termNames = allTerms.length > 0 ? allTerms.map(t => t.name) : uniqueTermsFromResults;
+
         const subjectMap = {};
         allTermsResults.forEach(r => {
              if (!subjectMap[r.subjectId]) {
-                 subjectMap[r.subjectId] = { subject: r.subject, first: null, second: null, third: null };
+                 subjectMap[r.subjectId] = { subject: r.subject, terms: {} };
              }
-             if (r.term === 'First Term') subjectMap[r.subjectId].first = r.totalScore;
-             if (r.term === 'Second Term') subjectMap[r.subjectId].second = r.totalScore;
-             if (r.term === 'Third Term') subjectMap[r.subjectId].third = r.totalScore;
+             subjectMap[r.subjectId].terms[r.term] = r.totalScore;
         });
 
         let cumTotal = 0, cumCount = 0;
         Object.values(subjectMap).forEach(sm => {
             let sum = 0, count = 0;
-            if (sm.first !== null) { sum += sm.first; count++; }
-            if (sm.second !== null) { sum += sm.second; count++; }
-            if (sm.third !== null) { sum += sm.third; count++; }
+            termNames.forEach(tName => {
+                if (sm.terms[tName] !== undefined && sm.terms[tName] !== null) {
+                    sum += sm.terms[tName];
+                    count++;
+                }
+            });
+            
             if (count > 0) {
-                 const avg = parseFloat((sum / count).toFixed(1));
+                 const avg = parseFloat((sum / termNames.length).toFixed(1));
                  cumTotal += avg; cumCount++;
                  sm.cumulative = avg;
+                 const { grade, remark } = computeGrade(avg, grades);
+                 sm.grade = grade;
+                 sm.remark = remark;
                  annualResults.push(sm);
             }
         });
@@ -386,7 +418,8 @@ const getStudentReportCard = async (req, res) => {
             lowestAvg,
             studentsInClass,
             passMark,
-            cumulativeAverage
+            cumulativeAverage,
+            nextTermFee: student.classArm?.nextTermFee || null
         },
         visibleTypes: req.visibleTypes || ['CA', 'EXAM', 'FULL', 'COMMENT'],
           attendance,
@@ -415,7 +448,10 @@ const getStudentReportCard = async (req, res) => {
                 logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo.logoUrl,
                 display: sectionDisplay,
                 signatures: sectionSignatures,
-                traitConfiguration: traitConfiguration
+                traitConfiguration: traitConfiguration,
+                resultConfig: {
+                    commentBasedSettings: resultConfig.commentBasedSettings || null
+                }
             };
         })() : null,
         gradingScale: { grades, passMark }
@@ -487,14 +523,16 @@ const generateReportCardPDF = async (req, res) => {
 
     const studentCategory = results[0]?.category || null;
     let gradingScaleRecord = null;
+    const scaleType = getGradingScaleType(req.query.resultType);
+    
     if (studentCategory) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: studentCategory }
+            where: { schoolId: req.user.schoolId, category: studentCategory, type: scaleType }
         });
     }
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: 'ALL' }
+            where: { schoolId: req.user.schoolId, category: 'ALL', type: scaleType }
         });
     }
     const grades = gradingScaleRecord?.grades ?? [];
@@ -586,8 +624,9 @@ const generateReportCardPDF = async (req, res) => {
     let principalComment = manualComment?.principalComment || null;
 
     if (!teacherComment || !principalComment) {
+        const scaleType = getGradingScaleType(req.query.resultType);
         const commentRules = await prisma.commentRule.findMany({
-            where: { schoolId: req.user.schoolId }
+            where: { schoolId: req.user.schoolId, resultType: scaleType }
         });
         const numericAverage = parseFloat(average);
         
@@ -604,7 +643,7 @@ const generateReportCardPDF = async (req, res) => {
     const templateData = {
         school: {
             name: schoolSettingsRecord?.schoolName || schoolInfo?.name,
-            motto: schoolSettingsRecord?.tagline || "Knowledge and Integrity",
+            motto: schoolSettingsRecord?.motto || schoolSettingsRecord?.tagline || "Knowledge and Integrity",
             address: schoolSettingsRecord?.address || schoolInfo?.address,
             phone: schoolSettingsRecord?.phone || schoolInfo?.phone,
             logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl
@@ -613,7 +652,8 @@ const generateReportCardPDF = async (req, res) => {
             name: student.user.name,
             admissionNo: student.admissionNo,
             class: student.classArm?.name || student.classLevel,
-            noInClass: 30
+            noInClass: 30,
+            nextTermFee: student.classArm?.nextTermFee || null
         },
         result: {
             term,
@@ -698,22 +738,29 @@ const getClassReportCards = async (req, res) => {
         // Determine the section for this class to pick the right grading scale
         const classInfo = await prisma.class.findUnique({
             where: { id: classId },
-            select: { section: true }
+            select: { section: true, nextTermFee: true }
         });
 
         let gradingScaleRecord = null;
+        const scaleType = getGradingScaleType(req.query.resultType);
+        
         if (classInfo?.section) {
             gradingScaleRecord = await prisma.gradingScale.findFirst({
-                where: { schoolId: req.user.schoolId, category: classInfo.section }
+                where: { schoolId: req.user.schoolId, category: classInfo.section, type: scaleType }
             });
         }
         if (!gradingScaleRecord) {
             gradingScaleRecord = await prisma.gradingScale.findFirst({
-                where: { schoolId: req.user.schoolId, category: 'ALL' }
+                where: { schoolId: req.user.schoolId, category: 'ALL', type: scaleType }
             });
         }
         const grades = gradingScaleRecord?.grades ?? [];
         const passMark = gradingScaleRecord?.passMark ?? 40;
+
+        const [settings, rules] = await Promise.all([
+            prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } }),
+            prisma.commentRule.findMany({ where: { schoolId: req.user.schoolId } })
+        ]);
 
         const summaries = await Promise.all(students.map(async (student) => {
             const results = await prisma.studentResult.findMany({
@@ -725,9 +772,33 @@ const getClassReportCards = async (req, res) => {
             const subjectCount = results.length;
             const { grade } = computeGrade(parseFloat(average), grades);
 
-            const comments = await prisma.studentReportComment.findFirst({
+            let comments = await prisma.studentReportComment.findFirst({
                 where: { studentProfileId: student.id, term, academicYear, schoolId: req.user.schoolId }
             });
+
+            const avgNum = parseFloat(average);
+            let teacherComment = comments?.teacherComment || '';
+            let headComment = comments?.headComment || '';
+            let principalComment = comments?.principalComment || '';
+
+            if (settings?.resultAutomaticComments) {
+                if (!comments?.teacherComment) {
+                    const rule = rules.find(r => r.role === 'Class Teacher' && avgNum >= r.minScore && avgNum <= r.maxScore);
+                    if (rule) teacherComment = rule.comment;
+                }
+                if (!comments?.headComment) {
+                    const rule = rules.find(r => r.role === 'Head Teacher' && avgNum >= r.minScore && avgNum <= r.maxScore);
+                    if (rule) headComment = rule.comment;
+                }
+                if (!comments?.principalComment) {
+                    const rule = rules.find(r => r.role === 'Principal' && avgNum >= r.minScore && avgNum <= r.maxScore);
+                    if (rule) principalComment = rule.comment;
+                }
+            }
+
+            const returnComments = comments 
+                ? { ...comments, teacherComment, headComment, principalComment } 
+                : { teacherComment, headComment, principalComment };
 
             return {
                 studentProfileId: student.id,
@@ -738,7 +809,7 @@ const getClassReportCards = async (req, res) => {
                 totalScore,
                 average,
                 overallGrade: grade,
-                comments: comments || null, // RETURN THE FULL COMMENT OBJECT
+                comments: returnComments, // RETURN THE FULL COMMENT OBJECT (WITH AUTO GENERATED)
                 isPassing: parseFloat(average) >= passMark
             };
         }));
@@ -756,7 +827,19 @@ const getClassReportCards = async (req, res) => {
 
 // ─── SAVE COMMENT ─────────────────────────────────────────────────────────────
 const saveComment = async (req, res) => {
-    const { studentProfileId, term, academicYear, teacherComment, headComment, principalComment, nextTermBegins, promotedTo } = req.body;
+    const { studentProfileId, term, academicYear, comments, attendance } = req.body;
+    
+    // Support both direct fields and nested objects for backward compatibility
+    const teacherComment = comments?.teacherComment || req.body.teacherComment;
+    const headComment = comments?.headComment || req.body.headComment;
+    const principalComment = comments?.principalComment || req.body.principalComment;
+    const nextTermBegins = req.body.nextTermBegins;
+    const promotedTo = req.body.promotedTo;
+    const narrativeComments = req.body.narrativeComments;
+    
+    const present = attendance?.present;
+    const absent = attendance?.absent;
+    const total = attendance?.total;
 
     if (!studentProfileId || !term || !academicYear) {
         throw new CustomError.BadRequestError('studentProfileId, term, and academicYear are required');
@@ -771,7 +854,7 @@ const saveComment = async (req, res) => {
                 academicYear
             }
         },
-        update: { teacherComment, headComment, principalComment, nextTermBegins, promotedTo },
+        update: { teacherComment, headComment, principalComment, narrativeComments, nextTermBegins, promotedTo, present, absent, total },
         create: {
             schoolId: req.user.schoolId,
             studentProfileId,
@@ -780,12 +863,16 @@ const saveComment = async (req, res) => {
             teacherComment,
             headComment,
             principalComment,
+            narrativeComments,
             nextTermBegins,
-            promotedTo
+            promotedTo,
+            present,
+            absent,
+            total
         }
     });
 
-    res.status(StatusCodes.OK).json({ msg: 'Comment saved', comment });
+    res.status(StatusCodes.OK).json({ msg: 'Comment & Attendance saved', comment });
 };
 
 // ─── ADMIN: GET RESULTS FOR A CLASS (SCORE ENTRY) ────────────────────────────
@@ -848,12 +935,24 @@ const getBroadsheet = async (req, res) => {
         throw new CustomError.NotFoundError('Class not found');
     }
 
+    const schoolInfo = await prisma.school.findUnique({ where: { id: req.user.schoolId } });
+    const schoolSettingsRecord = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } });
+    const school = {
+        name: schoolSettingsRecord?.schoolName || schoolInfo?.name,
+        logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl
+    };
+
     // Get subjects taught in this class
+    const { subjectId } = req.query;
     const classSubjectsRecords = await prisma.classSubject.findMany({
         where: { classId },
         include: { subject: { select: { id: true, name: true, code: true } } }
     });
-    const classSubjects = classSubjectsRecords.map(cs => cs.subject).sort((a,b) => a.name.localeCompare(b.name));
+    let classSubjects = classSubjectsRecords.map(cs => cs.subject).sort((a,b) => a.name.localeCompare(b.name));
+    
+    if (subjectId && subjectId !== 'ALL') {
+        classSubjects = classSubjects.filter(s => s.id === subjectId);
+    }
 
     // Get active students
     let students = [];
@@ -882,15 +981,25 @@ const getBroadsheet = async (req, res) => {
     }
 
     // Get all results
+    let whereClause = { classId, term, academicYear, schoolId: req.user.schoolId };
+    if (subjectId && subjectId !== 'ALL') {
+        whereClause.subjectId = subjectId;
+    }
     const results = await prisma.studentResult.findMany({
-        where: { classId, term, academicYear, schoolId: req.user.schoolId }
+        where: whereClause
     });
 
     // Get grading scale
-    const gradingScaleRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId }
+    let gradingScaleRecord = await prisma.gradingScale.findFirst({
+        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', type: 'SUBJECT' }
     });
+    if (!gradingScaleRecord) {
+        gradingScaleRecord = await prisma.gradingScale.findFirst({
+            where: { schoolId: req.user.schoolId }
+        });
+    }
     const grades = gradingScaleRecord ? gradingScaleRecord.grades : [];
+    const passMark = gradingScaleRecord ? gradingScaleRecord.passMark : 40;
 
     // Group subjects into columns
     const broadsheetMap = {};
@@ -910,9 +1019,11 @@ const getBroadsheet = async (req, res) => {
     for (const r of results) {
         if (broadsheetMap[r.studentProfileId]) {
             const { grade } = computeGrade(r.totalScore, grades);
+            const rawScores = typeof r.scores === 'string' ? JSON.parse(r.scores) : (r.scores || {});
             broadsheetMap[r.studentProfileId].scores[r.subjectId] = {
                 score: r.totalScore,
-                grade: grade
+                grade: grade,
+                breakdown: rawScores
             };
             broadsheetMap[r.studentProfileId].totalSubjectCount++;
             broadsheetMap[r.studentProfileId].overallTotal += r.totalScore;
@@ -932,7 +1043,9 @@ const getBroadsheet = async (req, res) => {
         subjects: classSubjects,
         students: broadsheetData,
         term,
-        academicYear
+        academicYear,
+        passMark,
+        school
     });
 };
 
@@ -950,6 +1063,13 @@ const getCumulativeBroadsheet = async (req, res) => {
         throw new CustomError.NotFoundError('Class not found');
     }
 
+    const schoolInfo = await prisma.school.findUnique({ where: { id: req.user.schoolId } });
+    const schoolSettingsRecord = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } });
+    const school = {
+        name: schoolSettingsRecord?.schoolName || schoolInfo?.name,
+        logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl
+    };
+
     const students = await prisma.studentProfile.findMany({
         where: { classId, schoolId: req.user.schoolId, isDeleted: false, status: 'Active' },
         include: { user: { select: { name: true } } },
@@ -960,6 +1080,8 @@ const getCumulativeBroadsheet = async (req, res) => {
         where: { classId, academicYear, schoolId: req.user.schoolId }
     });
 
+    const uniqueTerms = [...new Set(results.map(r => r.term))];
+
     const studentMap = {};
     for (const st of students) {
         studentMap[st.id] = {
@@ -967,7 +1089,8 @@ const getCumulativeBroadsheet = async (req, res) => {
             name: st.user.name,
             admissionNo: st.admissionNo,
             gender: st.gender,
-            terms: { 'First Term': 0, 'Second Term': 0, 'Third Term': 0 },
+            terms: {},
+            termAverages: {},
             cumTotal: 0,
             avg: 0
         };
@@ -975,28 +1098,61 @@ const getCumulativeBroadsheet = async (req, res) => {
 
     for (const r of results) {
         if (studentMap[r.studentProfileId]) {
-            studentMap[r.studentProfileId].terms[r.term] += r.totalScore;
+            if (!studentMap[r.studentProfileId].terms[r.term]) {
+                studentMap[r.studentProfileId].terms[r.term] = { totalScore: 0, subjectCount: 0 };
+            }
+            studentMap[r.studentProfileId].terms[r.term].totalScore += r.totalScore;
+            studentMap[r.studentProfileId].terms[r.term].subjectCount += 1;
         }
     }
 
     const broadsheetData = Object.values(studentMap).map(sb => {
-        sb.cumTotal = sb.terms['First Term'] + sb.terms['Second Term'] + sb.terms['Third Term'];
+        let sumAverages = 0;
         let termCount = 0;
-        if (sb.terms['First Term'] > 0) termCount++;
-        if (sb.terms['Second Term'] > 0) termCount++;
-        if (sb.terms['Third Term'] > 0) termCount++;
         
-        sb.avg = termCount > 0 ? sb.cumTotal / termCount : 0;
+        for (const term of uniqueTerms) {
+            const termData = sb.terms[term];
+            if (termData && termData.subjectCount > 0) {
+                const termAvg = termData.totalScore / termData.subjectCount;
+                sb.termAverages[term] = termAvg;
+                sumAverages += termAvg;
+                termCount++;
+            } else {
+                sb.termAverages[term] = null;
+            }
+        }
+        
+        sb.avg = termCount > 0 ? sumAverages / termCount : 0;
         sb.averageStr = sb.avg.toFixed(1);
+        sb.cumTotal = Number(sumAverages.toFixed(1));
         return sb;
     }).sort((a, b) => b.avg - a.avg);
+
+    // Get grading scale
+    let gradingScaleRecord = await prisma.gradingScale.findFirst({
+        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', type: 'EXAM' }
+    });
+    if (!gradingScaleRecord) {
+        gradingScaleRecord = await prisma.gradingScale.findFirst({
+            where: { schoolId: req.user.schoolId }
+        });
+    }
+    const grades = gradingScaleRecord ? gradingScaleRecord.grades : [];
+    
+    broadsheetData.forEach(sb => {
+        const { grade, remark } = computeGrade(sb.avg, grades);
+        sb.grade = grade;
+        sb.remark = remark;
+    });
 
     broadsheetData.forEach((st, idx) => st.position = idx + 1);
 
     res.status(StatusCodes.OK).json({
         classInfo,
         students: broadsheetData,
-        academicYear
+        uniqueTerms,
+        academicYear,
+        school
     });
 };
 
@@ -1034,10 +1190,15 @@ const updateEntryStatus = async (req, res) => {
 
 const getSubjectEntryStatus = async (req, res) => {
     const { classId, term, academicYear } = req.query;
-    if (!classId || !term || !academicYear) throw new CustomError.BadRequestError('classId, term, and academicYear are required');
+    if (!term || !academicYear) throw new CustomError.BadRequestError('term and academicYear are required');
+
+    const whereClause = { schoolId: req.user.schoolId, term, academicYear };
+    if (classId) {
+        whereClause.classId = classId;
+    }
 
     const statuses = await prisma.subjectEntryStatus.findMany({
-        where: { schoolId: req.user.schoolId, classId, term, academicYear }
+        where: whereClause
     });
     res.status(StatusCodes.OK).json({ statuses });
 };
@@ -1306,19 +1467,20 @@ const deleteResultTemplate = async (req, res) => {
 };
 
 const getCommentRules = async (req, res) => {
-    const { category } = req.query;
+    const { category, resultType } = req.query;
     const where = { schoolId: req.user.schoolId };
     if (category && category !== 'ALL') where.category = category;
     else where.category = null;
+    if (resultType) where.resultType = resultType;
     const rules = await prisma.commentRule.findMany({ where, orderBy: [{ role: 'asc' }, { minScore: 'desc' }] });
     res.status(StatusCodes.OK).json({ rules });
 };
 
 const saveCommentRule = async (req, res) => {
-    const { role, minScore, maxScore, comment, category } = req.body;
+    const { role, minScore, maxScore, comment, category, resultType } = req.body;
     if (!role || minScore === undefined || maxScore === undefined || !comment) throw new CustomError.BadRequestError('Missing fields');
     const rule = await prisma.commentRule.create({
-        data: { schoolId: req.user.schoolId, role, minScore: parseFloat(minScore), maxScore: parseFloat(maxScore), comment, category: category === 'ALL' ? null : category }
+        data: { schoolId: req.user.schoolId, role, minScore: parseFloat(minScore), maxScore: parseFloat(maxScore), comment, category: category === 'ALL' ? null : category, resultType: resultType || 'EXAM' }
     });
     res.status(StatusCodes.CREATED).json({ rule });
 };
@@ -1401,7 +1563,7 @@ const batchExportPDF = async (req, res) => {
         throw new CustomError.BadRequestError('No students selected for export');
     }
 
-    const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:5173';
+    const frontendUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
     
     const token = jwt.sign(
         { userId: req.user.userId, schoolId: req.user.schoolId, role: req.user.role },
@@ -1413,7 +1575,7 @@ const batchExportPDF = async (req, res) => {
         if (format === 'zip') {
             const jobs = studentIds.map(studentId => ({
                 filename: `Result_${studentId}.pdf`,
-                url: `${frontendUrl}/print-batch?studentIds=${studentId}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId}&token=${token}`
+                url: `${frontendUrl}/print-batch?studentIds=${studentId}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId || ''}&resultType=${req.body.resultType || 'FULL'}&token=${token}`
             }));
 
             const pdfs = await generateDynamicPDFs(jobs);
@@ -1434,7 +1596,7 @@ const batchExportPDF = async (req, res) => {
 
         } else {
             const idsParam = studentIds.join(',');
-            const url = `${frontendUrl}/print-batch?studentIds=${idsParam}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId}&token=${token}`;
+            const url = `${frontendUrl}/print-batch?studentIds=${idsParam}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId || ''}&resultType=${req.body.resultType || 'FULL'}&token=${token}`;
             
             const pdfBuffer = await generateDynamicPDF(url);
 
@@ -1447,6 +1609,7 @@ const batchExportPDF = async (req, res) => {
         }
     } catch (err) {
         console.error("Batch Export Error:", err);
+        require('fs').writeFileSync('batch-error.log', err.stack);
         throw new Error(`Failed to generate batch export: ${err.message}`);
     }
 };

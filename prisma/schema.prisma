@@ -12,6 +12,7 @@ model SchoolSettings {
   id               String      @id @default(uuid())
   schoolId         String? // tenant isolation
   schoolName       String      @default("My School")
+  motto            String?
   tagline          String?
   phone            String?
   email            String?
@@ -146,6 +147,7 @@ model AcademicTerm {
   endDate   DateTime?
   isActive  Boolean   @default(false)
   isLocked  Boolean   @default(false)
+  daysOpened Int?     @default(0)
 
   session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -565,6 +567,7 @@ model Class {
   order                  Int                     @default(0)
   status                 String                  @default("Active")
   formTeacherId          String?
+  nextTermFee            String?
   createdAt              DateTime                @default(now())
   updatedAt              DateTime                @updatedAt
   session                AcademicSession?        @relation(fields: [sessionId], references: [id])
@@ -1260,15 +1263,16 @@ model ResultTemplate {
 }
 
 model CommentRule {
-  id        String   @id @default(uuid())
-  schoolId  String
-  category  String? // e.g. "Primary"
-  role      String // "Class Teacher", "Head Teacher", "Principal"
-  minScore  Float
-  maxScore  Float
-  comment   String
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(uuid())
+  schoolId   String
+  category   String? // e.g. "Primary"
+  role       String // "Class Teacher", "Head Teacher", "Principal"
+  resultType String   @default("EXAM") // EXAM, CA, COMMENT_BASED
+  minScore   Float
+  maxScore   Float
+  comment    String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   @@index([schoolId])
 }
@@ -1626,8 +1630,12 @@ model StudentReportComment {
   teacherComment   String?        @db.Text
   headComment      String?        @db.Text
   principalComment String?        @db.Text
+  narrativeComments Json?
   nextTermBegins   String?
   promotedTo       String?
+  present          Int?
+  absent           Int?
+  total            Int?
   createdAt        DateTime       @default(now())
   updatedAt        DateTime       @updatedAt
   student          StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)

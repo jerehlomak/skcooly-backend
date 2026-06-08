@@ -1,0 +1,9 @@
+TimeoutError: Waiting for selector `#print-ready` failed: Waiting failed: 120000ms exceeded
+    at new WaitTask (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\common\WaitTask.js:50:34)
+    at IsolatedWorld.waitForFunction (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Realm.js:25:26)
+    at PQueryHandler.waitFor (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\common\QueryHandler.js:170:95)
+    at process.processTicksAndRejections (node:internal/process/task_queues:95:5)
+    at async CdpFrame.waitForSelector (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Frame.js:494:21)
+    at async CdpPage.waitForSelector (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\api\Page.js:1351:20)
+    at async generateDynamicPDF (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\services\pdf.service.js:829:7)
+    at async batchExportPDF (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\controllers\result.controller.js:1601:31)

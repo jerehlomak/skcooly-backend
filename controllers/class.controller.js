@@ -106,7 +106,7 @@ const getClass = async (req, res) => {
 // ─── UPDATE CLASS ─────────────────────────────────────────────────────────────
 const updateClass = async (req, res) => {
     const { id } = req.params
-    const { name, level, sectionId, sessionId, status, section } = req.body
+    const { name, level, sectionId, sessionId, status, section, nextTermFee } = req.body
 
     const updateData = {}
     if (name !== undefined) updateData.name = name.trim().toUpperCase()
@@ -115,6 +115,7 @@ const updateClass = async (req, res) => {
     if (sessionId !== undefined) updateData.sessionId = sessionId || null
     if (status !== undefined) updateData.status = status
     if (section !== undefined) updateData.section = section || null
+    if (nextTermFee !== undefined) updateData.nextTermFee = nextTermFee || null
 
     // If sectionId provided, update the level from the section name for consistency
     if (sectionId) {
