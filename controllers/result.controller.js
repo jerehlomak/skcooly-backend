@@ -735,7 +735,7 @@ const getClassReportCards = async (req, res) => {
             students.sort((a, b) => a.user.name.localeCompare(b.user.name));
         }
 
-        // Determine the section for this class to pick the right grading scale
+        // Determine the section for this class to pick the right 
         const classInfo = await prisma.class.findUnique({
             where: { id: classId },
             select: { section: true, nextTermFee: true }
@@ -989,7 +989,7 @@ const getBroadsheet = async (req, res) => {
         where: whereClause
     });
 
-    // Get grading scale
+    // Get 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
         where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', type: 'SUBJECT' }
     });
@@ -1128,7 +1128,7 @@ const getCumulativeBroadsheet = async (req, res) => {
         return sb;
     }).sort((a, b) => b.avg - a.avg);
 
-    // Get grading scale
+    // Get 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
         where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', type: 'EXAM' }
     });
