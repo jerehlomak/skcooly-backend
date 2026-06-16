@@ -33,8 +33,9 @@ const {
     deleteCommentRule,
     shareResultEndpoint,
     generatePrintToken,
-    validateResults,
-    batchExportPDF
+    batchExportPDF,
+    getBatchReportCards,
+    validateResults
 } = require('../controllers/result.controller');
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
 
@@ -44,6 +45,7 @@ router.post('/grading-scale', authenticateUser, authorizePermissions('ADMIN'), s
 
 // Report card data
 router.get('/report-card', authenticateUser, getStudentReportCard);
+router.get('/batch-report-cards', authenticateUser, getBatchReportCards);
 router.get('/report-card/pdf', authenticateUser, generateReportCardPDF);
 router.get('/templates', authenticateUser, getAllTemplates);
 router.get('/template-preview', authenticateUser, getTemplatePreview);

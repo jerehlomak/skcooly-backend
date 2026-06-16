@@ -7,19 +7,26 @@ const { shareResult } = require('../services/sharing.service');
 const jwt = require('jsonwebtoken');
 
 const getGradingScaleType = (resultType) => {
-    if (resultType === 'COMMENT_BASED' || resultType === 'COMMENT_EXAM' || resultType === 'COMMENT_CA') return 'COMMENT_BASED';
-    if (!resultType || resultType === 'FULL') return 'EXAM';
-    if (resultType === 'CA_ONLY') return 'FULL_CA';
-    return 'INDIVIDUAL_CA';
+    let rType = 'SCORE_BASED';
+    let aType = 'EXAM';
+    if (resultType === 'COMMENT_BASED' || resultType === 'COMMENT_EXAM' || resultType === 'COMMENT_CA') {
+        rType = 'COMMENT_BASED';
+    }
+    if (resultType === 'CA_ONLY' || resultType === 'COMMENT_CA' || (!['FULL', 'COMMENT_EXAM'].includes(resultType) && resultType)) {
+        aType = 'CA';
+    }
+    return { resultType: rType, assessmentType: aType };
 };
 
 // 🌟🌟🌟 GRADING SCALE 🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟🌟
 const getGradingScale = async (req, res) => {
     const category = req.query.category || 'ALL';
-    const type = req.query.type || 'EXAM';
+    const type = req.query.type || 'SUBJECT';
+    const resultType = req.query.resultType || 'SCORE_BASED';
+    const assessmentType = req.query.assessmentType || 'EXAM';
     
     const scale = await prisma.gradingScale.findUnique({
-        where: { schoolId_category_type: { schoolId: req.user.schoolId, category, type } }
+        where: { schoolId_category_type_resultType_assessmentType: { schoolId: req.user.schoolId, category, type, resultType, assessmentType } }
     });
 
     const defaultGrades = [
@@ -32,21 +39,21 @@ const getGradingScale = async (req, res) => {
     ];
 
     res.status(StatusCodes.OK).json({
-        scale: scale || { schoolId: req.user.schoolId, category, type, passMark: 40, grades: defaultGrades }
+        scale: scale || { schoolId: req.user.schoolId, category, type, resultType, assessmentType, passMark: 40, grades: defaultGrades }
     });
 };
 
 const saveGradingScale = async (req, res) => {
-    const { passMark, grades, category = 'ALL', type = 'EXAM' } = req.body;
+    const { passMark, grades, category = 'ALL', type = 'SUBJECT', resultType = 'SCORE_BASED', assessmentType = 'EXAM' } = req.body;
 
     if (!grades || !Array.isArray(grades)) {
         throw new CustomError.BadRequestError('grades array is required');
     }
 
     const scale = await prisma.gradingScale.upsert({
-        where: { schoolId_category_type: { schoolId: req.user.schoolId, category, type } },
+        where: { schoolId_category_type_resultType_assessmentType: { schoolId: req.user.schoolId, category, type, resultType, assessmentType } },
         update: { passMark: Number(passMark) || 40, grades },
-        create: { schoolId: req.user.schoolId, category, type, passMark: Number(passMark) || 40, grades }
+        create: { schoolId: req.user.schoolId, category, type, resultType, assessmentType, passMark: Number(passMark) || 40, grades }
     });
 
     res.status(StatusCodes.OK).json({ msg: 'Grading scale saved', scale });
@@ -141,16 +148,20 @@ const getStudentReportCard = async (req, res) => {
     }
 
     
-    // 2. Template for the class
     let templateConfig = null;
     let sectionName = null;
     if (student.classArm && student.classArm.level) sectionName = student.classArm.level;
     const clsWithSection = await prisma.class.findUnique({ where: { id: effectiveClassId } });
     if (clsWithSection && clsWithSection.level) sectionName = clsWithSection.level;
 
+    const requestedType = req.query.resultType || '';
+    let dbTemplateType = 'SCORE_BASED';
+    if (requestedType.includes('COMMENT')) dbTemplateType = 'COMMENT_BASED';
+    else if (requestedType === 'TRANSCRIPT') dbTemplateType = 'TRANSCRIPT';
+
     let template = null;
-    if (sectionName) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
-    if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (sectionName) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     if (template) templateConfig = template.config;
 
 
@@ -164,21 +175,21 @@ const getStudentReportCard = async (req, res) => {
     // 4. Grading scale — look up by category first, then fall back to 'ALL'
     const studentCategory = results[0]?.category || null;
     let gradingScaleRecord = null;
-    const scaleType = getGradingScaleType(req.query.resultType);
+    const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
     
     if (studentCategory) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: studentCategory, type: scaleType }
+            where: { schoolId: req.user.schoolId, category: studentCategory, resultType: scaleResultType, assessmentType: scaleAssessmentType }
         });
     }
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: 'ALL', type: scaleType }
+            where: { schoolId: req.user.schoolId, category: 'ALL', resultType: scaleResultType, assessmentType: scaleAssessmentType }
         });
     }
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, type: scaleType }
+            where: { schoolId: req.user.schoolId, resultType: scaleResultType, assessmentType: scaleAssessmentType }
         });
     }
     const grades = gradingScaleRecord?.grades ?? [];
@@ -309,9 +320,10 @@ const getStudentReportCard = async (req, res) => {
     });
 
     if (schoolSettingsRecord?.resultAutomaticComments && totalSubjects > 0) {
+        const { resultType: scaleResultType } = getGradingScaleType(req.query.resultType);
         const avgScore = totalScore / totalSubjects;
         const commentRules = await prisma.commentRule.findMany({
-            where: { schoolId: req.user.schoolId }
+            where: { schoolId: req.user.schoolId, resultType: scaleResultType }
         });
         
         let autoTeacherComment = '';
@@ -523,16 +535,21 @@ const generateReportCardPDF = async (req, res) => {
 
     const studentCategory = results[0]?.category || null;
     let gradingScaleRecord = null;
-    const scaleType = getGradingScaleType(req.query.resultType);
+    const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
     
     if (studentCategory) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: studentCategory, type: scaleType }
+            where: { schoolId: req.user.schoolId, category: studentCategory, resultType: scaleResultType, assessmentType: scaleAssessmentType }
         });
     }
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: 'ALL', type: scaleType }
+            where: { schoolId: req.user.schoolId, category: 'ALL', resultType: scaleResultType, assessmentType: scaleAssessmentType }
+        });
+    }
+    if (!gradingScaleRecord) {
+        gradingScaleRecord = await prisma.gradingScale.findFirst({
+            where: { schoolId: req.user.schoolId, resultType: scaleResultType, assessmentType: scaleAssessmentType }
         });
     }
     const grades = gradingScaleRecord?.grades ?? [];
@@ -623,10 +640,10 @@ const generateReportCardPDF = async (req, res) => {
     let teacherComment = manualComment?.teacherComment || null;
     let principalComment = manualComment?.principalComment || null;
 
-    if (!teacherComment || !principalComment) {
-        const scaleType = getGradingScaleType(req.query.resultType);
+    if (schoolSettingsRecord?.resultAutomaticComments && (!teacherComment || !principalComment)) {
+        const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
         const commentRules = await prisma.commentRule.findMany({
-            where: { schoolId: req.user.schoolId, resultType: scaleType }
+            where: { schoolId: req.user.schoolId, resultType: scaleResultType }
         });
         const numericAverage = parseFloat(average);
         
@@ -681,8 +698,13 @@ const generateReportCardPDF = async (req, res) => {
     if (clsWithSection && clsWithSection.level) sectionName = clsWithSection.level;
 
     let activeTemplate = null;
-    if (sectionName) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
-    if (!activeTemplate) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    const requestedType = req.query.resultType || '';
+    let dbTemplateType = 'SCORE_BASED';
+    if (requestedType.includes('COMMENT')) dbTemplateType = 'COMMENT_BASED';
+    else if (requestedType === 'TRANSCRIPT') dbTemplateType = 'TRANSCRIPT';
+
+    if (sectionName) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (!activeTemplate) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     const templateId = activeTemplate?.name || 'template1';
     const config = activeTemplate?.config || {};
 
@@ -742,16 +764,21 @@ const getClassReportCards = async (req, res) => {
         });
 
         let gradingScaleRecord = null;
-        const scaleType = getGradingScaleType(req.query.resultType);
+        const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
         
         if (classInfo?.section) {
             gradingScaleRecord = await prisma.gradingScale.findFirst({
-                where: { schoolId: req.user.schoolId, category: classInfo.section, type: scaleType }
+                where: { schoolId: req.user.schoolId, category: classInfo.section, resultType: scaleResultType, assessmentType: scaleAssessmentType }
             });
         }
         if (!gradingScaleRecord) {
             gradingScaleRecord = await prisma.gradingScale.findFirst({
-                where: { schoolId: req.user.schoolId, category: 'ALL', type: scaleType }
+                where: { schoolId: req.user.schoolId, category: 'ALL', resultType: scaleResultType, assessmentType: scaleAssessmentType }
+            });
+        }
+        if (!gradingScaleRecord) {
+            gradingScaleRecord = await prisma.gradingScale.findFirst({
+                where: { schoolId: req.user.schoolId, resultType: scaleResultType, assessmentType: scaleAssessmentType }
             });
         }
         const grades = gradingScaleRecord?.grades ?? [];
@@ -759,7 +786,7 @@ const getClassReportCards = async (req, res) => {
 
         const [settings, rules] = await Promise.all([
             prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } }),
-            prisma.commentRule.findMany({ where: { schoolId: req.user.schoolId } })
+            prisma.commentRule.findMany({ where: { schoolId: req.user.schoolId, resultType: scaleResultType } })
         ]);
 
         const summaries = await Promise.all(students.map(async (student) => {
@@ -989,13 +1016,12 @@ const getBroadsheet = async (req, res) => {
         where: whereClause
     });
 
-    // Get 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', type: 'SUBJECT' }
+        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
     });
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId }
+            where: { schoolId: req.user.schoolId, resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
         });
     }
     const grades = gradingScaleRecord ? gradingScaleRecord.grades : [];
@@ -1108,7 +1134,6 @@ const getCumulativeBroadsheet = async (req, res) => {
 
     const broadsheetData = Object.values(studentMap).map(sb => {
         let sumAverages = 0;
-        let termCount = 0;
         
         for (const term of uniqueTerms) {
             const termData = sb.terms[term];
@@ -1116,25 +1141,23 @@ const getCumulativeBroadsheet = async (req, res) => {
                 const termAvg = termData.totalScore / termData.subjectCount;
                 sb.termAverages[term] = termAvg;
                 sumAverages += termAvg;
-                termCount++;
             } else {
-                sb.termAverages[term] = null;
+                sb.termAverages[term] = 0;
             }
         }
         
-        sb.avg = termCount > 0 ? sumAverages / termCount : 0;
+        sb.avg = uniqueTerms.length > 0 ? sumAverages / uniqueTerms.length : 0;
         sb.averageStr = sb.avg.toFixed(1);
         sb.cumTotal = Number(sumAverages.toFixed(1));
         return sb;
     }).sort((a, b) => b.avg - a.avg);
 
-    // Get 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', type: 'EXAM' }
+        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
     });
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId }
+            where: { schoolId: req.user.schoolId, resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
         });
     }
     const grades = gradingScaleRecord ? gradingScaleRecord.grades : [];
@@ -1279,20 +1302,25 @@ const updateReleaseStatus = async (req, res) => {
 };
 
 const getTraitConfigurations = async (req, res) => {
+    const category = req.query.category;
+    let whereClause = { schoolId: req.user.schoolId };
+    if (category) {
+        whereClause.category = category;
+    }
     const configs = await prisma.traitConfiguration.findMany({
-        where: { schoolId: req.user.schoolId }
+        where: whereClause
     });
     res.status(StatusCodes.OK).json({ configs });
 };
 
 const saveTraitConfiguration = async (req, res) => {
-    const { domain, traits, ratingScale } = req.body;
+    const { domain, traits, ratingScale, category = 'ALL' } = req.body;
     if (!domain || !traits || !ratingScale) throw new CustomError.BadRequestError('Missing fields');
 
     const config = await prisma.traitConfiguration.upsert({
-        where: { schoolId_domain: { schoolId: req.user.schoolId, domain } },
+        where: { schoolId_domain_category: { schoolId: req.user.schoolId, domain, category } },
         update: { traits, ratingScale },
-        create: { schoolId: req.user.schoolId, domain, traits, ratingScale }
+        create: { schoolId: req.user.schoolId, domain, category, traits, ratingScale }
     });
     res.status(StatusCodes.OK).json({ msg: 'Configuration saved', config });
 };
@@ -1382,13 +1410,21 @@ const getAllTemplates = async (req, res) => {
 
 const assignTemplateSection = async (req, res) => {
     const { id } = req.params;
-    const { sectionId } = req.body;
-    const assignedSectionId = sectionId === 'ALL' ? null : sectionId;
+    const { sectionId, resultType } = req.body;
+    
+    const updateData = {};
+    if (sectionId !== undefined) {
+        updateData.assignedSectionId = sectionId === 'ALL' ? null : sectionId;
+    }
+    if (resultType !== undefined) {
+        updateData.resultType = resultType;
+    }
+
     const template = await prisma.resultTemplate.updateMany({
         where: { id, schoolId: req.user.schoolId },
-        data: { assignedSectionId }
+        data: updateData
     });
-    res.status(StatusCodes.OK).json({ msg: 'Template assigned', template });
+    res.status(StatusCodes.OK).json({ msg: 'Template updated', template });
 };
 
 const getResultTemplate = async (req, res) => {
@@ -1405,13 +1441,13 @@ const getResultTemplate = async (req, res) => {
 };
 
 const createResultTemplate = async (req, res) => {
-    const { name, config } = req.body;
+    const { name, config, resultType } = req.body;
     if (!name) throw new CustomError.BadRequestError('Template name is required');
 
     // Optionally set others to inactive if this is marked active, but let's just create it
     try {
         const template = await prisma.resultTemplate.create({
-            data: { schoolId: req.user.schoolId, name, config, isActive: true }
+            data: { schoolId: req.user.schoolId, name, config, isActive: true, resultType: resultType || 'SCORE_BASED' }
         });
         
         await prisma.resultTemplate.updateMany({
@@ -1430,7 +1466,7 @@ const createResultTemplate = async (req, res) => {
 
 const updateResultTemplate = async (req, res) => {
     const { id } = req.params;
-    const { name, config, isActive } = req.body;
+    const { name, config, isActive, resultType } = req.body;
 
     const template = await prisma.resultTemplate.findFirst({ where: { id, schoolId: req.user.schoolId } });
     if (!template) throw new CustomError.NotFoundError('Template not found');
@@ -1438,7 +1474,12 @@ const updateResultTemplate = async (req, res) => {
     try {
         const updated = await prisma.resultTemplate.update({
             where: { id },
-            data: { name: name || template.name, config: config || template.config, isActive: isActive !== undefined ? isActive : template.isActive }
+            data: { 
+                name: name || template.name, 
+                config: config || template.config, 
+                isActive: isActive !== undefined ? isActive : template.isActive,
+                resultType: resultType || template.resultType
+            }
         });
 
         if (isActive) {
@@ -1614,6 +1655,57 @@ const batchExportPDF = async (req, res) => {
     }
 };
 
+const getBatchReportCards = async (req, res) => {
+    const { studentProfileIds, term, academicYear, classId, resultType, isCumulative } = req.query;
+    if (!studentProfileIds || !term || !academicYear) {
+        throw new CustomError.BadRequestError('studentProfileIds, term, and academicYear are required');
+    }
+
+    const ids = studentProfileIds.split(',').filter(Boolean);
+    
+    // We will execute the exact logic of getStudentReportCard for each ID in parallel
+    // by manually constructing mock req/res objects, or factoring out the core logic.
+    // Factoring out is safer. Let's just do Promise.all over the internal logic.
+    
+    try {
+        const results = await Promise.all(ids.map(async (id) => {
+            // Build mock req and res
+            const mockReq = {
+                user: req.user,
+                query: { studentProfileId: id, term, academicYear, classId, resultType, isCumulative }
+            };
+            
+            let responseData = null;
+            let responseStatus = 200;
+            
+            const mockRes = {
+                status: (code) => {
+                    responseStatus = code;
+                    return mockRes;
+                },
+                json: (data) => {
+                    responseData = data;
+                }
+            };
+
+            // Assuming getStudentReportCard handles async and populates mockRes
+            // We need to catch errors thrown inside it
+            try {
+                await getStudentReportCard(mockReq, mockRes);
+                return responseData;
+            } catch (err) {
+                console.error(`Error fetching report card for ${id}:`, err);
+                return null;
+            }
+        }));
+
+        res.status(StatusCodes.OK).json({ data: results.filter(Boolean) });
+    } catch (error) {
+         console.error("Batch Report Cards Error:", error);
+         res.status(500).json({ msg: 'Failed to fetch batch report cards' });
+    }
+};
+
 module.exports = {
     getGradingScale,
     saveGradingScale,
@@ -1647,5 +1739,6 @@ module.exports = {
     shareResultEndpoint,
     generatePrintToken,
     validateResults,
-    batchExportPDF
+    batchExportPDF,
+    getBatchReportCards
 };

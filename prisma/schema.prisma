@@ -1166,13 +1166,14 @@ model TenantAuditLog {
 
 // Stores the grading weights defined by Admin for each School Category
 model AssessmentStructure {
-  id        String   @id @default(uuid())
-  schoolId  String? // tenant isolation
-  category  String // e.g., 'Nursery', 'Primary', 'JSS', 'SSS', 'Arabic'
-  classId   String? // Optional override per class
-  parts     Json // e.g. [{"id": "1", "name": "1st CA", "weight": 20}, {"id": "2", "name": "Exam", "weight": 60}]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(uuid())
+  schoolId   String? // tenant isolation
+  category   String // e.g., 'Nursery', 'Primary', 'JSS', 'SSS', 'Arabic'
+  classId    String? // Optional override per class
+  resultType String   @default("SCORE_BASED") // SCORE_BASED | COMMENT_BASED
+  parts      Json // e.g. [{"id": "1", "name": "1st CA", "weight": 20}, {"id": "2", "name": "Exam", "weight": 60}]
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -1253,6 +1254,7 @@ model ResultTemplate {
   schoolId          String
   name              String // e.g. "Template 1", "Original"
   isActive          Boolean  @default(false)
+  resultType        String   @default("SCORE_BASED") // "SCORE_BASED", "COMMENT_BASED", "TRANSCRIPT"
   config            Json // Stores all the toggles, colors, etc.
   assignedSectionId String?
   createdAt         DateTime @default(now())
@@ -1607,17 +1609,19 @@ model TemplateClassAssignment {
 
 // Persistent grading scale per school section
 model GradingScale {
-  id        String   @id @default(uuid())
-  schoolId  String
-  category  String?  @default("ALL") // Primary, JSS, SSS, ALL
-  type      String   @default("SUBJECT") // SUBJECT | FINAL
-  passMark  Float    @default(40)
-  grades    Json // [{grade, minScore, maxScore, remark, status}]
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id             String   @id @default(uuid())
+  schoolId       String
+  category       String?  @default("ALL") // Primary, JSS, SSS, ALL
+  type           String   @default("SUBJECT") // Deprecated somewhat, keeping for backwards compatibility
+  resultType     String   @default("SCORE_BASED") // SCORE_BASED | COMMENT_BASED
+  assessmentType String   @default("EXAM") // EXAM | CA
+  passMark       Float    @default(40)
+  grades         Json // [{grade, minScore, maxScore, remark, status}]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
 
   // Composite unique constraint to allow multiple scale types per category
-  @@unique([schoolId, category, type])
+  @@unique([schoolId, category, type, resultType, assessmentType])
 }
 
 // Per-student, per-term comments from teacher / head teacher / principal
@@ -1705,12 +1709,13 @@ model TraitConfiguration {
   id          String   @id @default(uuid())
   schoolId    String
   domain      String // AFFECTIVE, PSYCHOMOTOR
+  category    String   @default("ALL") // Nursery, Primary, Secondary, etc.
   traits      String[] // ["Neatness", "Punctuality", ...]
   ratingScale Json // [{"rating": "A", "description": "Excellent"}]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([schoolId, domain])
+  @@unique([schoolId, domain, category])
 }
 
 // ─── LMS & CBT (Phase 1 Expansion) ───────────────────────────────────────────

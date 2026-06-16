@@ -6,9 +6,9 @@ const { checkExemption } = require('./exemption.controller');
 
 // ─── GET ASSESSMENT STRUCTURES ──────────────────────────────────────────────
 const getAssessmentStructures = async (req, res) => {
-    const { category, classId } = req.query;
+    const { category, classId, resultType = 'SCORE_BASED' } = req.query;
 
-    const whereClause = { schoolId: req.user.schoolId };
+    const whereClause = { schoolId: req.user.schoolId, resultType };
     if (classId) {
         whereClause.classId = classId;
     } else if (category) {
@@ -16,9 +16,19 @@ const getAssessmentStructures = async (req, res) => {
         whereClause.classId = null;
     }
 
-    const structures = await prisma.assessmentStructure.findMany({
+    let structures = await prisma.assessmentStructure.findMany({
         where: whereClause
     });
+
+    // If fetching for a class and no specific structure is found, try fetching its category's structure
+    if (classId && structures.length === 0) {
+        const cls = await prisma.class.findUnique({ where: { id: classId }, select: { level: true } });
+        if (cls && cls.level) {
+            structures = await prisma.assessmentStructure.findMany({
+                where: { schoolId: req.user.schoolId, resultType, category: cls.level, classId: null }
+            });
+        }
+    }
 
     if (category || classId) {
         return res.status(StatusCodes.OK).json({ parts: structures.length > 0 ? structures[0].parts : null });
@@ -35,7 +45,7 @@ const getAssessmentStructures = async (req, res) => {
 
 // ─── UPDATE ASSESSMENT STRUCTURES ───────────────────────────────────────────
 const updateAssessmentStructures = async (req, res) => {
-    const { category, classId, parts } = req.body;
+    const { category, classId, parts, resultType = 'SCORE_BASED' } = req.body;
 
     if (!category && !classId) {
         throw new CustomError.BadRequestError('Please provide a valid category or classId');
@@ -50,7 +60,7 @@ const updateAssessmentStructures = async (req, res) => {
         throw new CustomError.BadRequestError('Total weight must equal 100%');
     }
 
-    const whereClause = { schoolId: req.user.schoolId };
+    const whereClause = { schoolId: req.user.schoolId, resultType };
     if (classId) {
         whereClause.classId = classId;
     } else {
@@ -70,7 +80,7 @@ const updateAssessmentStructures = async (req, res) => {
         });
     } else {
         structure = await prisma.assessmentStructure.create({
-            data: { category: category || 'CLASS_OVERRIDE', classId: classId || null, parts, schoolId: req.user.schoolId }
+            data: { category: category || 'CLASS_OVERRIDE', classId: classId || null, resultType, parts, schoolId: req.user.schoolId }
         });
     }
 

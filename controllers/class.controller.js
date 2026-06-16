@@ -154,15 +154,20 @@ const assignSubjectTeacher = async (req, res) => {
     const { id, subjectId } = req.params
     const { teacherId } = req.body
 
-    // Ensure the ClassSubject relationship exists, then update it
-    const updated = await prisma.classSubject.update({
+    // Use upsert to handle cases where the ClassSubject relation doesn't strictly exist yet
+    const updated = await prisma.classSubject.upsert({
         where: {
             classId_subjectId: {
                 classId: id,
                 subjectId: subjectId
             }
         },
-        data: {
+        update: {
+            teacherId: teacherId || null
+        },
+        create: {
+            classId: id,
+            subjectId: subjectId,
             teacherId: teacherId || null
         }
     })

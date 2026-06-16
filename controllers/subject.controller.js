@@ -25,7 +25,7 @@ const addSubject = async (req, res) => {
         data: {
             name: name.trim(),
             code: finalCode,
-            
+            categoryId: categoryId || null,
             type: type || null,
             description: description || null,
             teacherId: teacherId || null,
@@ -66,7 +66,7 @@ const getAllSubjects = async (req, res) => {
         where,
         include: {
             classes: { include: { class: true } },
-            
+            category: true,
             teacher: { include: { user: { select: { name: true } } } }
         },
         orderBy: { name: 'asc' },
@@ -88,7 +88,7 @@ const getSubject = async (req, res) => {
         where: { id, schoolId: req.user.schoolId, isDeleted: false },
         include: {
             classes: { include: { class: true } },
-            
+            category: true,
             teacher: { include: { user: { select: { name: true, email: true } } } }
         }
     })
@@ -107,7 +107,7 @@ const updateSubject = async (req, res) => {
     const updateData = {
         ...(name && { name: name.trim() }),
         ...(code !== undefined && { code: code ? code.trim().toUpperCase() : null }),
-        
+        ...(categoryId !== undefined && { categoryId: categoryId || null }),
         ...(type !== undefined && { type }),
         ...(description !== undefined && { description }),
         ...(teacherId !== undefined && { teacherId: teacherId || null }),

@@ -275,7 +275,7 @@ const updateStudent = async (req, res) => {
         const payloadSubjectCategoryId = (subjectCategoryId && subjectCategoryId.trim() !== '') ? subjectCategoryId : null;
         
         await prisma.studentProfile.update({
-            where: { id: req.params.id },
+            where: { userId: req.params.id },
             data: {
                 classId: payloadClassId,
                 classLevel,
@@ -293,104 +293,9 @@ const updateStudent = async (req, res) => {
                 profilePicture: req.body.profilePicture !== undefined ? req.body.profilePicture : undefined
             }
         });
-
-        // Also update User name
-        if (req.body.name) {
-            await prisma.user.update({
-                where: { id: student.userId },
-                data: { name: req.body.name }
-            });
-        }
-
     }
 
-    if (!sessionId) {
-        return res.status(StatusCodes.BAD_REQUEST).json({ msg: 'Target Academic Session is required' });
-    }
-
-    if (!status || !['PROMOTED', 'HELD_BACK', 'GRADUATED'].includes(status)) {
-        return res.status(StatusCodes.BAD_REQUEST).json({ msg: 'Valid promotion status is required' });
-    }
-
-    // Verify Target Class if not graduating
-    if (status !== 'GRADUATED' && !targetClassId) {
-        return res.status(StatusCodes.BAD_REQUEST).json({ msg: 'Target class is required for non-graduating students' });
-    }
-
-    const schoolId = req.user.schoolId;
-
-    // Fetch students to ensure they exist and belong to the school
-    const students = await prisma.studentProfile.findMany({
-        where: { id: { in: studentIds }, schoolId, isDeleted: false },
-        select: { id: true, classId: true }
-    });
-
-    if (students.length === 0) {
-        return res.status(StatusCodes.NOT_FOUND).json({ msg: 'No valid students found' });
-    }
-
-    // Prepare transaction
-    const transactionOperations = [];
-
-    // 1. Create PromotionHistory records
-    const historyData = students.map(student => ({
-        schoolId,
-        studentId: student.id,
-        fromClassId: student.classId,
-        toClassId: status === 'GRADUATED' ? null : targetClassId,
-        sessionId,
-        promotedBy: req.user.userId,
-        status,
-        notes: notes || null
-    }));
-
-    transactionOperations.push(
-        prisma.promotionHistory.createMany({
-            data: historyData
-        })
-    );
-
-    // 2. Update StudentProfiles
-    for (const student of students) {
-        const updateData = {
-            sessionId // Always update session
-        };
-
-        if (status === 'GRADUATED') {
-            updateData.status = 'Graduated';
-            updateData.classId = null; // Remove from active class
-        } else {
-            updateData.classId = targetClassId;
-        }
-
-        transactionOperations.push(
-            prisma.studentProfile.update({
-                where: { id: student.id },
-                data: updateData
-            })
-        );
-    }
-
-    // Execute Transaction
-    await prisma.$transaction(transactionOperations);
-
-    // Log the action
-    await logTenantAction({
-        schoolId: req.user.schoolId,
-        userId: req.user.userId,
-        action: 'PROMOTE_STUDENTS',
-        entityType: 'StudentProfile',
-        entityId: 'BATCH',
-        metadata: {
-            count: students.length,
-            status,
-            targetClassId,
-            sessionId
-        },
-        ipAddress: req.ip
-    });
-
-    res.status(StatusCodes.OK).json({ msg: `Successfully processed ${students.length} students` });
+    res.status(StatusCodes.OK).json({ msg: 'Student updated successfully' });
 }
 
 // ─── CHECK ADMISSION NUMBER ───────────────────────────────────────────────────
@@ -406,7 +311,7 @@ const checkAdmissionNo = async (req, res) => {
 // ─── TRANSFER STUDENT CLASS ───────────────────────────────────────────────────
 const transferStudent = async (req, res) => {
     const { id } = req.params; // Student User ID
-    const { newClassId, notes , profilePicture } = req.body;
+    const { newClassId, notes } = req.body;
     const schoolId = req.user.schoolId;
 
     if (!newClassId) {
