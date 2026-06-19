@@ -1,0 +1,14 @@
+PrismaClientKnownRequestError: 
+Invalid `prisma.classSubject.upsert()` invocation in
+C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\controllers\class.controller.js:158:51
+
+  155 const { teacherId } = req.body
+  156 
+  157 try {
+→ 158     const updated = await prisma.classSubject.upsert(
+Foreign key constraint violated: `ClassSubject_subjectId_fkey (index)`
+    at $n.handleRequestError (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:121:7315)
+    at $n.handleAndLogRequestError (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:121:6623)
+    at $n.request (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:121:6307)
+    at async l (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\@prisma\client\runtime\library.js:130:9633)
+    at async assignSubjectTeacher (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\controllers\class.controller.js:158:25)

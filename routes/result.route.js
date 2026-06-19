@@ -35,7 +35,8 @@ const {
     generatePrintToken,
     batchExportPDF,
     getBatchReportCards,
-    validateResults
+    validateResults,
+    deleteTraitConfiguration
 } = require('../controllers/result.controller');
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
 
@@ -82,6 +83,7 @@ router.get('/release-status/advanced', authenticateUser, authorizePermissions('A
 // Trait Ratings
 router.get('/traits/config', authenticateUser, getTraitConfigurations);
 router.post('/traits/config', authenticateUser, authorizePermissions('ADMIN'), saveTraitConfiguration);
+router.delete('/traits/config', authenticateUser, authorizePermissions('ADMIN'), deleteTraitConfiguration);
 router.get('/traits', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getTraitRatings);
 router.post('/traits', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), saveTraitRatings);
 

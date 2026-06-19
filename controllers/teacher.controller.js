@@ -329,7 +329,7 @@ const getMyClasses = async (req, res) => {
             ...cls,
             studentCount,
             students: mappedStudents,
-            mySubjects: mySubjectsForThisClass.map(ms => ({ id: ms.id, name: ms.name }))
+            mySubjects: mySubjectsForThisClass.map(ms => ({ id: ms.id, name: ms.name, entryType: ms.entryType }))
         };
     }));
 

@@ -527,11 +527,15 @@ const generateReportCardPDF = async (req, res) => {
 
     const effectiveClassId = classId || student.classId;
 
-    const results = await prisma.studentResult.findMany({
+    let results = await prisma.studentResult.findMany({
         where: { studentProfileId, term, academicYear, schoolId: req.user.schoolId },
-        include: { subject: { select: { name: true, code: true } } },
+        include: { subject: { select: { name: true, code: true, categoryId: true } } },
         orderBy: { subject: { name: 'asc' } }
     });
+
+    if (student.subjectCategoryId) {
+        results = results.filter(r => !r.subject.categoryId || r.subject.categoryId === student.subjectCategoryId);
+    }
 
     const studentCategory = results[0]?.category || null;
     let gradingScaleRecord = null;
@@ -790,9 +794,14 @@ const getClassReportCards = async (req, res) => {
         ]);
 
         const summaries = await Promise.all(students.map(async (student) => {
-            const results = await prisma.studentResult.findMany({
-                where: { studentProfileId: student.id, term, academicYear, schoolId: req.user.schoolId }
+            let results = await prisma.studentResult.findMany({
+                where: { studentProfileId: student.id, term, academicYear, schoolId: req.user.schoolId },
+                include: { subject: { select: { categoryId: true } } }
             });
+
+            if (student.subjectCategoryId) {
+                results = results.filter(r => !r.subject.categoryId || r.subject.categoryId === student.subjectCategoryId);
+            }
 
             const totalScore = results.reduce((s, r) => s + r.totalScore, 0);
             const average = results.length > 0 ? (totalScore / results.length).toFixed(1) : '0';
@@ -935,9 +944,18 @@ const getAdminClassResults = async (req, res) => {
         students.sort((a, b) => a.user.name.localeCompare(b.user.name));
     }
 
-    const results = await prisma.studentResult.findMany({
+    let results = await prisma.studentResult.findMany({
         where: { classId, term, academicYear, schoolId: req.user.schoolId },
-        include: { subject: { select: { name: true, code: true } } }
+        include: { subject: { select: { name: true, code: true, categoryId: true } } }
+    });
+
+    results = results.filter(r => {
+        const st = students.find(s => s.id === r.studentProfileId);
+        if (!st) return false;
+        if (st.subjectCategoryId) {
+            return !r.subject.categoryId || r.subject.categoryId === st.subjectCategoryId;
+        }
+        return true;
     });
 
     const gradingScale = await prisma.gradingScale.findFirst({
@@ -1013,7 +1031,17 @@ const getBroadsheet = async (req, res) => {
         whereClause.subjectId = subjectId;
     }
     const results = await prisma.studentResult.findMany({
-        where: whereClause
+        where: whereClause,
+        include: { subject: { select: { categoryId: true } } }
+    });
+
+    const validResults = results.filter(r => {
+        const st = students.find(s => s.id === r.studentProfileId);
+        if (!st) return false;
+        if (st.subjectCategoryId) {
+            return !r.subject.categoryId || r.subject.categoryId === st.subjectCategoryId;
+        }
+        return true;
     });
 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
@@ -1042,7 +1070,7 @@ const getBroadsheet = async (req, res) => {
         };
     }
 
-    for (const r of results) {
+    for (const r of validResults) {
         if (broadsheetMap[r.studentProfileId]) {
             const { grade } = computeGrade(r.totalScore, grades);
             const rawScores = typeof r.scores === 'string' ? JSON.parse(r.scores) : (r.scores || {});
@@ -1323,6 +1351,17 @@ const saveTraitConfiguration = async (req, res) => {
         create: { schoolId: req.user.schoolId, domain, category, traits, ratingScale }
     });
     res.status(StatusCodes.OK).json({ msg: 'Configuration saved', config });
+};
+
+const deleteTraitConfiguration = async (req, res) => {
+    const { domain, category = 'ALL' } = req.query;
+    if (!domain) throw new CustomError.BadRequestError('Missing domain');
+
+    await prisma.traitConfiguration.delete({
+        where: { schoolId_domain_category: { schoolId: req.user.schoolId, domain, category } }
+    }).catch(() => null); // ignore if doesn't exist
+    
+    res.status(StatusCodes.OK).json({ msg: 'Configuration deleted' });
 };
 
 const getTraitRatings = async (req, res) => {
@@ -1740,5 +1779,6 @@ module.exports = {
     generatePrintToken,
     validateResults,
     batchExportPDF,
-    getBatchReportCards
+    getBatchReportCards,
+    deleteTraitConfiguration
 };

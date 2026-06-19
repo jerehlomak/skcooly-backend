@@ -77,7 +77,14 @@ const getAllClasses = async (req, res) => {
                 sectionRel: { select: { id: true, name: true, shortCode: true, type: true } },
                 session: { select: { id: true, name: true } },
                 students: { where: { isDeleted: false }, select: { id: true } },
-                subjects: { select: { id: true } }
+                subjects: {
+                    select: {
+                        id: true,
+                        subjectId: true,
+                        teacherId: true,
+                        subject: { select: { name: true } }
+                    }
+                }
             }
         }),
         prisma.class.count({ where })
@@ -154,25 +161,29 @@ const assignSubjectTeacher = async (req, res) => {
     const { id, subjectId } = req.params
     const { teacherId } = req.body
 
-    // Use upsert to handle cases where the ClassSubject relation doesn't strictly exist yet
-    const updated = await prisma.classSubject.upsert({
-        where: {
-            classId_subjectId: {
+    try {
+        const updated = await prisma.classSubject.upsert({
+            where: {
+                classId_subjectId: {
+                    classId: id,
+                    subjectId: subjectId
+                }
+            },
+            update: {
+                teacherId: teacherId || null
+            },
+            create: {
                 classId: id,
-                subjectId: subjectId
+                subjectId: subjectId,
+                teacherId: teacherId || null
             }
-        },
-        update: {
-            teacherId: teacherId || null
-        },
-        create: {
-            classId: id,
-            subjectId: subjectId,
-            teacherId: teacherId || null
-        }
-    })
+        })
 
-    res.status(StatusCodes.OK).json({ msg: 'Subject teacher assigned successfully', assignment: updated })
+        res.status(StatusCodes.OK).json({ msg: 'Subject teacher assigned successfully', assignment: updated })
+    } catch (error) {
+        require('fs').writeFileSync('C:/Users/Jereh Lomak/Desktop/my-projects/skooly/backend/assign_error.log', error.stack || error.toString());
+        throw error;
+    }
 }
 
 // ─── DELETE CLASS ─────────────────────────────────────────────────────────────
