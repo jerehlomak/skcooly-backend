@@ -87,6 +87,10 @@ app.use(cors({
         'https://skooly-central-admin.vercel.app',   // Deployed Central Admin (Vercel)
         'https://skcooly-frontend.vercel.app',       // Deployed Frontend (Vercel - primary)
         'https://skcooly.vercel.app',              // Possible alias
+        'https://skcoolyplus.com',
+        'https://www.skcoolyplus.com',
+        'http://skcoolyplus.com',
+        'http://www.skcoolyplus.com',
     ],
     credentials: true,
 }))
