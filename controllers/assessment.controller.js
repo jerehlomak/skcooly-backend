@@ -30,6 +30,13 @@ const getAssessmentStructures = async (req, res) => {
         }
     }
 
+    // Fallback to Global Default (ALL) if still no structure is found
+    if (structures.length === 0 && (category || classId)) {
+        structures = await prisma.assessmentStructure.findMany({
+            where: { schoolId: req.user.schoolId, resultType, category: 'ALL', classId: null }
+        });
+    }
+
     if (category || classId) {
         return res.status(StatusCodes.OK).json({ parts: structures.length > 0 ? structures[0].parts : null });
     }

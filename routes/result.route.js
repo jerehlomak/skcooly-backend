@@ -36,9 +36,10 @@ const {
     batchExportPDF,
     getBatchReportCards,
     validateResults,
-    deleteTraitConfiguration
+    deleteTraitConfiguration,
+    renameTraitConfiguration
 } = require('../controllers/result.controller');
-const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
+const { authenticateUser, authorizePermissions, requirePermission } = require('../middleware/authentication');
 
 // Grading scale
 router.get('/grading-scale', authenticateUser, getGradingScale);
@@ -83,6 +84,7 @@ router.get('/release-status/advanced', authenticateUser, authorizePermissions('A
 // Trait Ratings
 router.get('/traits/config', authenticateUser, getTraitConfigurations);
 router.post('/traits/config', authenticateUser, authorizePermissions('ADMIN'), saveTraitConfiguration);
+router.patch('/traits/config', authenticateUser, authorizePermissions('ADMIN'), renameTraitConfiguration);
 router.delete('/traits/config', authenticateUser, authorizePermissions('ADMIN'), deleteTraitConfiguration);
 router.get('/traits', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getTraitRatings);
 router.post('/traits', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), saveTraitRatings);

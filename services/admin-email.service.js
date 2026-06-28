@@ -1,16 +1,4 @@
-const nodemailer = require('nodemailer');
-
-function getTransporter() {
-    return nodemailer.createTransport({
-        host: process.env.SMTP_HOST || 'smtp.gmail.com',
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS,
-        },
-    });
-}
+const { getTransporter, getFromEmail } = require('../utils/emailTransporter');
 
 const FROM = process.env.SMTP_FROM || '"Skooly Plus" <support@skoolyplus.com>';
 
@@ -42,9 +30,10 @@ async function sendAdminPasswordResetEmail(to, resetLink) {
     }
     
     try {
-        const transporter = getTransporter();
+        const transporter = await getTransporter();
+        const from = await getFromEmail();
         await transporter.sendMail({
-            from: FROM,
+            from,
             to,
             subject: 'Skooly Plus Admin - Password Reset',
             html: passwordResetHTML({ resetLink }),

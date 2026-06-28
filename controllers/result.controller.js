@@ -156,8 +156,14 @@ const getStudentReportCard = async (req, res) => {
 
     const requestedType = req.query.resultType || '';
     let dbTemplateType = 'SCORE_BASED';
-    if (requestedType.includes('COMMENT')) dbTemplateType = 'COMMENT_BASED';
-    else if (requestedType === 'TRANSCRIPT') dbTemplateType = 'TRANSCRIPT';
+
+    if (requestedType.includes('COMMENT')) {
+        dbTemplateType = 'COMMENT_BASED';
+    } else if (requestedType === 'TRANSCRIPT') {
+        dbTemplateType = 'TRANSCRIPT';
+    } else if (!requestedType && req.visibleTypes && req.visibleTypes.length === 1 && req.visibleTypes.includes('COMMENT')) {
+        dbTemplateType = 'COMMENT_BASED';
+    }
 
     let template = null;
     if (sectionName) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
@@ -1364,6 +1370,27 @@ const deleteTraitConfiguration = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Configuration deleted' });
 };
 
+const renameTraitConfiguration = async (req, res) => {
+    const { oldDomain, newDomain, category = 'ALL' } = req.body;
+    if (!oldDomain || !newDomain) throw new CustomError.BadRequestError('Missing oldDomain or newDomain');
+
+    // Rename the TraitConfiguration
+    await prisma.traitConfiguration.update({
+        where: { schoolId_domain_category: { schoolId: req.user.schoolId, domain: oldDomain, category } },
+        data: { domain: newDomain }
+    }).catch((e) => {
+        throw new CustomError.BadRequestError('Failed to rename or domain already exists');
+    });
+
+    // Rename existing ratings so they don't lose data
+    await prisma.traitRating.updateMany({
+        where: { schoolId: req.user.schoolId, domain: oldDomain },
+        data: { domain: newDomain }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: 'Configuration renamed' });
+};
+
 const getTraitRatings = async (req, res) => {
     const { classId, term, academicYear, domain } = req.query;
     if (!classId || !term || !academicYear || !domain) throw new CustomError.BadRequestError('Missing query params');
@@ -1780,5 +1807,6 @@ module.exports = {
     validateResults,
     batchExportPDF,
     getBatchReportCards,
-    deleteTraitConfiguration
+    deleteTraitConfiguration,
+    renameTraitConfiguration
 };

@@ -3,10 +3,11 @@ const prisma = require('../db/prisma');
 const CustomError = require('../errors');
 const { uploadApplicationDocument } = require('../services/cloudinary-upload.service');
 const { sendApplicationApprovedEmail } = require('../services/application-email.service');
+const { generateUniquePins } = require('../utils/pinCodeGenerator');
 
 // ─── PUBLIC: Validate PIN for Application ─────────────────────────────────
 const validateApplicationPin = async (req, res) => {
-    const { pinCode, applicationType } = req.body;
+    const { pinCode, applicationType, action } = req.body; // action = 'APPLY' | 'CHECK_STATUS'
 
     if (!pinCode || !applicationType) {
         throw new CustomError.BadRequestError('PIN code and application type are required.');
@@ -25,7 +26,8 @@ const validateApplicationPin = async (req, res) => {
                     name: true,
                     logoUrl: true
                 }
-            }
+            },
+            application: true
         }
     });
 
@@ -37,16 +39,42 @@ const validateApplicationPin = async (req, res) => {
         throw new CustomError.BadRequestError(`This PIN is not valid for ${applicationType}. It is a ${pin.pinType} PIN.`);
     }
 
-    if (pin.status !== 'ACTIVE' || pin.usageCount >= pin.maxUsage) {
-        throw new CustomError.BadRequestError('This PIN has already been used or expired.');
-    }
+    if (action === 'APPLY') {
+        if (pin.status !== 'ACTIVE' || pin.usageCount >= pin.maxUsage || pin.application) {
+            throw new CustomError.BadRequestError('This PIN has already been used to apply. Please choose "Check Status" to view your application.');
+        }
 
-    // PIN is valid. Return the associated school details so the frontend knows where the application is going.
-    res.status(StatusCodes.OK).json({
-        message: 'PIN validated successfully.',
-        school: pin.school,
-        pinId: pin.id
-    });
+        // Fetch the school's dynamic form configuration
+        const settings = await prisma.schoolSettings.findFirst({
+            where: { schoolId: pin.schoolId },
+            select: { admissionFormConfig: true, employmentFormConfig: true }
+        });
+
+        res.status(StatusCodes.OK).json({
+            message: 'PIN validated successfully for Application.',
+            school: pin.school,
+            pinId: pin.id,
+            formConfig: applicationType === 'ADMISSION_APPLICATION' ? settings?.admissionFormConfig : settings?.employmentFormConfig
+        });
+    } else if (action === 'CHECK_STATUS') {
+        if (!pin.application) {
+            throw new CustomError.BadRequestError('No application found for this PIN. Please apply first.');
+        }
+
+        const settings = await prisma.schoolSettings.findFirst({
+            where: { schoolId: pin.schoolId },
+            select: { admissionLetterTemplate: true, employmentLetterTemplate: true }
+        });
+
+        res.status(StatusCodes.OK).json({
+            message: 'Application found.',
+            school: pin.school,
+            application: pin.application,
+            letterTemplate: applicationType === 'ADMISSION_APPLICATION' ? settings?.admissionLetterTemplate : settings?.employmentLetterTemplate
+        });
+    } else {
+        throw new CustomError.BadRequestError('Invalid action type.');
+    }
 };
 
 // ─── PUBLIC: Submit Application ───────────────────────────────────────────
@@ -78,17 +106,16 @@ const submitApplication = async (req, res) => {
     let otherCertificatesUrl = null;
 
     if (req.files) {
-        if (req.files.passport) {
-            const up = await uploadApplicationDocument(req.files.passport, pin.schoolId);
-            passportUrl = up.secure_url;
-        }
-        if (req.files.birthCertificate) {
-            const up = await uploadApplicationDocument(req.files.birthCertificate, pin.schoolId);
-            birthCertificateUrl = up.secure_url;
-        }
-        if (req.files.otherCertificates) {
-            const up = await uploadApplicationDocument(req.files.otherCertificates, pin.schoolId);
-            otherCertificatesUrl = up.secure_url;
+        for (const key of Object.keys(req.files)) {
+            const file = req.files[key];
+            const up = await uploadApplicationDocument(file, pin.schoolId);
+            if (key === 'passport') passportUrl = up.secure_url;
+            else if (key === 'birthCertificate') birthCertificateUrl = up.secure_url;
+            else if (key === 'otherCertificates') otherCertificatesUrl = up.secure_url;
+            else {
+                // Dynamic image field!
+                formData[key] = up.secure_url;
+            }
         }
     }
 
@@ -138,12 +165,114 @@ const submitApplication = async (req, res) => {
             }
         });
 
+        // Create a notification for the school admin
+        await tx.notification.create({
+            data: {
+                schoolId: pin.schoolId,
+                title: `New ${applicationType === 'EMPLOYMENT' ? 'Employment' : 'Admission'} Application`,
+                message: `${applicantName} has just submitted an application.`,
+                type: 'APPLICATION',
+                link: '/dashboard/admission/applications'
+            }
+        });
+
         return newApp;
     });
 
     res.status(StatusCodes.CREATED).json({
         message: 'Application submitted successfully!',
         applicationId: application.id
+    });
+};
+
+// ─── ADMIN: Submit Application (Bypasses PIN requirement) ─────────────────────
+const adminSubmitApplication = async (req, res) => {
+    const { applicationType, applicantName, applicantEmail, applicantPhone } = req.body;
+    let formData = req.body.formData;
+
+    if (typeof formData === 'string') {
+        try {
+            formData = JSON.parse(formData);
+        } catch (e) {
+            formData = {};
+        }
+    }
+
+    if (!applicationType || !applicantName) {
+        throw new CustomError.BadRequestError('Missing required application fields.');
+    }
+
+    let passportUrl = null;
+    let birthCertificateUrl = null;
+    let otherCertificatesUrl = null;
+
+    if (req.files) {
+        for (const key of Object.keys(req.files)) {
+            const file = req.files[key];
+            const up = await uploadApplicationDocument(file, req.user.schoolId);
+            if (key === 'passport') passportUrl = up.secure_url;
+            else if (key === 'birthCertificate') birthCertificateUrl = up.secure_url;
+            else if (key === 'otherCertificates') otherCertificatesUrl = up.secure_url;
+            else {
+                // Dynamic image field!
+                formData[key] = up.secure_url;
+            }
+        }
+    }
+
+    // Auto-generate a unique PIN
+    const [newPinCode] = await generateUniquePins(prisma, 1, 12);
+    
+    // Create the dummy PIN and link it to the application directly
+    const application = await prisma.$transaction(async (tx) => {
+        // 1. Create the consumed PIN
+        const pin = await tx.schoolPin.create({
+            data: {
+                schoolId: req.user.schoolId,
+                batchId: null, // No batch for auto-generated manual pins
+                pinCode: newPinCode,
+                serialNumber: 'MANUAL-' + Date.now().toString().slice(-6),
+                pinType: applicationType,
+                maxUsage: 1,
+                usageCount: 1,
+                status: 'USED',
+                purchasedBy: req.user.name,
+                createdBy: req.user.userId
+            }
+        });
+
+        // 2. Log the usage
+        await tx.pinUsageLog.create({
+            data: {
+                pinId: pin.id,
+                usageContext: 'MANUAL_APPLICATION_SUBMISSION',
+                action: `SUBMITTED_${applicationType}`,
+                metadata: { applicantName, adminName: req.user.name }
+            }
+        });
+
+        // 3. Create the application
+        return await tx.application.create({
+            data: {
+                schoolId: req.user.schoolId,
+                pinId: pin.id,
+                applicationType,
+                applicantName,
+                applicantEmail,
+                applicantPhone,
+                formData,
+                passportUrl,
+                birthCertificateUrl,
+                otherCertificatesUrl,
+                status: 'PENDING'
+            }
+        });
+    });
+
+    res.status(StatusCodes.CREATED).json({
+        message: 'Manual Application submitted successfully!',
+        application,
+        generatedPin: newPinCode
     });
 };
 
@@ -192,7 +321,7 @@ const getSchoolApplications = async (req, res) => {
 // ─── DASHBOARD: Update Application Status ─────────────────────────────────
 const updateApplicationStatus = async (req, res) => {
     const { id } = req.params;
-    const { status } = req.body;
+    const { status, interviewDate, interviewTime, interviewLocation } = req.body;
     const schoolId = req.user.schoolId;
 
     if (!['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
@@ -201,7 +330,12 @@ const updateApplicationStatus = async (req, res) => {
 
     const application = await prisma.application.update({
         where: { id, schoolId },
-        data: { status },
+        data: { 
+            status,
+            interviewDate,
+            interviewTime,
+            interviewLocation
+        },
         include: { school: { select: { name: true } } }
     });
 
@@ -209,7 +343,11 @@ const updateApplicationStatus = async (req, res) => {
         await sendApplicationApprovedEmail(application.applicantEmail, {
             applicantName: application.applicantName,
             schoolName: application.school.name,
-            applicationType: application.applicationType
+            schoolId: application.schoolId,
+            applicationType: application.applicationType,
+            interviewDate,
+            interviewTime,
+            interviewLocation
         });
     }
 
@@ -243,6 +381,7 @@ const getAllApplications = async (req, res) => {
 module.exports = {
     validateApplicationPin,
     submitApplication,
+    adminSubmitApplication,
     getSchoolApplications,
     updateApplicationStatus,
     getAllApplications

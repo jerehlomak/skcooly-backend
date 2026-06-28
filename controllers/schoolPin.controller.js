@@ -4,12 +4,15 @@ const CustomError = require('../errors')
 
 // ─── SCHOOL ADMIN: View Assigned Batches ──────────────────────────────────
 const getSchoolBatches = async (req, res) => {
-
     const schoolId = req.user.schoolId
+    const { pinType } = req.query
+
+    const where = { schoolId }
+    if (pinType && pinType !== 'ALL') where.pinType = pinType
 
     // Fetch batches assigned to this school
     const batches = await prisma.schoolPinBatch.findMany({
-        where: { schoolId },
+        where,
         orderBy: { createdAt: 'desc' },
         include: {
             _count: {
@@ -40,7 +43,7 @@ const getSchoolBatches = async (req, res) => {
 // ─── SCHOOL ADMIN: View Individual PINs (For Export/Printing) ─────────────
 const getSchoolPins = async (req, res) => {
     const schoolId = req.user.schoolId
-    const { batchId, status, search, page, limit } = req.query
+    const { batchId, status, pinType, search, page, limit } = req.query
 
     const pageNum = Number(page) || 1
     const limitNum = Number(limit) || 10
@@ -49,6 +52,7 @@ const getSchoolPins = async (req, res) => {
     const where = { schoolId }
     if (batchId) where.batchId = batchId
     if (status && status !== 'ALL') where.status = status
+    if (pinType && pinType !== 'ALL') where.pinType = pinType
 
     if (search) {
         where.OR = [

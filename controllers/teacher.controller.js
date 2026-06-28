@@ -83,7 +83,7 @@ const addTeacher = async (req, res) => {
                 name,
                 email: generatedEmail, // Use provided email
                 password: hashedPassword,
-                role: req.body.staffType === 'ADMIN' ? 'ADMIN' : 'TEACHER',
+                role: ['ADMIN', 'ADMINISTRATIVE'].includes(req.body.staffType) ? 'ADMIN' : 'TEACHER',
                 schoolId: req.user.schoolId,
                 customRoleId: req.body.customRoleId || null,
                 teacherProfile: {
@@ -104,7 +104,8 @@ const addTeacher = async (req, res) => {
                         bankName: bankName || null,
                         accountName: accountName || null,
                         accountNumber: accountNumber || null,
-                        subjectsTaught: subjects || null
+                        subjectsTaught: subjects || null,
+                        canEnterPastScores: req.body.canEnterPastScores ? Boolean(req.body.canEnterPastScores) : false
                     }
                 }
             },
@@ -178,7 +179,7 @@ const getTeacher = async (req, res) => {
 // ─── UPDATE TEACHER ───────────────────────────────────────────────────────────
 const updateTeacher = async (req, res) => {
     const { id } = req.params; // User.id
-    const { name, email, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber, staffType, photoUrl } = req.body;
+    const { name, email, department, phone, gender, status, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber, staffType, photoUrl, canEnterPastScores, employeeId } = req.body;
 
     if (email) {
         const existingEmailUser = await prisma.user.findFirst({
@@ -205,12 +206,12 @@ const updateTeacher = async (req, res) => {
         data: {
             ...(name && { name }),
             ...(email && { email }),
-            ...(staffType && { role: staffType === 'ADMIN' ? 'ADMIN' : 'TEACHER' }),
+            ...(staffType && { role: ['ADMIN', 'ADMINISTRATIVE'].includes(staffType) ? 'ADMIN' : 'TEACHER' }),
             ...(req.body.customRoleId !== undefined && { customRoleId: req.body.customRoleId || null }),
         }
     });
 
-    if (department !== undefined || phone !== undefined || gender || status || dateOfBirth || address !== undefined || qualification !== undefined || salary !== undefined || bankName !== undefined || accountName !== undefined || accountNumber !== undefined || subjects !== undefined || staffType !== undefined || photoUrlUpdate !== undefined) {
+    if (department !== undefined || phone !== undefined || gender || status || dateOfBirth || address !== undefined || qualification !== undefined || salary !== undefined || bankName !== undefined || accountName !== undefined || accountNumber !== undefined || subjects !== undefined || staffType !== undefined || photoUrlUpdate !== undefined || canEnterPastScores !== undefined || employeeId !== undefined) {
         await prisma.teacherProfile.update({
             where: { userId: id },
             data: {
@@ -227,7 +228,9 @@ const updateTeacher = async (req, res) => {
                 ...(accountNumber !== undefined && { accountNumber }),
                 ...(subjects !== undefined && { subjects }),
                 ...(staffType !== undefined && { staffType }),
-                ...(photoUrlUpdate !== undefined && { photoUrl: photoUrlUpdate })
+                ...(canEnterPastScores !== undefined && { canEnterPastScores: Boolean(canEnterPastScores) }),
+                ...(photoUrlUpdate !== undefined && { photoUrl: photoUrlUpdate }),
+                ...(employeeId !== undefined && { employeeId })
             }
         });
     }
@@ -269,7 +272,8 @@ const getMyClasses = async (req, res) => {
     const userId = req.user.userId;
 
     const teacher = await prisma.teacherProfile.findUnique({
-        where: { userId }
+        where: { userId },
+        include: { formClasses: true }
     });
     if (!teacher) throw new CustomError.NotFoundError('Teacher profile not found');
 
@@ -279,7 +283,8 @@ const getMyClasses = async (req, res) => {
         select: { classId: true, subjectId: true }
     });
 
-    const classIds = [...new Set(classSubjects.map(cs => cs.classId))];
+    const formClassIds = teacher.formClasses ? teacher.formClasses.map(fc => fc.id) : [];
+    const classIds = [...new Set([...classSubjects.map(cs => cs.classId), ...formClassIds])];
 
     // Fetch full Class details
     const classes = await prisma.class.findMany({
@@ -295,14 +300,14 @@ const getMyClasses = async (req, res) => {
         // Falls back to classLevel count for students not yet migrated to classId
         let studentsList = await prisma.studentProfile.findMany({
             where: { classId: cls.id, status: 'Active' },
-            include: { user: { select: { name: true } } },
+            include: { user: { select: { id: true, name: true } } },
             orderBy: { user: { name: 'asc' } }
         });
 
         if (studentsList.length === 0) {
             studentsList = await prisma.studentProfile.findMany({
                 where: { classLevel: cls.level, status: 'Active' },
-                include: { user: { select: { name: true } } },
+                include: { user: { select: { id: true, name: true } } },
                 orderBy: { user: { name: 'asc' } }
             });
         }
@@ -312,6 +317,7 @@ const getMyClasses = async (req, res) => {
         const avatarColors = ['bg-blue-500', 'bg-emerald-500', 'bg-amber-500', 'bg-rose-500', 'bg-purple-500'];
         const mappedStudents = studentsList.map((s, idx) => ({
             id: s.id,
+            userId: s.user?.id || s.userId,
             name: s.user?.name || 'Unknown',
             avatar: (s.user?.name || 'U').substring(0, 2).toUpperCase(),
             color: avatarColors[idx % avatarColors.length],
@@ -319,11 +325,19 @@ const getMyClasses = async (req, res) => {
         }));
 
         // Which subjects does this teacher teach IN THIS SPECIFIC CLASS? 
-        // Based on the classSubjects we queried at the top
-        const mySubjectsForThisClass = classSubjects
-            .filter(cs => cs.classId === cls.id)
-            .map(cs => cls.subjects.find(s => s.subjectId === cs.subjectId)?.subject)
-            .filter(Boolean);
+        // If they are the Form Teacher for this class, give them access to ALL subjects.
+        // Otherwise, only give them subjects they are explicitly assigned to.
+        const isFormTeacher = formClassIds.includes(cls.id);
+        
+        let mySubjectsForThisClass = [];
+        if (isFormTeacher) {
+            mySubjectsForThisClass = cls.subjects.map(cs => cs.subject).filter(Boolean);
+        } else {
+            mySubjectsForThisClass = classSubjects
+                .filter(cs => cs.classId === cls.id)
+                .map(cs => cls.subjects.find(s => s.subjectId === cs.subjectId)?.subject)
+                .filter(Boolean);
+        }
 
         return {
             ...cls,

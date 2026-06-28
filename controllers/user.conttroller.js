@@ -81,6 +81,15 @@ const showCurrentUser = async (req, res) => {
         throw new CustomError.UnauthenticatedError('User no longer exists')
     }
 
+    if (user.role === 'TEACHER' && user.teacherProfile) {
+        const formClasses = await prisma.class.findMany({
+            where: { formTeacherId: user.teacherProfile.id, isDeleted: false },
+            select: { id: true, name: true, sessionId: true }
+        });
+        user.teacherProfile.isFormTeacher = formClasses.length > 0;
+        user.teacherProfile.formClasses = formClasses;
+    }
+
     let schoolData = null;
     if (user.schoolId) {
         const school = await prisma.school.findUnique({
@@ -99,21 +108,51 @@ const showCurrentUser = async (req, res) => {
 }
 
 const updateUser = async (req, res) => {
-    const { email, name } = req.body
+    const { loginId, name, email } = req.body;
 
-    if (!email || !name) {
+    if (!name || (!loginId && !email)) {
         throw new CustomError.BadRequestError('Please provide all values')
     }
 
-    // Update user via Prisma
+    const currentLoginId = loginId || email;
+
+    const currentUser = await prisma.user.findUnique({
+        where: { id: req.user.userId }
+    });
+
+    let updateData = { name };
+    
+    // For admins, their login ID IS their email, so we update the email field.
+    if (currentUser.role === 'ADMIN' || currentUser.role === 'SCHOOL_ADMIN' || currentUser.role === 'SCHOOL_SUPER_ADMIN' || currentUser.role === 'BRANCH_ADMIN' || currentUser.role === 'BRANCH_STAFF') {
+        updateData.email = currentLoginId;
+    }
+
     const user = await prisma.user.update({
         where: { id: req.user.userId },
-        data: { email, name }
-    })
+        data: updateData
+    });
+
+    if (user.role === 'TEACHER') {
+        await prisma.teacherProfile.updateMany({ where: { userId: user.id }, data: { employeeId: currentLoginId } });
+    } else if (user.role === 'STUDENT') {
+        await prisma.studentProfile.updateMany({ where: { userId: user.id }, data: { admissionNo: currentLoginId } });
+    } else if (user.role === 'PARENT') {
+        await prisma.parentProfile.updateMany({ where: { userId: user.id }, data: { parentId: currentLoginId } });
+    }
+
+    // Now return full user data just like showCurrentUser to refresh the frontend state accurately!
+    const refreshedUser = await prisma.user.findUnique({
+        where: { id: user.id },
+        select: {
+            id: true, name: true, email: true, role: true, schoolId: true, branchId: true,
+            studentProfile: true, teacherProfile: true, parentProfile: true, customRole: true,
+            branch: { select: { id: true, name: true, code: true } }
+        }
+    });
 
     const tokenUser = createTokenUser(user)
     attachCookiesToResponse({ res, user: tokenUser })
-    res.status(StatusCodes.OK).json({ user: tokenUser })
+    res.status(StatusCodes.OK).json({ user: refreshedUser })
 }
 
 const updateUserPassword = async (req, res) => {
@@ -146,40 +185,87 @@ const updateUserPassword = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Successfully updated password' })
 }
 
-const adminResetPassword = async (req, res) => {
+const adminUpdateUserCredentials = async (req, res) => {
     const { id: targetUserId } = req.params;
-    const { newPassword } = req.body;
+    const { newPassword, newLoginId } = req.body;
 
-    if (!newPassword || newPassword.length < 6) {
-        throw new CustomError.BadRequestError('Please provide a valid newPassword (min 6 characters)');
+    if (!newPassword && !newLoginId) {
+        throw new CustomError.BadRequestError('Please provide a new password or new login ID to update');
     }
 
-    // Ensure the target user belongs to the same school as the admin
     const targetUser = await prisma.user.findUnique({
-        where: { id: targetUserId }
+        where: { id: targetUserId },
+        include: { teacherProfile: true, studentProfile: true, parentProfile: true }
     });
 
-    if (!targetUser) {
-        throw new CustomError.NotFoundError(`No user found with id: ${targetUserId}`);
-    }
+    if (!targetUser) throw new CustomError.NotFoundError(`No user found with id: ${targetUserId}`);
 
     if (targetUser.schoolId !== req.user.schoolId) {
-        throw new CustomError.UnauthorizedError('You are not authorized to reset the password for this user');
+        throw new CustomError.UnauthorizedError('You are not authorized to modify this user');
     }
 
-    // Do not allow resetting SUPER_ADMIN or GROUP_ADMIN passwords via this standard School Admin route
     if (['SUPER_ADMIN', 'GROUP_ADMIN'].includes(targetUser.role)) {
-        throw new CustomError.UnauthorizedError('Cannot reset password for super admins or group admins');
+        throw new CustomError.UnauthorizedError('Cannot modify credentials for super admins or group admins');
     }
 
-    const hashedPassword = await argon2.hash(newPassword);
+    // Role-based restrictions
+    if (req.user.role === 'TEACHER') {
+        // Teacher can only edit students in their form class
+        if (targetUser.role !== 'STUDENT') {
+            throw new CustomError.UnauthorizedError('Teachers can only edit student credentials');
+        }
+        const teacherProfile = await prisma.teacherProfile.findFirst({ where: { userId: req.user.userId, isDeleted: false } });
+        if (!teacherProfile) throw new CustomError.UnauthorizedError('Teacher profile not found');
+        
+        const studentProfile = targetUser.studentProfile;
+        if (!studentProfile) throw new CustomError.NotFoundError('Student profile not found');
 
-    await prisma.user.update({
-        where: { id: targetUserId },
-        data: { password: hashedPassword }
-    });
+        const formClass = await prisma.class.findFirst({
+            where: { id: studentProfile.classId, formTeacherId: teacherProfile.id, isDeleted: false }
+        });
 
-    res.status(StatusCodes.OK).json({ msg: 'User password has been successfully reset' });
+        if (!formClass) {
+            throw new CustomError.UnauthorizedError('You can only edit credentials for students in your assigned form class');
+        }
+    }
+
+    let updateData = {};
+    if (newPassword) {
+        if (newPassword.length < 6) throw new CustomError.BadRequestError('Password must be at least 6 characters');
+        const argon2 = require('argon2');
+        updateData.password = await argon2.hash(newPassword);
+    }
+
+    if (newLoginId) {
+        // Update the login ID mapping for the specific role
+        if (['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN', 'BRANCH_ADMIN', 'BRANCH_STAFF'].includes(targetUser.role)) {
+            updateData.email = newLoginId;
+        } else if (targetUser.role === 'TEACHER' && targetUser.teacherProfile) {
+            await prisma.teacherProfile.update({
+                where: { id: targetUser.teacherProfile.id },
+                data: { employeeId: newLoginId }
+            });
+        } else if (targetUser.role === 'STUDENT' && targetUser.studentProfile) {
+            await prisma.studentProfile.update({
+                where: { id: targetUser.studentProfile.id },
+                data: { admissionNo: newLoginId }
+            });
+        } else if (targetUser.role === 'PARENT' && targetUser.parentProfile) {
+            await prisma.parentProfile.update({
+                where: { id: targetUser.parentProfile.id },
+                data: { parentId: newLoginId }
+            });
+        }
+    }
+
+    if (Object.keys(updateData).length > 0) {
+        await prisma.user.update({
+            where: { id: targetUserId },
+            data: updateData
+        });
+    }
+
+    res.status(StatusCodes.OK).json({ msg: 'User credentials updated successfully' });
 }
 
 // ─── RESTRICT / UNRESTRICT INDIVIDUAL USER ────────────────────────────────────
@@ -262,7 +348,7 @@ module.exports = {
     showCurrentUser,
     updateUser,
     updateUserPassword,
-    adminResetPassword,
+    adminUpdateUserCredentials,
     restrictUser,
     bulkRestrictUsers
 }

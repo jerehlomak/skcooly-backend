@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
+const { authenticateUser, authorizePermissions, requirePermission } = require('../middleware/authentication');
 
 const {
     getFinanceDashboard,

@@ -5,7 +5,7 @@ const { uploadLegacyResultPdf, deleteFile } = require('../services/cloudinary-up
 
 // ─── UPLOAD LEGACY RESULT PDF ──────────────────────────────────────────
 const uploadLegacyResult = async (req, res) => {
-    const { classId, academicYear, term, sessionName } = req.body;
+    const { classId, studentId, academicYear, term, sessionName } = req.body;
     const schoolId = req.user.schoolId;
 
     if (!classId || !academicYear || !term) {
@@ -36,6 +36,7 @@ const uploadLegacyResult = async (req, res) => {
         data: {
             schoolId,
             classId,
+            studentId: studentId || null,
             academicYear,
             term,
             sessionName: sessionName || null,
@@ -47,6 +48,100 @@ const uploadLegacyResult = async (req, res) => {
     res.status(StatusCodes.CREATED).json({
         msg: 'Legacy result uploaded successfully',
         legacyResult
+    });
+};
+
+// 🌟🌟🌟 GET STUDENT LEGACY RESULTS 🌟🌟🌟
+const getStudentLegacyResults = async (req, res) => {
+    const { studentId } = req.params;
+    const schoolId = req.user.schoolId;
+
+    const legacyResults = await prisma.legacyResult.findMany({
+        where: { 
+            schoolId, 
+            OR: [
+                { studentId },
+                { 
+                    studentId: null,
+                    classId: {
+                        in: (await prisma.enrollment.findMany({
+                            where: { studentId },
+                            select: { classId: true }
+                        })).map(e => e.classId)
+                    }
+                }
+            ]
+        },
+        include: {
+            class: {
+                select: { name: true, level: true }
+            }
+        },
+        orderBy: [
+            { academicYear: 'desc' },
+            { term: 'desc' }
+        ]
+    });
+    res.status(StatusCodes.OK).json({
+        legacyResults,
+        count: legacyResults.length
+    });
+};
+
+// 🌟🌟🌟 GET MY LEGACY RESULTS 🌟🌟🌟
+const getMyLegacyResults = async (req, res) => {
+    let studentIds = [];
+    if (req.user.role === 'STUDENT') {
+        const profile = await prisma.studentProfile.findUnique({ where: { userId: req.user.userId } });
+        if (profile) studentIds.push(profile.id);
+    } else if (req.user.role === 'PARENT') {
+        const profile = await prisma.parentProfile.findUnique({ 
+            where: { userId: req.user.userId },
+            include: { students: { select: { id: true } } }
+        });
+        if (profile) studentIds = profile.students.map(c => c.id);
+    }
+
+    if (studentIds.length === 0) {
+        return res.status(StatusCodes.OK).json({ legacyResults: [], count: 0 });
+    }
+
+    const legacyResults = await prisma.legacyResult.findMany({
+        where: { 
+            schoolId: req.user.schoolId, 
+            OR: [
+                { studentId: { in: studentIds } },
+                { 
+                    studentId: null,
+                    classId: {
+                        in: (await prisma.studentProfile.findMany({
+                            where: { id: { in: studentIds } },
+                            select: { classId: true }
+                        })).map(e => e.classId).filter(Boolean)
+                    }
+                }
+            ]
+        },
+        include: {
+            class: {
+                select: { name: true, level: true }
+            },
+            student: {
+                select: { 
+                    admissionNo: true,
+                    user: { select: { name: true } }
+                }
+            }
+        },
+        orderBy: [
+            { academicYear: 'desc' },
+            { term: 'desc' }
+        ]
+    });
+
+    res.status(StatusCodes.OK).json({
+        legacyResults,
+        count: legacyResults.length
     });
 };
 
@@ -98,5 +193,7 @@ const deleteLegacyResult = async (req, res) => {
 module.exports = {
     uploadLegacyResult,
     getAllLegacyResults,
-    deleteLegacyResult
+    deleteLegacyResult,
+    getStudentLegacyResults,
+    getMyLegacyResults
 };

@@ -112,6 +112,24 @@ const seedDefaultRoles = async (req, res) => {
             description: 'Dedicated to fee collections and financial reporting only.',
             isSystemDefault: true,
             permissions: ['std_view', 'fin_view', 'fin_collect']
+        },
+        {
+            name: 'Accountant',
+            description: 'Manages payroll, expenses, and comprehensive financial reports.',
+            isSystemDefault: true,
+            permissions: ['std_view', 'fin_view', 'fin_collect', 'fin_refund', 'fin_salary']
+        },
+        {
+            name: 'Exam Officer',
+            description: 'Responsible for managing CBTs, grading, and academic records.',
+            isSystemDefault: true,
+            permissions: ['std_view', 'acd_view', 'acd_manage', 'cbt_create', 'cbt_grade']
+        },
+        {
+            name: 'Receptionist / Front Desk',
+            description: 'Handles basic student inquiries, viewing profiles, and managing basic records.',
+            isSystemDefault: true,
+            permissions: ['std_view']
         }
     ];
 

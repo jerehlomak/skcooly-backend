@@ -34,7 +34,9 @@ const register = async (req, res) => {
 }
 
 const login = async (req, res) => {
-    const { loginId, password, role, schoolCode } = req.body
+    let { loginId, password, role, schoolCode } = req.body
+    
+    if (loginId) loginId = loginId.trim()
 
     if (!loginId || !password || !role) {
         throw new CustomError.BadRequestError('Please provide login credentials and role')
@@ -119,6 +121,15 @@ const login = async (req, res) => {
 
     const tokenUser = createTokenUser(user)
     attachCookiesToResponse({ res, user: tokenUser })
+
+    if (user.role === 'TEACHER' && user.teacherProfile) {
+        const formClasses = await prisma.class.findMany({
+            where: { formTeacherId: user.teacherProfile.id, isDeleted: false },
+            select: { id: true, name: true, sessionId: true }
+        });
+        user.teacherProfile.isFormTeacher = formClasses.length > 0;
+        user.teacherProfile.formClasses = formClasses;
+    }
 
     const userContextData = {
         id: user.id,

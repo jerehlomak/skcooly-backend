@@ -1,7 +1,7 @@
 const express = require('express')
 const router = express.Router()
 const {
-    getSettings, updateSettings,
+    getSettings, updateSettings, testSmtpConnection,
     getClassLevels, addClassLevel, updateClassLevel, deleteClassLevel,
     seedClassLevels, reorderClassLevels, getMyBranches, getUnifiedResultConfig
 } = require('../controllers/schoolSettings.controller')
@@ -11,6 +11,7 @@ const admin = [authenticateUser, authorizePermissions('ADMIN')]
 
 // School settings singleton - Readable by any logged in tenant user, Update requires Admin
 router.route('/').get(authenticateUser, getSettings).patch(...admin, updateSettings)
+router.route('/test-smtp').post(...admin, testSmtpConnection)
 router.route('/result-config/unified').get(authenticateUser, getUnifiedResultConfig)
 
 // School branches

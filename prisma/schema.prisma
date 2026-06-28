@@ -38,12 +38,27 @@ model SchoolSettings {
   resultShowNextTermFees  Boolean @default(false)
   resultAutomaticComments Boolean @default(false)
   parentResultAccessMode  String  @default("DIRECT") // DIRECT | PIN
+  pinLifespan             String  @default("PER_TERM") // PER_TERM | PER_SESSION | PERMANENT
   parentTranscriptAccess  Boolean @default(false)
 
   issuedResultTypes String @default("BOTH") // CA_ONLY | EXAM_ONLY | BOTH
   caResultMode      String @default("NUMERIC") // NUMERIC | COMMENT
   examResultMode    String @default("NUMERIC") // NUMERIC | COMMENT
   resultConfig      Json?
+
+  // Admission & Employment Settings
+  admissionFormConfig        Json?
+  employmentFormConfig       Json?
+  admissionLetterTemplate    Json?
+  employmentLetterTemplate   Json?
+  parentAdmissionRequiresPin Boolean @default(true)
+
+  // SMTP Settings
+  smtpHost String?
+  smtpPort Int?
+  smtpUser String?
+  smtpPass String?
+  smtpFrom String?
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -83,7 +98,7 @@ model Section {
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
 
-  classes   Class[]
+  classes Class[]
 
   @@index([schoolId, isDeleted])
 }
@@ -139,15 +154,15 @@ model Transaction {
 }
 
 model AcademicTerm {
-  id        String    @id @default(uuid())
-  schoolId  String // Tenant isolation
-  sessionId String // Relates to AcademicSession
-  name      String // e.g. "First Term", "Second Term"
-  startDate DateTime?
-  endDate   DateTime?
-  isActive  Boolean   @default(false)
-  isLocked  Boolean   @default(false)
-  daysOpened Int?     @default(0)
+  id         String    @id @default(uuid())
+  schoolId   String // Tenant isolation
+  sessionId  String // Relates to AcademicSession
+  name       String // e.g. "First Term", "Second Term"
+  startDate  DateTime?
+  endDate    DateTime?
+  isActive   Boolean   @default(false)
+  isLocked   Boolean   @default(false)
+  daysOpened Int?      @default(0)
 
   session AcademicSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
   school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
@@ -475,6 +490,7 @@ model StudentProfile {
   FinanceReceipt             FinanceReceipt[]
   Scholarship                Scholarship[]
   promotionHistory           PromotionHistory[]
+  LegacyResult               LegacyResult[]
 
   @@unique([schoolId, admissionNo])
   @@index([schoolId, isDeleted])
@@ -482,33 +498,34 @@ model StudentProfile {
 }
 
 model TeacherProfile {
-  id               String         @id @default(uuid())
-  schoolId         String? // tenant isolation
-  userId           String         @unique
-  publicId         String?        @unique
-  department       String?
-  employeeId       String
-  gender           String
-  hireDate         DateTime       @default(now())
-  phone            String?
-  status           String         @default("Active")
-  address          String?
-  dateOfBirth      DateTime?
-  qualification    String?
-  salary           Float?
-  bankName         String?
-  accountNumber    String?
-  accountName      String?
-  subjectsTaught   String?
-  staffType        String?        @default("TEACHER") // TEACHER, CLASS_TEACHER, ADMIN, OTHER
-  photoUrl         String?
-  courses          Course[]
-  salarySlips      SalarySlip[]
-  assignedSubjects Subject[]      @relation("SubjectTeacher")
-  formClasses      Class[]        @relation("FormTeacher")
-  classSubjects    ClassSubject[] @relation("ClassSubjectTeacher")
-  user             User           @relation(fields: [userId], references: [id])
-  school           School?        @relation(fields: [schoolId], references: [id])
+  id                 String         @id @default(uuid())
+  schoolId           String? // tenant isolation
+  userId             String         @unique
+  publicId           String?        @unique
+  department         String?
+  employeeId         String
+  gender             String
+  hireDate           DateTime       @default(now())
+  phone              String?
+  status             String         @default("Active")
+  address            String?
+  dateOfBirth        DateTime?
+  qualification      String?
+  salary             Float?
+  bankName           String?
+  accountNumber      String?
+  accountName        String?
+  subjectsTaught     String?
+  staffType          String?        @default("TEACHER") // TEACHER, CLASS_TEACHER, ADMIN, OTHER
+  canEnterPastScores Boolean        @default(false)
+  photoUrl           String?
+  courses            Course[]
+  salarySlips        SalarySlip[]
+  assignedSubjects   Subject[]      @relation("SubjectTeacher")
+  formClasses        Class[]        @relation("FormTeacher")
+  classSubjects      ClassSubject[] @relation("ClassSubjectTeacher")
+  user               User           @relation(fields: [userId], references: [id])
+  school             School?        @relation(fields: [schoolId], references: [id])
 
   isDeleted       Boolean           @default(false)
   deletedAt       DateTime?
@@ -942,6 +959,7 @@ model GroupAdmin {
 
 // Tenant schools registered on the platform
 model School {
+  notifications    Notification[]
   id                         String                       @id @default(uuid())
   schoolCode                 String?                      @unique // e.g. SKL-A1B2C3 — required for user login
   name                       String
@@ -1216,6 +1234,7 @@ model LegacyResult {
   id           String   @id @default(uuid())
   schoolId     String
   classId      String
+  studentId    String?
   academicYear String
   term         String
   sessionName  String?
@@ -1224,10 +1243,12 @@ model LegacyResult {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  class  Class  @relation(fields: [classId], references: [id], onDelete: Cascade)
-  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  class   Class           @relation(fields: [classId], references: [id], onDelete: Cascade)
+  school  School          @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  student StudentProfile? @relation(fields: [studentId], references: [id], onDelete: Cascade)
 
   @@index([schoolId, classId, academicYear])
+  @@index([schoolId, studentId])
 }
 
 // Stores the computed overall results for a student per term
@@ -1626,23 +1647,23 @@ model GradingScale {
 
 // Per-student, per-term comments from teacher / head teacher / principal
 model StudentReportComment {
-  id               String         @id @default(uuid())
-  schoolId         String
-  studentProfileId String
-  term             String
-  academicYear     String
-  teacherComment   String?        @db.Text
-  headComment      String?        @db.Text
-  principalComment String?        @db.Text
+  id                String         @id @default(uuid())
+  schoolId          String
+  studentProfileId  String
+  term              String
+  academicYear      String
+  teacherComment    String?        @db.Text
+  headComment       String?        @db.Text
+  principalComment  String?        @db.Text
   narrativeComments Json?
-  nextTermBegins   String?
-  promotedTo       String?
-  present          Int?
-  absent           Int?
-  total            Int?
-  createdAt        DateTime       @default(now())
-  updatedAt        DateTime       @updatedAt
-  student          StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  nextTermBegins    String?
+  promotedTo        String?
+  present           Int?
+  absent            Int?
+  total             Int?
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+  student           StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
 
   @@unique([schoolId, studentProfileId, term, academicYear])
   @@index([schoolId])
@@ -1677,6 +1698,7 @@ model ResultReleaseStatus {
   term         String
   academicYear String
   isReleased   Boolean   @default(false)
+  resultFormat String    @default("SCORE_BASED") // SCORE_BASED | COMMENT_BASED
   visibleTypes Json?
   releasedAt   DateTime?
   releasedBy   String?
@@ -2721,6 +2743,10 @@ model Application {
   applicationType String // ADMISSION_APPLICATION, EMPLOYMENT
   status          String @default("PENDING") // PENDING, APPROVED, REJECTED
 
+  interviewDate     String?
+  interviewTime     String?
+  interviewLocation String?
+
   formData Json // Stores all dynamic form inputs
 
   applicantName  String
@@ -2736,4 +2762,18 @@ model Application {
 
   school School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   pin    SchoolPin @relation(fields: [pinId], references: [id], onDelete: Cascade)
+}
+
+
+model Notification {
+  id        String   @id @default(uuid())
+  schoolId  String
+  school    School   @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  type      String   @default("INFO")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 }

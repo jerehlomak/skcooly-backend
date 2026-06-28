@@ -3,6 +3,7 @@ const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
 const { getCache, setCache, invalidateCache } = require('../services/redis.service')
+const { encrypt } = require('../utils/encryption')
 
 // ─── SEED DEFAULTS ─────────────────────────────────────────────────────────────
 // DEFAULTS removed as per user request to only use school-defined templates
@@ -35,7 +36,9 @@ const updateSettings = async (req, res) => {
     const { 
         schoolName, tagline, motto, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, currencySymbol, timezone, rulesContent,
         resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode, parentTranscriptAccess,
-        issuedResultTypes, caResultMode, examResultMode, resultConfig
+        issuedResultTypes, caResultMode, examResultMode, resultConfig,
+        admissionFormConfig, employmentFormConfig, admissionLetterTemplate, employmentLetterTemplate, parentAdmissionRequiresPin,
+        smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom
     } = req.body
 
     if (!settings) {
@@ -72,6 +75,16 @@ const updateSettings = async (req, res) => {
                 ...(caResultMode !== undefined && { caResultMode }),
                 ...(examResultMode !== undefined && { examResultMode }),
                 ...(resultConfig !== undefined && { resultConfig }),
+                ...(admissionFormConfig !== undefined && { admissionFormConfig }),
+                ...(employmentFormConfig !== undefined && { employmentFormConfig }),
+                ...(admissionLetterTemplate !== undefined && { admissionLetterTemplate }),
+                ...(employmentLetterTemplate !== undefined && { employmentLetterTemplate }),
+                ...(parentAdmissionRequiresPin !== undefined && { parentAdmissionRequiresPin }),
+                ...(smtpHost !== undefined && { smtpHost }),
+                ...(smtpPort !== undefined && { smtpPort }),
+                ...(smtpUser !== undefined && { smtpUser }),
+                ...(smtpPass !== undefined && { smtpPass: encrypt(smtpPass) }),
+                ...(smtpFrom !== undefined && { smtpFrom }),
             }
         })
     }
@@ -80,6 +93,25 @@ const updateSettings = async (req, res) => {
     await invalidateCache(`tenant_${req.user.schoolId}_settings`);
 
     res.status(StatusCodes.OK).json({ msg: 'Settings updated', settings })
+}
+
+// ─── TEST SMTP CONNECTION ────────────────────────────────────────────────────
+const testSmtpConnection = async (req, res) => {
+    const { getTransporter, getFromEmail } = require('../utils/emailTransporter');
+    const transporter = await getTransporter(req.user.schoolId);
+    const from = await getFromEmail(req.user.schoolId);
+
+    try {
+        await transporter.sendMail({
+            from,
+            to: req.user.email,
+            subject: 'SMTP Test Successful',
+            html: '<p>Your custom SMTP configuration is working correctly!</p>'
+        });
+        res.status(StatusCodes.OK).json({ msg: 'Test email sent successfully!' });
+    } catch (err) {
+        throw new CustomError.BadRequestError(`SMTP Test Failed: ${err.message}`);
+    }
 }
 
 // ─── GET ALL CLASS LEVELS ─────────────────────────────────────────────────────
@@ -269,4 +301,9 @@ const getUnifiedResultConfig = async (req, res) => {
     });
 };
 
-module.exports = { getSettings, updateSettings, getClassLevels, addClassLevel, updateClassLevel, deleteClassLevel, seedClassLevels, reorderClassLevels, getMyBranches, getUnifiedResultConfig }
+module.exports = {
+    getSettings,
+    updateSettings,
+    testSmtpConnection,
+    getClassLevels,
+    addClassLevel, updateClassLevel, deleteClassLevel, seedClassLevels, reorderClassLevels, getMyBranches, getUnifiedResultConfig }

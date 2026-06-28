@@ -4,7 +4,7 @@ const {
     showCurrentUser,
     updateUser,
     updateUserPassword,
-    adminResetPassword,
+    adminUpdateUserCredentials,
     restrictUser,
     bulkRestrictUsers
 } = require('../controllers/user.conttroller')
@@ -13,7 +13,7 @@ const { authenticateUser, authorizePermissions } = require('../middleware/authen
 const express = require('express');
 const router = express.Router();
 
-const ADMIN_ROLES = ['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'];
+const ADMIN_ROLES = ['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN', 'BRANCH_ADMIN'];
 
 router.route('/').get(authenticateUser, authorizePermissions('ADMIN'), getAllUsers)
 
@@ -23,7 +23,7 @@ router.route('/updateUserPassword').post(authenticateUser, updateUserPassword)
 router.route('/bulk-restrict').post(authenticateUser, authorizePermissions(...ADMIN_ROLES), bulkRestrictUsers)
 
 router.route('/:id').get(authenticateUser, getSingleUser)
-router.route('/:id/reset-password').post(authenticateUser, authorizePermissions(...ADMIN_ROLES), adminResetPassword)
+router.route('/:id/admin-update-credentials').post(authenticateUser, authorizePermissions(...ADMIN_ROLES, 'TEACHER'), adminUpdateUserCredentials)
 router.route('/:id/restrict').patch(authenticateUser, authorizePermissions(...ADMIN_ROLES), restrictUser)
 
 module.exports = router

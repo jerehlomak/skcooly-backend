@@ -3,21 +3,7 @@
  * Uses nodemailer to send transactional finance emails.
  * Reads SMTP credentials from environment variables.
  */
-const nodemailer = require('nodemailer');
-
-function getTransporter() {
-    return nodemailer.createTransport({
-        host: process.env.SMTP_HOST || 'smtp.gmail.com',
-        port: Number(process.env.SMTP_PORT) || 587,
-        secure: process.env.SMTP_SECURE === 'true',
-        auth: {
-            user: process.env.SMTP_USER,
-            pass: process.env.SMTP_PASS,
-        },
-    });
-}
-
-const FROM = process.env.SMTP_FROM || '"Skooly Finance" <finance@skooly.app>';
+const { getTransporter, getFromEmail } = require('../utils/emailTransporter');
 
 // ─── EMAIL TEMPLATES ────────────────────────────────────────────────────────
 
@@ -220,42 +206,45 @@ function transferRejectedHTML({ studentName, amount, schoolName, currencySymbol,
 
 // ─── SEND HELPERS ───────────────────────────────────────────────────────────
 
-async function sendInvoiceEmail(to, data) {
-    if (!to || !process.env.SMTP_USER) return; // skip if no email configured
+async function sendInvoiceIssuedEmail(to, data) {
+    if (!to) return;
     try {
-        const transporter = getTransporter();
+        const transporter = await getTransporter(data.schoolId);
+        const from = await getFromEmail(data.schoolId);
         await transporter.sendMail({
-            from: FROM,
+            from,
             to,
-            subject: `Invoice ${data.invoiceNumber} – ${data.schoolName}`,
+            subject: `Invoice #${data.invoiceNumber} - ${data.schoolName}`,
             html: invoiceIssuedHTML(data),
         });
     } catch (err) {
-        console.error('[Finance Email] sendInvoiceEmail failed:', err.message);
+        console.error('[Finance Email] sendInvoiceIssuedEmail failed:', err.message);
     }
 }
 
-async function sendReceiptEmail(to, data) {
-    if (!to || !process.env.SMTP_USER) return;
+async function sendPaymentReceiptEmail(to, data) {
+    if (!to) return;
     try {
-        const transporter = getTransporter();
+        const transporter = await getTransporter(data.schoolId);
+        const from = await getFromEmail(data.schoolId);
         await transporter.sendMail({
-            from: FROM,
+            from,
             to,
-            subject: `Payment Receipt ${data.receiptNumber} – ${data.schoolName}`,
+            subject: `Payment Receipt - ${data.schoolName}`,
             html: receiptHTML(data),
         });
     } catch (err) {
-        console.error('[Finance Email] sendReceiptEmail failed:', err.message);
+        console.error('[Finance Email] sendPaymentReceiptEmail failed:', err.message);
     }
 }
 
 async function sendTransferSubmittedEmail(to, data) {
-    if (!to || !process.env.SMTP_USER) return;
+    if (!to) return;
     try {
-        const transporter = getTransporter();
+        const transporter = await getTransporter(data.schoolId);
+        const from = await getFromEmail(data.schoolId);
         await transporter.sendMail({
-            from: FROM,
+            from,
             to,
             subject: `Transfer Submission Received – ${data.schoolName}`,
             html: transferSubmittedHTML(data),
@@ -266,11 +255,12 @@ async function sendTransferSubmittedEmail(to, data) {
 }
 
 async function sendTransferApprovedEmail(to, data) {
-    if (!to || !process.env.SMTP_USER) return;
+    if (!to) return;
     try {
-        const transporter = getTransporter();
+        const transporter = await getTransporter(data.schoolId);
+        const from = await getFromEmail(data.schoolId);
         await transporter.sendMail({
-            from: FROM,
+            from,
             to,
             subject: `Transfer Approved – ${data.schoolName}`,
             html: transferApprovedHTML(data),
@@ -281,11 +271,12 @@ async function sendTransferApprovedEmail(to, data) {
 }
 
 async function sendTransferRejectedEmail(to, data) {
-    if (!to || !process.env.SMTP_USER) return;
+    if (!to) return;
     try {
-        const transporter = getTransporter();
+        const transporter = await getTransporter(data.schoolId);
+        const from = await getFromEmail(data.schoolId);
         await transporter.sendMail({
-            from: FROM,
+            from,
             to,
             subject: `Transfer Not Confirmed – ${data.schoolName}`,
             html: transferRejectedHTML(data),
@@ -296,13 +287,14 @@ async function sendTransferRejectedEmail(to, data) {
 }
 
 async function sendFamilyStatementEmail(to, data) {
-    if (!to || !process.env.SMTP_USER) return;
+    if (!to) return;
     try {
-        const transporter = getTransporter();
+        const transporter = await getTransporter(data.schoolId);
+        const from = await getFromEmail(data.schoolId);
         await transporter.sendMail({
-            from: FROM,
+            from,
             to,
-            subject: `Family Billing Statement – ${data.schoolName}`,
+            subject: `Family Statement of Account - ${data.schoolName}`,
             html: familyStatementHTML(data),
         });
     } catch (err) {
@@ -311,8 +303,8 @@ async function sendFamilyStatementEmail(to, data) {
 }
 
 module.exports = {
-    sendInvoiceEmail,
-    sendReceiptEmail,
+    sendInvoiceEmail: sendInvoiceIssuedEmail,
+    sendReceiptEmail: sendPaymentReceiptEmail,
     sendTransferSubmittedEmail,
     sendTransferApprovedEmail,
     sendTransferRejectedEmail,
