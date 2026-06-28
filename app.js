@@ -78,20 +78,10 @@ app.use(
 )
 app.use(helmet())
 app.use(cors({
-    origin: [
-        process.env.CLIENT_URL || 'http://localhost:5173',
-        'http://localhost:5173', // Ensure local dev always works
-        'http://localhost:3000', // Local central admin
-        process.env.CENTRAL_ADMIN_URL || 'http://localhost:3000',
-        'https://central-admin-skcooly.netlify.app', // Deployed Central Admin (Netlify)
-        'https://skooly-central-admin.vercel.app',   // Deployed Central Admin (Vercel)
-        'https://skcooly-frontend.vercel.app',       // Deployed Frontend (Vercel - primary)
-        'https://skcooly.vercel.app',              // Possible alias
-        'https://skcoolyplus.com',
-        'https://www.skcoolyplus.com',
-        'http://skcoolyplus.com',
-        'http://www.skcoolyplus.com',
-    ],
+    origin: function (origin, callback) {
+        // Dynamically reflect any incoming origin
+        callback(null, true);
+    },
     credentials: true,
 }))
 
