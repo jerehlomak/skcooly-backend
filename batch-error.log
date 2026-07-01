@@ -1,11 +1,2 @@
-ProtocolError: Protocol error (Target.createTarget): Session with given id not found.
-    at <instance_members_initializer> (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\common\CallbackRegistry.js:96:14)
-    at new Callback (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\common\CallbackRegistry.js:100:16)
-    at CallbackRegistry.create (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\common\CallbackRegistry.js:22:26)
-    at Connection._rawSend (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\cdp\Connection.js:80:26)
-    at Connection.send (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\cdp\Connection.js:74:21)
-    at CdpBrowser._createPageInContext (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\cdp\Browser.js:178:53)
-    at CdpBrowserContext.newPage (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\cdp\Browser.js:308:30)
-    at CdpBrowser.newPage (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\node_modules\puppeteer-core\lib\cjs\puppeteer\cdp\Browser.js:175:43)
-    at C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\services\pdf.service.js:866:40
-    at Array.map (<anonymous>)
+TypeError: archiver is not a function
+    at batchExportPDF (C:\Users\Jereh Lomak\Desktop\my-projects\skooly\backend\controllers\result.controller.js:1783:29)

@@ -4,7 +4,8 @@ const router = express.Router()
 const billingRouter = require('./billing.route')
 
 const {
-    login, getMe, logout, setupFirstAdmin,
+    setupAdmin, verifySetupAdmin,
+    login, verifyLogin, getMe, logout,
     forgotPassword, resetPassword,
     getOverview,
     getSchools, getSchool, createSchool, updateSchool, suspendSchool, activateSchool, deleteSchool,
@@ -28,8 +29,10 @@ const { getTransactions, addTransaction, deleteTransaction } = require('../contr
 const { authenticateCentralAdmin, requireSuperAdmin } = require('../middleware/centralAuth')
 
 // ─── Auth (public) ─────────────────────────────────────────────────────────
+router.post('/auth/setup', setupAdmin)
+router.post('/auth/setup/verify', verifySetupAdmin)
 router.post('/auth/login', login)
-router.post('/auth/setup', setupFirstAdmin)
+router.post('/auth/login/verify', verifyLogin)
 router.post('/auth/forgot-password', forgotPassword)
 router.post('/auth/reset-password', resetPassword)
 

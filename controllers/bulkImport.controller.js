@@ -205,6 +205,18 @@ const bulkImportStudents = async (req, res) => {
         if (parts.length >= 3) sequence = parseInt(parts[2]) + 1;
     }
 
+    // Pre-fetch all classes for the school to allow flexible matching
+    const schoolClasses = await prisma.class.findMany({
+        where: { schoolId },
+        select: { id: true, name: true, level: true }
+    });
+    // Map cleaned class name (no spaces, lowercase) to the actual class object
+    const classMap = new Map();
+    schoolClasses.forEach(c => {
+        const cleanName = c.name.replace(/\s+/g, '').toLowerCase();
+        classMap.set(cleanName, c);
+    });
+
     const created = [];
     const failed = [];
 
@@ -222,13 +234,10 @@ const bulkImportStudents = async (req, res) => {
                 continue;
             }
 
-            // Verify className exists
-            const cls = await prisma.class.findFirst({ 
-                where: { 
-                    schoolId,
-                    name: { equals: className, mode: 'insensitive' }
-                } 
-            });
+            // Verify className exists (insensitive to case and whitespace)
+            const cleanInputName = className.replace(/\s+/g, '').toLowerCase();
+            const cls = classMap.get(cleanInputName);
+            
             if (!cls) {
                 failed.push({ row: rowNum, reason: `Class "${className}" not found in your school` });
                 continue;

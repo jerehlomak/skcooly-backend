@@ -462,6 +462,7 @@ model StudentProfile {
   sessionId             String? // enrollment session
   subjectCategoryId     String? // links student to a subject category (for filtered result sheets)
   enrollments           Enrollment[]
+  studentElectives      StudentElective[]
   feeInvoices           FeeInvoice[]
   attendanceRecords     AttendanceRecord[]
   studentResults        StudentResult[]
@@ -637,8 +638,9 @@ model Subject {
   createdAt      DateTime         @default(now())
   updatedAt      DateTime         @updatedAt
   classes        ClassSubject[]
-  enrollments    Enrollment[]
-  studentResults StudentResult[]
+  enrollments      Enrollment[]
+  studentElectives StudentElective[]
+  studentResults   StudentResult[]
   teacher        TeacherProfile?  @relation("SubjectTeacher", fields: [teacherId], references: [id])
   category       SubjectCategory? @relation(fields: [categoryId], references: [id])
 
@@ -692,6 +694,20 @@ model Enrollment {
   course           Course?        @relation(fields: [courseId], references: [id])
   student          StudentProfile @relation(fields: [studentProfileId], references: [id])
   subject          Subject?       @relation(fields: [subjectId], references: [id])
+}
+
+model StudentElective {
+  id               String         @id @default(uuid())
+  schoolId         String
+  studentProfileId String
+  subjectId        String
+  createdAt        DateTime       @default(now())
+
+  student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
+  subject Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+
+  @@unique([studentProfileId, subjectId])
+  @@index([schoolId])
 }
 
 // Daily attendance records for students
@@ -878,6 +894,8 @@ model CentralAdmin {
   lastLogin            DateTime?
   resetPasswordToken   String?
   resetPasswordExpires DateTime?
+  otpToken             String? // For 2FA
+  otpExpires           DateTime? // For 2FA
   permissions          Json? // granular permission list e.g. ["manage_schools","generate_pins"]
   createdAt            DateTime              @default(now())
   updatedAt            DateTime              @updatedAt
@@ -1289,6 +1307,7 @@ model CommentRule {
   id         String   @id @default(uuid())
   schoolId   String
   category   String? // e.g. "Primary"
+  classId    String? // Optional override per class
   role       String // "Class Teacher", "Head Teacher", "Principal"
   resultType String   @default("EXAM") // EXAM, CA, COMMENT_BASED
   minScore   Float
@@ -1297,7 +1316,8 @@ model CommentRule {
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
-  @@index([schoolId])
+  @@index([schoolId, category])
+  @@index([schoolId, classId])
 }
 
 model SharingHistory {
@@ -1633,6 +1653,7 @@ model GradingScale {
   id             String   @id @default(uuid())
   schoolId       String
   category       String?  @default("ALL") // Primary, JSS, SSS, ALL
+  classId        String?  // Optional override per class
   type           String   @default("SUBJECT") // Deprecated somewhat, keeping for backwards compatibility
   resultType     String   @default("SCORE_BASED") // SCORE_BASED | COMMENT_BASED
   assessmentType String   @default("EXAM") // EXAM | CA
@@ -1641,8 +1662,8 @@ model GradingScale {
   createdAt      DateTime @default(now())
   updatedAt      DateTime @updatedAt
 
-  // Composite unique constraint to allow multiple scale types per category
-  @@unique([schoolId, category, type, resultType, assessmentType])
+  @@index([schoolId, category])
+  @@index([schoolId, classId])
 }
 
 // Per-student, per-term comments from teacher / head teacher / principal
@@ -1732,12 +1753,14 @@ model TraitConfiguration {
   schoolId    String
   domain      String // AFFECTIVE, PSYCHOMOTOR
   category    String   @default("ALL") // Nursery, Primary, Secondary, etc.
-  traits      String[] // ["Neatness", "Punctuality", ...]
+    classId     String?  // Optional override per class
+    traits      String[] // ["Neatness", "Punctuality", ...]
   ratingScale Json // [{"rating": "A", "description": "Excellent"}]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
-  @@unique([schoolId, domain, category])
+  @@index([schoolId, domain, category])
+    @@index([schoolId, classId])
 }
 
 // ─── LMS & CBT (Phase 1 Expansion) ───────────────────────────────────────────

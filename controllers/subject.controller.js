@@ -195,6 +195,82 @@ const getMySubjects = async (req, res) => {
     res.status(StatusCodes.OK).json({ subjects, count: subjects.length });
 };
 
-module.exports = { addSubject, getAllSubjects, getSubject, updateSubject, deleteSubject, getMySubjects }
+// 🏫 🏫 🏫 GET SUBJECT ALLOCATIONS (ELECTIVES) 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫
+const getSubjectAllocations = async (req, res) => {
+    const { classId, subjectId } = req.query;
+    if (!classId || !subjectId) throw new CustomError.BadRequestError('classId and subjectId are required');
+
+    // Get all students in the class
+    const students = await prisma.studentProfile.findMany({
+        where: { classId, schoolId: req.user.schoolId, status: 'Active', isDeleted: false },
+        select: { id: true, admissionNo: true, user: { select: { name: true } } },
+        orderBy: { user: { name: 'asc' } }
+    });
+
+    // Get all allocations for this subject
+    const allocations = await prisma.studentElective.findMany({
+        where: { schoolId: req.user.schoolId, subjectId }
+    });
+    const allocatedStudentIds = allocations.map(a => a.studentProfileId);
+
+    const formatted = students.map(s => ({
+        studentId: s.id,
+        admissionNo: s.admissionNo,
+        name: s.user.name,
+        isAllocated: allocatedStudentIds.includes(s.id)
+    }));
+
+    res.status(StatusCodes.OK).json({ allocations: formatted });
+};
+
+// 🏫 🏫 🏫 UPDATE SUBJECT ALLOCATIONS (ELECTIVES) 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫 🏫
+const updateSubjectAllocations = async (req, res) => {
+    const { subjectId } = req.params;
+    const { studentIds } = req.body; // Array of studentProfileIds who SHOULD be enrolled
+
+    if (!Array.isArray(studentIds)) {
+        throw new CustomError.BadRequestError('studentIds must be an array');
+    }
+
+    // Delete existing allocations for this subject (we could optimize this, but deleting and recreating is safe)
+    // Wait, let's only delete for the specific class if we pass classId? 
+    // The requirement says we pass an array of studentIds. If we pass ALL students for a class, we need to know who was unchecked.
+    // The safer way: the UI sends `classId` and `studentIds`.
+    const { classId } = req.body;
+    if (!classId) throw new CustomError.BadRequestError('classId is required');
+
+    // Get all students in this class to know which ones to remove
+    const classStudents = await prisma.studentProfile.findMany({
+        where: { classId, schoolId: req.user.schoolId },
+        select: { id: true }
+    });
+    const classStudentIds = classStudents.map(s => s.id);
+
+    // Remove existing allocations for THIS subject and THIS class's students
+    await prisma.studentElective.deleteMany({
+        where: {
+            schoolId: req.user.schoolId,
+            subjectId,
+            studentProfileId: { in: classStudentIds }
+        }
+    });
+
+    // Create new allocations
+    if (studentIds.length > 0) {
+        const insertData = studentIds.map(id => ({
+            schoolId: req.user.schoolId,
+            subjectId,
+            studentProfileId: id
+        }));
+        await prisma.studentElective.createMany({
+            data: insertData,
+            skipDuplicates: true
+        });
+    }
+
+    res.status(StatusCodes.OK).json({ msg: 'Subject allocations updated successfully' });
+};
+
+module.exports = { addSubject, getAllSubjects, getSubject, updateSubject, deleteSubject, getMySubjects, getSubjectAllocations, updateSubjectAllocations }
 
 

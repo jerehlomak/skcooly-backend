@@ -1,2 +1,24 @@
 /node_modules
 .env
+# Logs and Outputs
+*.log
+*.txt
+
+# Test, debug, and utility scripts in root
+test-*.js
+test-*.mjs
+debug*.js
+tmp*.js
+check-*.js
+db-check*.js
+err-dump.js
+get_users.js
+kill_pg.js
+list-students.js
+log-classes.js
+patch-wallets.js
+query.js
+refactor-prisma.js
+seed-*.js
+update.js
+verify-messaging.js

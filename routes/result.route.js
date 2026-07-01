@@ -30,6 +30,7 @@ const {
     deleteResultTemplate,
     getCommentRules,
     saveCommentRule,
+    updateCommentRule,
     deleteCommentRule,
     shareResultEndpoint,
     generatePrintToken,
@@ -37,7 +38,8 @@ const {
     getBatchReportCards,
     validateResults,
     deleteTraitConfiguration,
-    renameTraitConfiguration
+    renameTraitConfiguration,
+    getBatchIds
 } = require('../controllers/result.controller');
 const { authenticateUser, authorizePermissions, requirePermission } = require('../middleware/authentication');
 
@@ -67,6 +69,7 @@ router.post('/comment', authenticateUser, authorizePermissions('ADMIN', 'TEACHER
 // Comment Rules (auto-comment)
 router.get('/comment-rules', authenticateUser, authorizePermissions('ADMIN'), getCommentRules);
 router.post('/comment-rules', authenticateUser, authorizePermissions('ADMIN'), saveCommentRule);
+router.put('/comment-rules/:id', authenticateUser, authorizePermissions('ADMIN'), updateCommentRule);
 router.delete('/comment-rules/:id', authenticateUser, authorizePermissions('ADMIN'), deleteCommentRule);
 
 // Sharing
@@ -93,5 +96,6 @@ router.post('/traits', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'
 router.get('/print/token', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), generatePrintToken);
 router.get('/print/validate', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), validateResults);
 router.post('/print/batch', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), batchExportPDF);
+router.get('/print/batch-ids/:batchId', authenticateUser, getBatchIds);
 
 module.exports = router;

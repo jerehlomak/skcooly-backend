@@ -326,31 +326,56 @@ const getStudentReportCard = async (req, res) => {
     });
 
     if (schoolSettingsRecord?.resultAutomaticComments && totalSubjects > 0) {
-        const { resultType: scaleResultType } = getGradingScaleType(req.query.resultType);
+        const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
         const avgScore = totalScore / totalSubjects;
         const commentRules = await prisma.commentRule.findMany({
-            where: { schoolId: req.user.schoolId, resultType: scaleResultType }
+            where: { schoolId: req.user.schoolId, resultType: scaleAssessmentType }
         });
         
         let autoTeacherComment = '';
         let autoHeadComment = '';
         let autoPrincipalComment = '';
+        let dynamicNarrativeComments = {};
+
+        const matchedRules = commentRules.filter(r => avgScore >= r.minScore && avgScore <= r.maxScore);
         
-        const teacherRule = commentRules.find(r => r.role === 'Class Teacher' && avgScore >= r.minScore && avgScore <= r.maxScore);
-        if (teacherRule) autoTeacherComment = teacherRule.comment;
-        
-        const headRule = commentRules.find(r => r.role === 'Head Teacher' && avgScore >= r.minScore && avgScore <= r.maxScore);
-        if (headRule) autoHeadComment = headRule.comment;
-        
-        const principalRule = commentRules.find(r => r.role === 'Principal' && avgScore >= r.minScore && avgScore <= r.maxScore);
-        if (principalRule) autoPrincipalComment = principalRule.comment;
+        matchedRules.forEach(rule => {
+            const role = rule.role;
+            const comment = rule.comment;
+            
+            if (role === 'Class Teacher') autoTeacherComment = comment;
+            if (role === 'Head Teacher') autoHeadComment = comment;
+            if (role === 'Principal') autoPrincipalComment = comment;
+            
+            dynamicNarrativeComments[role] = comment;
+            dynamicNarrativeComments[role.toUpperCase()] = comment;
+            dynamicNarrativeComments[role.toLowerCase()] = comment;
+        });
 
         if (!comments) {
-            comments = { teacherComment: autoTeacherComment, principalComment: autoPrincipalComment, headComment: autoHeadComment };
+            comments = { 
+                teacherComment: autoTeacherComment, 
+                principalComment: autoPrincipalComment, 
+                headComment: autoHeadComment,
+                narrativeComments: dynamicNarrativeComments
+            };
         } else {
-            if (!comments.teacherComment) comments.teacherComment = autoTeacherComment;
-            if (!comments.principalComment) comments.principalComment = autoPrincipalComment;
-            if (!comments.headComment) comments.headComment = autoHeadComment;
+            // Forcefully apply auto comments if the setting is enabled
+            if (autoTeacherComment) comments.teacherComment = autoTeacherComment;
+            if (autoPrincipalComment) comments.principalComment = autoPrincipalComment;
+            if (autoHeadComment) comments.headComment = autoHeadComment;
+            
+            let existingNarrative = comments.narrativeComments;
+            if (typeof existingNarrative === 'string') {
+                try { existingNarrative = JSON.parse(existingNarrative); } catch(e) { existingNarrative = {}; }
+            }
+            if (!existingNarrative || typeof existingNarrative !== 'object') existingNarrative = {};
+            
+            // Forcefully apply auto narrative comments if the setting is enabled
+            Object.keys(dynamicNarrativeComments).forEach(role => {
+                existingNarrative[role] = dynamicNarrativeComments[role];
+            });
+            comments.narrativeComments = existingNarrative;
         }
     }
 
@@ -423,7 +448,8 @@ const getStudentReportCard = async (req, res) => {
             gender: student.gender,
             dateOfBirth: student.dateOfBirth,
             term,
-            academicYear
+            academicYear,
+            photoUrl: student.profilePicture || null
         },
         results: enrichedResults,
         summary: {
@@ -650,20 +676,41 @@ const generateReportCardPDF = async (req, res) => {
     let teacherComment = manualComment?.teacherComment || null;
     let principalComment = manualComment?.principalComment || null;
 
-    if (schoolSettingsRecord?.resultAutomaticComments && (!teacherComment || !principalComment)) {
+    if (schoolSettingsRecord?.resultAutomaticComments) {
         const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
         const commentRules = await prisma.commentRule.findMany({
-            where: { schoolId: req.user.schoolId, resultType: scaleResultType }
+            where: { schoolId: req.user.schoolId, resultType: scaleAssessmentType }
         });
         const numericAverage = parseFloat(average);
         
-        if (!teacherComment) {
-            const rule = commentRules.find(r => r.role === 'Class Teacher' && numericAverage >= r.minScore && numericAverage <= r.maxScore);
-            teacherComment = rule ? rule.comment : 'Good performance.';
-        }
-        if (!principalComment) {
-            const rule = commentRules.find(r => r.role === 'Principal' && numericAverage >= r.minScore && numericAverage <= r.maxScore);
-            principalComment = rule ? rule.comment : 'A well-behaved student.';
+        const matchedRules = commentRules.filter(r => numericAverage >= r.minScore && numericAverage <= r.maxScore);
+        let dynamicNarrativeComments = {};
+
+        matchedRules.forEach(rule => {
+            const role = rule.role;
+            const comment = rule.comment;
+            
+            if (role === 'Class Teacher') teacherComment = comment;
+            if (role === 'Principal') principalComment = comment;
+            
+            dynamicNarrativeComments[role] = comment;
+            dynamicNarrativeComments[role.toUpperCase()] = comment;
+            dynamicNarrativeComments[role.toLowerCase()] = comment;
+        });
+
+        if (!manualComment) {
+            manualComment = { narrativeComments: dynamicNarrativeComments };
+        } else {
+            let existingNarrative = manualComment.narrativeComments;
+            if (typeof existingNarrative === 'string') {
+                try { existingNarrative = JSON.parse(existingNarrative); } catch(e) { existingNarrative = {}; }
+            }
+            if (!existingNarrative || typeof existingNarrative !== 'object') existingNarrative = {};
+            
+            Object.keys(dynamicNarrativeComments).forEach(role => {
+                existingNarrative[role] = dynamicNarrativeComments[role];
+            });
+            manualComment.narrativeComments = existingNarrative;
         }
     }
 
@@ -680,7 +727,8 @@ const generateReportCardPDF = async (req, res) => {
             admissionNo: student.admissionNo,
             class: student.classArm?.name || student.classLevel,
             noInClass: 30,
-            nextTermFee: student.classArm?.nextTermFee || null
+            nextTermFee: student.classArm?.nextTermFee || null,
+            photoUrl: student.profilePicture || null
         },
         result: {
             term,
@@ -698,7 +746,8 @@ const generateReportCardPDF = async (req, res) => {
             affectiveTraits: [],
             psychomotorTraits: [],
             comment: teacherComment,
-            principalComment: principalComment
+            principalComment: principalComment,
+            narrativeComments: manualComment?.narrativeComments || {}
         }
     };
 
@@ -796,7 +845,7 @@ const getClassReportCards = async (req, res) => {
 
         const [settings, rules] = await Promise.all([
             prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } }),
-            prisma.commentRule.findMany({ where: { schoolId: req.user.schoolId, resultType: scaleResultType } })
+            prisma.commentRule.findMany({ where: { schoolId: req.user.schoolId, resultType: scaleAssessmentType } })
         ]);
 
         const summaries = await Promise.all(students.map(async (student) => {
@@ -822,31 +871,40 @@ const getClassReportCards = async (req, res) => {
             let teacherComment = comments?.teacherComment || '';
             let headComment = comments?.headComment || '';
             let principalComment = comments?.principalComment || '';
+            let existingNarrative = comments?.narrativeComments;
+            
+            if (typeof existingNarrative === 'string') {
+                try { existingNarrative = JSON.parse(existingNarrative); } catch(e) { existingNarrative = {}; }
+            }
+            if (!existingNarrative || typeof existingNarrative !== 'object') existingNarrative = {};
 
             if (settings?.resultAutomaticComments) {
-                if (!comments?.teacherComment) {
-                    const rule = rules.find(r => r.role === 'Class Teacher' && avgNum >= r.minScore && avgNum <= r.maxScore);
-                    if (rule) teacherComment = rule.comment;
-                }
-                if (!comments?.headComment) {
-                    const rule = rules.find(r => r.role === 'Head Teacher' && avgNum >= r.minScore && avgNum <= r.maxScore);
-                    if (rule) headComment = rule.comment;
-                }
-                if (!comments?.principalComment) {
-                    const rule = rules.find(r => r.role === 'Principal' && avgNum >= r.minScore && avgNum <= r.maxScore);
-                    if (rule) principalComment = rule.comment;
-                }
+                const matchedRules = rules.filter(r => avgNum >= r.minScore && avgNum <= r.maxScore);
+                
+                matchedRules.forEach(rule => {
+                    const role = rule.role;
+                    const comment = rule.comment;
+                    
+                    if (role === 'Class Teacher') teacherComment = comment;
+                    if (role === 'Head Teacher') headComment = comment;
+                    if (role === 'Principal') principalComment = comment;
+                    
+                    existingNarrative[role] = comment;
+                    existingNarrative[role.toUpperCase()] = comment;
+                    existingNarrative[role.toLowerCase()] = comment;
+                });
             }
 
             const returnComments = comments 
-                ? { ...comments, teacherComment, headComment, principalComment } 
-                : { teacherComment, headComment, principalComment };
+                ? { ...comments, teacherComment, headComment, principalComment, narrativeComments: existingNarrative } 
+                : { teacherComment, headComment, principalComment, narrativeComments: existingNarrative };
 
             return {
                 studentProfileId: student.id,
                 admissionNo: student.admissionNo,
                 name: student.user.name,
                 gender: student.gender,
+                photoUrl: student.profilePicture || null,
                 subjectCount,
                 totalScore,
                 average,
@@ -1600,6 +1658,29 @@ const deleteCommentRule = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Rule deleted' });
 };
 
+const updateCommentRule = async (req, res) => {
+    const { id } = req.params;
+    const { role, minScore, maxScore, comment, category, resultType } = req.body;
+    
+    if (!role || minScore === undefined || maxScore === undefined || !comment) {
+        throw new CustomError.BadRequestError('Missing fields');
+    }
+    
+    const rule = await prisma.commentRule.update({
+        where: { id, schoolId: req.user.schoolId },
+        data: { 
+            role, 
+            minScore: parseFloat(minScore), 
+            maxScore: parseFloat(maxScore), 
+            comment, 
+            category: category === 'ALL' ? null : category, 
+            resultType: resultType || 'EXAM' 
+        }
+    });
+    
+    res.status(StatusCodes.OK).json({ rule });
+};
+
 const shareResultEndpoint = async (req, res) => {
     const { studentProfileId, term, academicYear, channel, recipient } = req.body;
     if (!studentProfileId || !term || !academicYear || !channel || !recipient) {
@@ -1663,6 +1744,19 @@ const validateResults = async (req, res) => {
     res.status(StatusCodes.OK).json({ warnings });
 };
 
+// ─── BATCH CACHE FOR BULK PRINT ────────────────────────────────────────────────
+const crypto = require('crypto');
+const batchCache = new Map();
+
+const getBatchIds = async (req, res) => {
+    const { batchId } = req.params;
+    const ids = batchCache.get(batchId);
+    if (!ids) {
+        return res.status(404).json({ msg: 'Batch not found or expired' });
+    }
+    res.status(200).json({ studentIds: ids });
+};
+
 const batchExportPDF = async (req, res) => {
     const { studentIds, classId, term, academicYear, templateId, format } = req.body;
     
@@ -1689,21 +1783,30 @@ const batchExportPDF = async (req, res) => {
 
             // Dynamically import ESM archiver module
             const archiverModule = await import('archiver');
-            const archiver = archiverModule.default || archiverModule;
-            
-            const archive = archiver('zip', { zlib: { level: 9 } });
+            let archive;
+            if (archiverModule.ZipArchive) {
+                 archive = new archiverModule.ZipArchive({ zlib: { level: 9 } });
+            } else {
+                 const archiver = archiverModule.default || archiverModule;
+                 archive = archiver('zip', { zlib: { level: 9 } });
+            }
             res.attachment(`results_${classId}.zip`);
             archive.pipe(res);
 
             pdfs.forEach(pdfObj => {
-                archive.append(pdfObj.buffer, { name: pdfObj.filename });
+                if (pdfObj && pdfObj.buffer) {
+                    archive.append(pdfObj.buffer, { name: pdfObj.filename });
+                }
             });
 
             await archive.finalize();
 
         } else {
-            const idsParam = studentIds.join(',');
-            const url = `${frontendUrl}/print-batch?studentIds=${idsParam}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId || ''}&resultType=${req.body.resultType || 'FULL'}&token=${token}`;
+            const batchId = crypto.randomBytes(16).toString('hex');
+            batchCache.set(batchId, studentIds);
+            setTimeout(() => batchCache.delete(batchId), 10 * 60 * 1000); // 10 minutes
+
+            const url = `${frontendUrl}/print-batch?batchId=${batchId}&classId=${classId}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&templateId=${templateId || ''}&resultType=${req.body.resultType || 'FULL'}&token=${token}`;
             
             const pdfBuffer = await generateDynamicPDF(url);
 
@@ -1712,7 +1815,7 @@ const batchExportPDF = async (req, res) => {
                 'Content-Disposition': `attachment; filename="Class_Results.pdf"`,
                 'Content-Length': pdfBuffer.length,
             });
-            res.send(pdfBuffer);
+            res.end(pdfBuffer);
         }
     } catch (err) {
         console.error("Batch Export Error:", err);
@@ -1801,11 +1904,13 @@ module.exports = {
     assignTemplateSection,
     getCommentRules,
     saveCommentRule,
+    updateCommentRule,
     deleteCommentRule,
     shareResultEndpoint,
     generatePrintToken,
     validateResults,
     batchExportPDF,
+    getBatchIds,
     getBatchReportCards,
     deleteTraitConfiguration,
     renameTraitConfiguration

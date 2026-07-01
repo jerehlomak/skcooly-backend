@@ -142,10 +142,10 @@ const getScoresRoster = async (req, res) => {
 
     const structureDetails = structureRecord ? structureRecord.parts : [];
 
-    // Fetch the subject to see if it has a category constraint
+    // Fetch the subject to see if it has a category constraint and its type
     const subject = await prisma.subject.findFirst({
         where: { id: subjectId, schoolId: req.user.schoolId },
-        select: { categoryId: true }
+        select: { categoryId: true, type: true }
     });
 
     // 2. Get students in this specific class (arm)
@@ -166,7 +166,12 @@ const getScoresRoster = async (req, res) => {
 
     if (students.length === 0) {
         const studentWhere = { classId: classId, status: 'Active', schoolId: req.user.schoolId };
-        if (subject && subject.categoryId) studentWhere.subjectCategoryId = subject.categoryId;
+        if (subject && subject.categoryId) {
+            studentWhere.OR = [
+                { subjectCategoryId: null },
+                { subjectCategoryId: subject.categoryId }
+            ];
+        }
         students = await prisma.studentProfile.findMany({
             where: studentWhere,
             include: { user: { select: { name: true } } },
@@ -174,9 +179,18 @@ const getScoresRoster = async (req, res) => {
         });
     } else {
         if (subject && subject.categoryId) {
-            students = students.filter(s => s.subjectCategoryId === subject.categoryId);
+            students = students.filter(s => !s.subjectCategoryId || s.subjectCategoryId === subject.categoryId);
         }
         students.sort((a, b) => a.user.name.localeCompare(b.user.name));
+    }
+
+    // NEW: Filter by Elective Allocation if subject is an ELECTIVE
+    if (subject && subject.type === 'ELECTIVE') {
+        const allocatedStudentIds = (await prisma.studentElective.findMany({
+            where: { schoolId: req.user.schoolId, subjectId }
+        })).map(a => a.studentProfileId);
+        
+        students = students.filter(s => allocatedStudentIds.includes(s.id));
     }
 
     // 3. Get existing results for the filters

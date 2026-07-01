@@ -413,12 +413,38 @@ const deleteStudent = async (req, res) => {
 };
 
 const promoteStudents = async (req, res) => {
-    // Basic stub for now, or actual implementation
-    const { studentIds, fromClassId, toClassId, sessionId } = req.body;
+    const { studentIds, targetClassId, sessionId, status } = req.body;
     
-    if (!studentIds || studentIds.length === 0) {
+    if (!studentIds || !Array.isArray(studentIds) || studentIds.length === 0) {
         throw new CustomError.BadRequestError('No students selected for promotion');
     }
+
+    let classLevel = null;
+    if (targetClassId) {
+        const cls = await prisma.class.findUnique({ where: { id: targetClassId } });
+        if (cls) classLevel = cls.level;
+    }
+
+    const updateData = {
+        status: status === 'GRADUATED' ? 'Graduated' : 'Active'
+    };
+
+    if (sessionId) {
+        updateData.sessionId = sessionId;
+    }
+
+    if (status === 'GRADUATED') {
+        updateData.classId = null;
+        updateData.classLevel = 'Graduated';
+    } else if (targetClassId) {
+        updateData.classId = targetClassId;
+        if (classLevel) updateData.classLevel = classLevel;
+    }
+
+    await prisma.studentProfile.updateMany({
+        where: { id: { in: studentIds }, schoolId: req.user.schoolId },
+        data: updateData
+    });
 
     res.status(StatusCodes.OK).json({ msg: 'Students promoted successfully' });
 };

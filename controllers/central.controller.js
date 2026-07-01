@@ -3,6 +3,29 @@ const argon2 = require('argon2')
 const crypto = require('crypto')
 const jwt = require('jsonwebtoken')
 const prisma = require('../db/prisma')
+const { getTransporter, getFromEmail } = require('../utils/emailTransporter')
+const { generateOtpEmailTemplate } = require('../utils/emailTemplates')
+
+// In-memory store for initial setup OTPs since admin record doesn't exist yet
+const setupOtps = new Map();
+
+// Helper to send OTP email
+const sendOtpEmail = async (email, name, otp) => {
+    try {
+        const transporter = await getTransporter();
+        const from = await getFromEmail();
+        const html = generateOtpEmailTemplate(otp, name);
+        
+        await transporter.sendMail({
+            from,
+            to: email,
+            subject: 'Your Skooly Plus Security Code',
+            html
+        });
+    } catch (err) {
+        console.error('Failed to send OTP email:', err);
+    }
+};
 
 // ─── Helper ───────────────────────────────────────────────────────────────────
 const createCentralToken = (admin) => {
@@ -23,6 +46,74 @@ const logAudit = async (adminId, action, entityType, entityId, metadata, ipAddre
 
 // ─── AUTH ─────────────────────────────────────────────────────────────────────
 
+const setupAdmin = async (req, res) => {
+    const { name, email } = req.body;
+    if (!name || !email) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Name and email are required.' });
+    }
+
+    const masterEmail = process.env.MASTER_ADMIN_EMAIL;
+    if (!masterEmail || email.toLowerCase() !== masterEmail.toLowerCase()) {
+        return res.status(StatusCodes.UNAUTHORIZED).json({ message: 'Unauthorized setup email.' });
+    }
+
+    const existingAdmin = await prisma.centralAdmin.findUnique({ where: { email } });
+    if (existingAdmin) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Central admin already exists.' });
+    }
+
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const expires = new Date(Date.now() + 10 * 60000); // 10 minutes
+
+    setupOtps.set(email.toLowerCase(), { otp, expires, name });
+    
+    // Send email asynchronously
+    sendOtpEmail(email, name, otp);
+
+    res.status(StatusCodes.OK).json({ message: 'OTP sent to master email.' });
+};
+
+const verifySetupAdmin = async (req, res) => {
+    const { email, otp, password } = req.body;
+    if (!email || !otp || !password) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Email, OTP, and password are required.' });
+    }
+
+    const masterEmail = process.env.MASTER_ADMIN_EMAIL;
+    if (!masterEmail || email.toLowerCase() !== masterEmail.toLowerCase()) {
+        return res.status(StatusCodes.UNAUTHORIZED).json({ message: 'Unauthorized email.' });
+    }
+
+    const storedOtpData = setupOtps.get(email.toLowerCase());
+    if (!storedOtpData || storedOtpData.otp !== otp || storedOtpData.expires < new Date()) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Invalid or expired OTP.' });
+    }
+
+    // Create the admin
+    const hashedPassword = await argon2.hash(password);
+    const admin = await prisma.centralAdmin.create({
+        data: {
+            name: storedOtpData.name,
+            email: email.toLowerCase(),
+            password: hashedPassword,
+            role: 'SUPER_ADMIN'
+        }
+    });
+
+    setupOtps.delete(email.toLowerCase());
+
+    const token = createCentralToken(admin);
+    res.cookie('centralAdminToken', token, {
+        httpOnly: true, signed: true, secure: process.env.NODE_ENV === 'production',
+        sameSite: 'none', maxAge: 24 * 60 * 60 * 1000,
+    });
+
+    res.status(StatusCodes.CREATED).json({
+        token,
+        admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
+    });
+};
+
 const login = async (req, res) => {
     const { email, password } = req.body
     if (!email || !password) {
@@ -39,18 +130,53 @@ const login = async (req, res) => {
         return res.status(StatusCodes.UNAUTHORIZED).json({ message: 'Invalid credentials.' })
     }
 
-    await prisma.centralAdmin.update({ where: { id: admin.id }, data: { lastLogin: new Date() } })
+    // Generate OTP
+    const otp = Math.floor(100000 + Math.random() * 900000).toString();
+    const otpExpires = new Date(Date.now() + 10 * 60000); // 10 minutes
 
-    const token = createCentralToken(admin)
+    await prisma.centralAdmin.update({
+        where: { id: admin.id },
+        data: { otpToken: otp, otpExpires }
+    });
+
+    sendOtpEmail(admin.email, admin.name, otp);
+
+    res.status(StatusCodes.OK).json({
+        message: 'OTP sent to your email.',
+        requireOtp: true
+    });
+}
+
+const verifyLogin = async (req, res) => {
+    const { email, otp } = req.body;
+    if (!email || !otp) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Email and OTP are required.' });
+    }
+
+    const admin = await prisma.centralAdmin.findUnique({ where: { email } });
+    if (!admin || !admin.isActive) {
+        return res.status(StatusCodes.UNAUTHORIZED).json({ message: 'Invalid credentials.' });
+    }
+
+    if (admin.otpToken !== otp || !admin.otpExpires || admin.otpExpires < new Date()) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Invalid or expired OTP.' });
+    }
+
+    await prisma.centralAdmin.update({
+        where: { id: admin.id },
+        data: { lastLogin: new Date(), otpToken: null, otpExpires: null }
+    });
+
+    const token = createCentralToken(admin);
     res.cookie('centralAdminToken', token, {
         httpOnly: true, signed: true, secure: process.env.NODE_ENV === 'production',
         sameSite: 'none', maxAge: 24 * 60 * 60 * 1000,
-    })
+    });
 
     res.status(StatusCodes.OK).json({
         token,
         admin: { id: admin.id, name: admin.name, email: admin.email, role: admin.role },
-    })
+    });
 }
 
 const getMe = async (req, res) => {
@@ -1070,7 +1196,8 @@ const updateLeadStatus = async (req, res) => {
 }
 
 module.exports = {
-    login, getMe, logout, setupFirstAdmin,
+    setupAdmin, verifySetupAdmin,
+    login, verifyLogin, getMe, logout,
     forgotPassword, resetPassword,
     getOverview,
     getSchools, getSchool, createSchool, updateSchool, suspendSchool, activateSchool, deleteSchool,

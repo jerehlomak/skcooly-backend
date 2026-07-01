@@ -862,26 +862,28 @@ const generateDynamicPDFs = async (jobs) => {
     const CHUNK_SIZE = 5;
     for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
         const chunk = jobs.slice(i, i + CHUNK_SIZE);
-        const chunkPromises = chunk.map(async (job) => {
-            const page = await browser.newPage();
-            await page.setDefaultNavigationTimeout(60000);
+        
+        // Process sequentially to avoid ProtocolError crashes on VPS
+        for (const job of chunk) {
+            let page;
             try {
+                page = await browser.newPage();
+                await page.setDefaultNavigationTimeout(60000);
                 await page.goto(job.url, { waitUntil: 'networkidle2' });
                 await page.waitForSelector('#print-ready', { timeout: 60000 });
                 const pdf = await page.pdf({ format: 'A4', printBackground: true });
-                return { filename: job.filename, buffer: pdf };
+                results.push({ filename: job.filename, buffer: pdf });
             } catch (jobErr) {
                 console.error(`Failed to generate PDF for ${job.filename}:`, jobErr);
-                return null;
+                // Push null so it can be filtered out later if needed
             } finally {
-                await page.close();
+                if (page) {
+                    await page.close().catch(e => console.error('Error closing page', e));
+                }
             }
-        });
-
-        const chunkResults = await Promise.all(chunkPromises);
-        for (const res of chunkResults) {
-            if (res) results.push(res);
         }
+
+        // results are pushed directly in the loop above
     }
   } finally {
       if (browser) await browser.close();
