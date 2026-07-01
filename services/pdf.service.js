@@ -863,8 +863,8 @@ const generateDynamicPDFs = async (jobs) => {
     for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
         const chunk = jobs.slice(i, i + CHUNK_SIZE);
         
-        // Process chunks concurrently to avoid Nginx proxy timeouts (504)
-        await Promise.all(chunk.map(async (job) => {
+        // Process sequentially to avoid ProtocolError crashes and OOM on VPS
+        for (const job of chunk) {
             let page;
             try {
                 page = await browser.newPage();
@@ -880,7 +880,7 @@ const generateDynamicPDFs = async (jobs) => {
             } finally {
                 if (page) await page.close().catch(e => console.error(e));
             }
-        }));
+        }
     }
   } finally {
       if (browser) await browser.close();
