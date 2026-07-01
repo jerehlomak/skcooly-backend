@@ -863,8 +863,8 @@ const generateDynamicPDFs = async (jobs) => {
     for (let i = 0; i < jobs.length; i += CHUNK_SIZE) {
         const chunk = jobs.slice(i, i + CHUNK_SIZE);
         
-        // Process sequentially to avoid ProtocolError crashes on VPS
-        for (const job of chunk) {
+        // Process chunks concurrently to avoid Nginx proxy timeouts (504)
+        await Promise.all(chunk.map(async (job) => {
             let page;
             try {
                 page = await browser.newPage();
@@ -876,14 +876,11 @@ const generateDynamicPDFs = async (jobs) => {
             } catch (jobErr) {
                 console.error(`Failed to generate PDF for ${job.filename}:`, jobErr);
                 // Push null so it can be filtered out later if needed
+                results.push({ filename: job.filename, buffer: null });
             } finally {
-                if (page) {
-                    await page.close().catch(e => console.error('Error closing page', e));
-                }
+                if (page) await page.close().catch(e => console.error(e));
             }
-        }
-
-        // results are pushed directly in the loop above
+        }));
     }
   } finally {
       if (browser) await browser.close();
