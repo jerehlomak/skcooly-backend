@@ -37,12 +37,12 @@ const downloadStaffTemplate = (req, res) => {
 // ─── DOWNLOAD STUDENT TEMPLATE ────────────────────────────────────────────────
 const downloadStudentTemplate = (req, res) => {
     const headers = [
-        'name', 'admissionNo', 'className', 'gender',
+        'name', 'admissionNo', 'className',
         'dateOfBirth', 'phone', 'religion', 'bloodGroup',
         'address', 'previousSchool', 'orphan'
     ];
     const example = [
-        'Fatima Bello', '', 'JSS1 A', 'Female',
+        'Fatima Bello', '', 'JSS1 A',
         '2010-03-22', '+2348011223344', 'Islam', 'O+',
         '5 Murtala Way, Lagos', 'ABC Primary School', 'no'
     ];
@@ -229,8 +229,8 @@ const bulkImportStudents = async (req, res) => {
             const gender = String(row.gender || '').trim();
             const className = String(row.className || '').trim();
 
-            if (!name || !gender || !className) {
-                failed.push({ row: rowNum, reason: 'Missing required fields: name, gender, className' });
+            if (!name || !className) {
+                failed.push({ row: rowNum, reason: 'Missing required fields: name, className' });
                 continue;
             }
 

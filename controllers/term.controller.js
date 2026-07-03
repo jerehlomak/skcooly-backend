@@ -90,6 +90,7 @@ const updateTerm = async (req, res) => {
             ...(startDate !== undefined && { startDate: startDate ? new Date(startDate) : null }),
             ...(endDate !== undefined && { endDate: endDate ? new Date(endDate) : null }),
             ...(isActive !== undefined && { isActive }),
+            ...(req.body.daysOpened !== undefined && { daysOpened: parseInt(req.body.daysOpened) || 0 }),
         }
     });
     
@@ -208,11 +209,33 @@ const toggleLock = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: `Term ${isLocked ? 'locked' : 'unlocked'} successfully.` });
 };
 
+// ─── UPDATE ACTIVE TERM DAYS OPENED ─────────────────────────────────────────
+const updateActiveTermDaysOpened = async (req, res) => {
+    const { daysOpened } = req.body;
+    const schoolId = req.user.schoolId;
+
+    const term = await prisma.academicTerm.findFirst({
+        where: { schoolId, isActive: true }
+    });
+
+    if (!term) {
+        return res.status(StatusCodes.NOT_FOUND).json({ msg: `No active term found.` });
+    }
+
+    await prisma.academicTerm.update({
+        where: { id: term.id },
+        data: { daysOpened: parseInt(daysOpened) || 0 }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: `Days opened updated successfully.` });
+};
+
 module.exports = {
     getAllTerms,
     createTerm,
     updateTerm,
     deleteTerm,
     openTerm,
-    toggleLock
+    toggleLock,
+    updateActiveTermDaysOpened
 };

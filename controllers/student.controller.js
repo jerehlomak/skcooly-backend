@@ -17,9 +17,12 @@ const addStudent = async (req, res) => {
         address, previousSchool, parentProfileId, sessionId, subjectCategoryId, profilePicture
     } = req.body
 
-    if (!name || (!classLevel && !classId) || !gender) {
-        throw new CustomError.BadRequestError('Please provide name, classLevel/classId, and gender')
+    if (!name || (!classLevel && !classId)) {
+        throw new CustomError.BadRequestError('Please provide name and classLevel/classId')
     }
+
+    // Default gender to empty string if not provided since it's required in the schema but we want it optional
+    gender = gender || '';
 
     // If classId is provided, we fetch the Class to inherit its level
     if (classId) {
@@ -396,7 +399,10 @@ const deleteStudent = async (req, res) => {
     const { id } = req.params;
     
     const student = await prisma.studentProfile.findFirst({
-        where: { id, schoolId: req.user.schoolId }
+        where: { 
+            OR: [{ id: id }, { userId: id }],
+            schoolId: req.user.schoolId 
+        }
     });
 
     if (!student) {
@@ -405,7 +411,7 @@ const deleteStudent = async (req, res) => {
 
     // Attempt to delete student profile and associated user
     await prisma.$transaction(async (tx) => {
-        await tx.studentProfile.delete({ where: { id } });
+        await tx.studentProfile.delete({ where: { id: student.id } });
         await tx.user.delete({ where: { id: student.userId } }).catch(() => {}); // safely ignore if user delete fails
     });
 

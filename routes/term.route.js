@@ -7,7 +7,8 @@ const {
     updateTerm,
     deleteTerm,
     openTerm,
-    toggleLock
+    toggleLock,
+    updateActiveTermDaysOpened
 } = require('../controllers/term.controller');
 
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
@@ -17,6 +18,9 @@ router.use(authenticateUser);
 router.route('/')
     .get(getAllTerms)
     .post(authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'), createTerm);
+
+router.route('/active/days-opened')
+    .put(authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'), updateActiveTermDaysOpened);
 
 router.route('/:id')
     .put(authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'), updateTerm)

@@ -279,7 +279,7 @@ const getStudentReportCard = async (req, res) => {
         studentsInClass = allAvgs.length;
 
         // Subject position logic
-        if (schoolSettingsRecord?.resultSubjectPosition) {
+        if (true) {
              const subjectScores = {}; 
              for (const r of allClassResults) {
                  if (!subjectScores[r.subjectId]) subjectScores[r.subjectId] = [];
@@ -377,6 +377,21 @@ const getStudentReportCard = async (req, res) => {
             });
             comments.narrativeComments = existingNarrative;
         }
+    }
+    
+    // Override attendance with manually entered data from comments if present
+    // Also inject termRecord.daysOpened as the fallback for "opened/total" days.
+    if (!attendance) {
+        attendance = { opened: termRecord?.daysOpened || 0, present: 0, absent: 0, late: 0 };
+    } else {
+        attendance.opened = termRecord?.daysOpened || attendance.total || 0;
+    }
+
+    if (comments && (comments.total !== null || comments.present !== null)) {
+        attendance.total = comments.total ?? attendance.total ?? attendance.opened ?? 0;
+        attendance.opened = attendance.total; // ensure opened matches total if manually set
+        attendance.present = comments.present ?? attendance.present ?? 0;
+        attendance.absent = comments.absent ?? attendance.absent ?? 0;
     }
 
     // 10. School info
@@ -493,9 +508,7 @@ const getStudentReportCard = async (req, res) => {
                 display: sectionDisplay,
                 signatures: sectionSignatures,
                 traitConfiguration: traitConfiguration,
-                resultConfig: {
-                    commentBasedSettings: resultConfig.commentBasedSettings || null
-                }
+                resultConfig: resultConfig
             };
         })() : null,
         gradingScale: { grades, passMark }
@@ -929,7 +942,6 @@ const getClassReportCards = async (req, res) => {
 const saveComment = async (req, res) => {
     const { studentProfileId, term, academicYear, comments, attendance } = req.body;
     
-    // Support both direct fields and nested objects for backward compatibility
     const teacherComment = comments?.teacherComment || req.body.teacherComment;
     const headComment = comments?.headComment || req.body.headComment;
     const principalComment = comments?.principalComment || req.body.principalComment;
@@ -937,9 +949,9 @@ const saveComment = async (req, res) => {
     const promotedTo = req.body.promotedTo;
     const narrativeComments = req.body.narrativeComments;
     
-    const present = attendance?.present;
-    const absent = attendance?.absent;
-    const total = attendance?.total;
+    const present = attendance?.present !== undefined ? attendance.present : req.body.present;
+    const absent = attendance?.absent !== undefined ? attendance.absent : req.body.absent;
+    const total = attendance?.total !== undefined ? attendance.total : req.body.total;
 
     if (!studentProfileId || !term || !academicYear) {
         throw new CustomError.BadRequestError('studentProfileId, term, and academicYear are required');
