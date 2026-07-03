@@ -383,15 +383,23 @@ const getStudentReportCard = async (req, res) => {
     // Also inject termRecord.daysOpened as the fallback for "opened/total" days.
     if (!attendance) {
         attendance = { opened: termRecord?.daysOpened || 0, present: 0, absent: 0, late: 0 };
+        attendance.total = attendance.opened;
     } else {
         attendance.opened = termRecord?.daysOpened || attendance.total || 0;
+        attendance.total = attendance.opened;
     }
 
     if (comments && (comments.total !== null || comments.present !== null)) {
-        attendance.total = comments.total ?? attendance.total ?? attendance.opened ?? 0;
-        attendance.opened = attendance.total; // ensure opened matches total if manually set
-        attendance.present = comments.present ?? attendance.present ?? 0;
-        attendance.absent = comments.absent ?? attendance.absent ?? 0;
+        if (comments.total !== null) {
+            attendance.total = comments.total;
+            attendance.opened = comments.total;
+        }
+        if (comments.present !== null) {
+            attendance.present = comments.present;
+        }
+        if (comments.absent !== null) {
+            attendance.absent = comments.absent;
+        }
     }
 
     // 10. School info
