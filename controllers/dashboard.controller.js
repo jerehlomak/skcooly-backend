@@ -1,6 +1,7 @@
 
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes')
+const { verifyAndConsumePin } = require('./result.controller')
 
 const getDashboardStats = async (req, res) => {
     const { userId, role } = req.user
@@ -258,6 +259,11 @@ const getMyResults = async (req, res) => {
     });
 
     if (!student) return res.status(StatusCodes.NOT_FOUND).json({ msg: 'Student not found' });
+
+    // Validate PIN access without consuming usage for just viewing the dashboard
+    const schoolSettingsRecord = await prisma.schoolSettings.findFirst({ where: { schoolId: student.schoolId } });
+    const isPinValid = await verifyAndConsumePin(req, res, student.id, term, academicYear, schoolSettingsRecord, false);
+    if (!isPinValid) return;
 
     // Fetch this student's results for the selected term
     const rawResults = await prisma.studentResult.findMany({

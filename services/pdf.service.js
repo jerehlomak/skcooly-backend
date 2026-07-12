@@ -67,7 +67,7 @@ const template1 = (data) => {
         </div>
 
         <div class="text-center font-bold text-lg mb-4">
-          Position: ${result.position}
+          ${result.showClassPosition !== false ? `Position: ${result.position}` : ''}
         </div>
 
         <div class="flex gap-4 mb-4">
@@ -224,7 +224,7 @@ const template2 = (data, config = {}) => {
                   <th class="border border-gray-300 p-2">EXAM (60)</th>
                   <th class="border border-gray-300 p-2">TOTAL (100)</th>
                   <th class="border border-gray-300 p-2">GRADE</th>
-                  <th class="border border-gray-300 p-2">POSN</th>
+                  ${result.showSubjectPosition !== false ? `<th class="border border-gray-300 p-2">POSN</th>` : ''}
                   <th class="border border-gray-300 p-2">REMARKS</th>
                   <th class="border border-gray-300 p-2">CLASS AVG</th>
                   <th class="border border-gray-300 p-2">PREV TERM</th>
@@ -238,7 +238,7 @@ const template2 = (data, config = {}) => {
                     <td class="border border-gray-300 p-2 text-center">${s.exam}</td>
                     <td class="border border-gray-300 p-2 text-center font-bold">${s.total}</td>
                     <td class="border border-gray-300 p-2 text-center font-bold">${s.grade}</td>
-                    <td class="border border-gray-300 p-2 text-center">${s.position}</td>
+                    ${result.showSubjectPosition !== false ? `<td class="border border-gray-300 p-2 text-center">${s.position}</td>` : ''}
                     <td class="border border-gray-300 p-2 text-center">${s.remark}</td>
                     <td class="border border-gray-300 p-2 text-center">${s.classAvg}</td>
                     <td class="border border-gray-300 p-2 text-center">${s.prevTerm || '—'}</td>
@@ -348,7 +348,7 @@ const template3 = (data) => {
           <div>Total Obtainable: ${result.summary.obtainable}</div>
           <div>Total Obtained: ${result.summary.obtained}</div>
           <div>Average: ${result.summary.average}%</div>
-          <div>Position: ${result.summary.position}</div>
+          ${result.showClassPosition !== false ? `<div>Position: ${result.summary.position}</div>` : ''}
         </div>
 
         <div class="overflow-x-auto mb-4">
@@ -366,7 +366,7 @@ const template3 = (data) => {
                 <th class="border border-gray-400 p-1 bg-blue-50">EXAM</th>
                 <th class="border border-gray-400 p-1 bg-blue-50">Total</th>
                 <th class="border border-gray-400 p-1 bg-blue-50">Grade</th>
-                <th class="border border-gray-400 p-1 bg-blue-50">Posn</th>
+                ${result.showSubjectPosition !== false ? `<th class="border border-gray-400 p-1 bg-blue-50">Posn</th>` : ''}
                 <th class="border border-gray-400 p-1 bg-blue-50">Remarks</th>
                 <th class="border border-gray-400 p-1 bg-green-50">1st T</th>
                 <th class="border border-gray-400 p-1 bg-green-50">2nd T</th>
@@ -374,7 +374,7 @@ const template3 = (data) => {
                 <th class="border border-gray-400 p-1 bg-green-50">Cum. Total</th>
                 <th class="border border-gray-400 p-1 bg-green-50">Cum. Avg</th>
                 <th class="border border-gray-400 p-1 bg-green-50">Cum. Grade</th>
-                <th class="border border-gray-400 p-1 bg-green-50">Cum. Posn</th>
+                ${result.showSubjectPosition !== false ? `<th class="border border-gray-400 p-1 bg-green-50">Cum. Posn</th>` : ''}
                 <th class="border border-gray-400 p-1 bg-green-50">Remarks</th>
               </tr>
             </thead>
@@ -388,7 +388,7 @@ const template3 = (data) => {
                   <td class="border border-gray-400 p-1 text-center bg-blue-50">${s.exam ?? '—'}</td>
                   <td class="border border-gray-400 p-1 text-center font-bold bg-blue-50">${s.total}</td>
                   <td class="border border-gray-400 p-1 text-center font-bold bg-blue-50">${s.grade}</td>
-                  <td class="border border-gray-400 p-1 text-center bg-blue-50">${s.position}</td>
+                  ${result.showSubjectPosition !== false ? `<td class="border border-gray-400 p-1 text-center bg-blue-50">${s.position}</td>` : ''}
                   <td class="border border-gray-400 p-1 text-center bg-blue-50">${s.remark}</td>
                   <td class="border border-gray-400 p-1 text-center bg-green-50">${s.t1 ?? '—'}</td>
                   <td class="border border-gray-400 p-1 text-center bg-green-50">${s.t2 ?? '—'}</td>
@@ -396,7 +396,7 @@ const template3 = (data) => {
                   <td class="border border-gray-400 p-1 text-center font-bold bg-green-50">${s.cumTotal}</td>
                   <td class="border border-gray-400 p-1 text-center bg-green-50">${s.cumAvg.toFixed(1)}</td>
                   <td class="border border-gray-400 p-1 text-center font-bold bg-green-50">${s.cumGrade}</td>
-                  <td class="border border-gray-400 p-1 text-center bg-green-50">${s.cumPosition}</td>
+                  ${result.showSubjectPosition !== false ? `<td class="border border-gray-400 p-1 text-center bg-green-50">${s.cumPosition}</td>` : ''}
                   <td class="border border-gray-400 p-1 text-center bg-green-50">${s.remark}</td>
                 </tr>
               `).join('')}
@@ -568,7 +568,7 @@ const template5 = (data, config = {}) => {
         <div class="flex gap-4 mb-4">
           <div class="flex-1 grid grid-cols-4 gap-x-4 gap-y-2 border border-gray-300 p-3 bg-gray-50">
             <div><span class="font-bold">Name:</span> ${student.name}</div>
-            <div><span class="font-bold">Position:</span> ${result.position}</div>
+            <div>${result.showClassPosition !== false ? `<span class="font-bold">Position:</span> ${result.position}` : ''}</div>
             <div><span class="font-bold">Gender:</span> ${student.gender}</div>
             <div><span class="font-bold">Grand Total:</span> ${result.grandTotal}</div>
             

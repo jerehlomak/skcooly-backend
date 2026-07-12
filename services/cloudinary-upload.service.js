@@ -11,7 +11,11 @@ cloudinary.config({
     api_secret: process.env.CLOUDINARY_API_SECRET,
 });
 
-const ALLOWED_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'];
+const ALLOWED_TYPES = [
+    'image/jpeg', 'image/png', 'image/webp', 'application/pdf',
+    'application/msword',
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+];
 const MAX_SIZE_BYTES = 5 * 1024 * 1024; // 5MB
 
 /**
@@ -115,7 +119,7 @@ async function uploadApplicationDocument(file, schoolId) {
             {
                 folder: `skooly/applications/${schoolId}/documents`,
                 resource_type: 'auto',
-                allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'pdf'],
+                allowed_formats: ['jpg', 'jpeg', 'png', 'webp', 'pdf', 'doc', 'docx'],
                 timeout: 60000,
             },
             (error, result) => {

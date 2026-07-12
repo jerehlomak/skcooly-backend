@@ -307,9 +307,217 @@ const bulkImportStudents = async (req, res) => {
     });
 };
 
+// ─── DOWNLOAD PARENT TEMPLATE ──────────────────────────────────────────────────
+const downloadParentTemplate = (req, res) => {
+    const headers = [
+        'studentAdmissionNo', 'parentId', 'fatherName', 'motherName',
+        'phone', 'email', 'occupation', 'address'
+    ];
+    const example = [
+        'SKL-2024-0001', 'PAR-OLD-001', 'Bello Usman', 'Aisha Usman',
+        '+2348012345678', 'bello.usman@example.com', 'Engineer', '12 Main Street, Kano'
+    ];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
+    ws['!cols'] = headers.map(() => ({ wch: 20 }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Parent Import');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="parent_import_template.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+};
+
+// ─── BULK IMPORT PARENTS ──────────────────────────────────────────────────────
+const bulkImportParents = async (req, res) => {
+    if (!req.files || !req.files.file) {
+        throw new CustomError.BadRequestError('Please upload an Excel file (.xlsx)');
+    }
+
+    const file = req.files.file;
+    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+        throw new CustomError.BadRequestError('Only Excel files (.xlsx, .xls) are accepted');
+    }
+
+    const wb = XLSX.read(file.data, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    if (!rows.length) throw new CustomError.BadRequestError('Excel file is empty or has no data rows');
+    if (rows.length > 500) throw new CustomError.BadRequestError('Maximum 500 rows per import');
+
+    const schoolId = req.user.schoolId;
+    const school = await prisma.school.findUnique({ where: { id: schoolId }, select: { schoolCode: true } });
+    const schoolTag = (school?.schoolCode || schoolId.slice(0, 8)).toLowerCase().replace(/[^a-z0-9]/g, '');
+
+    const created = [];
+    const failed = [];
+    
+    // To keep track of newly created parent profiles within this import loop (to group siblings in the same sheet)
+    const newParentsCache = {}; 
+
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+
+        try {
+            const studentAdmissionNo = String(row.studentAdmissionNo || '').trim();
+            const providedParentId = String(row.parentId || '').trim();
+            const phone = String(row.phone || '').trim();
+            let email = String(row.email || '').trim().toLowerCase();
+
+            if (!studentAdmissionNo || !phone) {
+                failed.push({ row: rowNum, reason: 'Missing required fields: studentAdmissionNo, phone' });
+                continue;
+            }
+
+            // Find the student
+            const student = await prisma.studentProfile.findFirst({
+                where: { admissionNo: studentAdmissionNo, schoolId },
+                include: { user: true }
+            });
+
+            if (!student) {
+                failed.push({ row: rowNum, reason: `Student with Admission No "${studentAdmissionNo}" not found` });
+                continue;
+            }
+
+            if (student.parentProfileId) {
+                failed.push({ row: rowNum, reason: `Student "${student.user.name}" already has a parent linked` });
+                continue;
+            }
+
+            // Search for existing parent by phone (or email)
+            let existingParent = null;
+
+            if (providedParentId && newParentsCache[providedParentId]) {
+                existingParent = newParentsCache[providedParentId];
+            } else if (newParentsCache[phone]) {
+                existingParent = newParentsCache[phone];
+            } else if (email && newParentsCache[email]) {
+                existingParent = newParentsCache[email];
+            } else {
+                // Query database
+                const searchConditions = [{ phone: phone }];
+                if (email) searchConditions.push({ user: { email: email } });
+                if (providedParentId) searchConditions.push({ parentId: providedParentId });
+                
+                existingParent = await prisma.parentProfile.findFirst({
+                    where: { 
+                        schoolId,
+                        OR: searchConditions
+                    },
+                    include: { user: true }
+                });
+            }
+
+            if (existingParent) {
+                // Link to existing parent
+                await prisma.studentProfile.update({
+                    where: { id: student.id },
+                    data: { parentProfileId: existingParent.id }
+                });
+                
+                created.push({ 
+                    name: existingParent.user.name || existingParent.fatherName || 'Parent', 
+                    admissionNo: studentAdmissionNo, 
+                    email: existingParent.user.email, 
+                    generatedPassword: 'N/A (Linked)', 
+                    row: rowNum 
+                });
+                continue;
+            }
+
+            // If we reach here, we need to create a new ParentProfile and User
+            let parentName = String(row.fatherName || row.motherName || 'Parent').trim();
+            if (!parentName) parentName = 'Parent';
+            
+            const parentId = providedParentId || `PAR-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
+
+            // Auto-generate email if missing
+            if (!email) {
+                const safeName = (parentName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.').replace(/\.{2,}/g, '.').replace(/^\.+|\.+$/g, '') || 'parent');
+                const randomSeq = Math.floor(1000 + Math.random() * 9000).toString();
+                email = `${safeName}.${randomSeq}.${schoolTag}@skooly.parent`;
+            }
+
+            // Verify email doesn't exist to prevent collision with other users (like teachers)
+            const existingEmailUser = await prisma.user.findFirst({ where: { email } });
+            if (existingEmailUser) {
+                failed.push({ row: rowNum, reason: `Email "${email}" is already used by another user` });
+                continue;
+            }
+
+            const generatedPassword = generateRandomPassword();
+            const hashedPassword = await argon2.hash(generatedPassword);
+
+            const newParentUser = await prisma.user.create({
+                data: {
+                    name: parentName,
+                    email,
+                    password: hashedPassword,
+                    role: 'PARENT',
+                    schoolId,
+                    parentProfile: {
+                        create: {
+                            schoolId,
+                            parentId,
+                            phone,
+                            address: String(row.address || '').trim() || null,
+                            occupation: String(row.occupation || '').trim() || null,
+                            fatherName: String(row.fatherName || '').trim() || null,
+                            motherName: String(row.motherName || '').trim() || null,
+                        }
+                    }
+                },
+                include: {
+                    parentProfile: true
+                }
+            });
+
+            // Link the student to the new parent profile
+            await prisma.studentProfile.update({
+                where: { id: student.id },
+                data: { parentProfileId: newParentUser.parentProfile.id }
+            });
+            
+            // Cache it in case there's a sibling down the list
+            const profileToCache = {
+                ...newParentUser.parentProfile,
+                user: {
+                    name: newParentUser.name,
+                    email: newParentUser.email
+                }
+            };
+            if (providedParentId) newParentsCache[providedParentId] = profileToCache;
+            newParentsCache[phone] = profileToCache;
+            if (email) newParentsCache[email] = profileToCache;
+
+            created.push({ 
+                name: parentName, 
+                admissionNo: studentAdmissionNo, 
+                email, 
+                generatedPassword, 
+                row: rowNum 
+            });
+
+        } catch (err) {
+            failed.push({ row: rowNum, reason: err.message });
+        }
+    }
+
+    res.status(StatusCodes.OK).json({
+        msg: `Import complete. ${created.length} processed, ${failed.length} failed.`,
+        created,
+        failed,
+        summary: { total: rows.length, created: created.length, failed: failed.length }
+    });
+};
+
 module.exports = {
     downloadStaffTemplate,
     downloadStudentTemplate,
+    downloadParentTemplate,
     bulkImportStaff,
     bulkImportStudents,
+    bulkImportParents,
 };

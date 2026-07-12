@@ -110,8 +110,15 @@ const getScoresRoster = async (req, res) => {
 
     if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${classId}`);
 
-    // Find the current assessment structure based on class override OR class level name
-    const category = cls.level;
+    // Find the current assessment structure based on class override OR class level name OR class category
+    let category = cls.level;
+    const classLevelRec = await prisma.classLevel.findFirst({
+        where: { schoolId: req.user.schoolId, name: cls.level }
+    });
+    if (classLevelRec && classLevelRec.category) {
+        category = classLevelRec.category;
+    }
+    
     let structureRecord = await prisma.assessmentStructure.findFirst({
         where: { 
             schoolId: req.user.schoolId,
@@ -265,7 +272,11 @@ const saveScores = async (req, res) => {
                 select: { level: true }
             });
             if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${classId}`);
-            resolvedCategory = cls.level;
+            
+            const classLevelRec = await prisma.classLevel.findFirst({
+                where: { schoolId: req.user.schoolId, name: cls.level }
+            });
+            resolvedCategory = classLevelRec && classLevelRec.category ? classLevelRec.category : cls.level;
         }
 
         // Fetch Grading Scale for this category (case-insensitive)

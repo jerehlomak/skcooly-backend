@@ -8,7 +8,8 @@
     "dev": "nodemon app.js",
     "postinstall": "prisma generate",
     "create-admin": "node scripts/create-admin.js",
-    "seed": "node scripts/seed.js"
+    "seed": "node scripts/seed.js",
+    "seed:permissions": "node scripts/seed-permissions.js"
   },
   "author": "",
   "license": "ISC",

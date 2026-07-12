@@ -1,4 +1,4 @@
-﻿-- CreateEnum
+-- CreateEnum
 CREATE TYPE "FeeType" AS ENUM ('FEE', 'ITEM');
 
 -- CreateEnum

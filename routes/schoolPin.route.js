@@ -4,7 +4,9 @@ const router = express.Router()
 const {
     getSchoolBatches,
     getSchoolPins,
-    validateAndLinkPin
+    validateAndLinkPin,
+    reactivatePin,
+    revealPin
 } = require('../controllers/schoolPin.controller')
 
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication')
@@ -18,5 +20,8 @@ router.route('/list').get(authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'S
 
 // Student endpoint
 router.post('/validate', authorizePermissions('STUDENT'), validateAndLinkPin)
+
+router.patch('/:id/reactivate', authenticateUser, authorizePermissions('ADMIN'), reactivatePin)
+router.get('/:id/reveal', authenticateUser, authorizePermissions('ADMIN'), revealPin)
 
 module.exports = router

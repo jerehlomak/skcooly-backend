@@ -47,12 +47,17 @@ const validateApplicationPin = async (req, res) => {
         // Fetch the school's dynamic form configuration
         const settings = await prisma.schoolSettings.findFirst({
             where: { schoolId: pin.schoolId },
-            select: { admissionFormConfig: true, employmentFormConfig: true }
+            select: { admissionFormConfig: true, employmentFormConfig: true, logoUrl: true }
         });
+
+        const schoolInfo = { ...pin.school };
+        if (settings?.logoUrl) {
+            schoolInfo.logoUrl = settings.logoUrl;
+        }
 
         res.status(StatusCodes.OK).json({
             message: 'PIN validated successfully for Application.',
-            school: pin.school,
+            school: schoolInfo,
             pinId: pin.id,
             formConfig: applicationType === 'ADMISSION_APPLICATION' ? settings?.admissionFormConfig : settings?.employmentFormConfig
         });
@@ -63,12 +68,17 @@ const validateApplicationPin = async (req, res) => {
 
         const settings = await prisma.schoolSettings.findFirst({
             where: { schoolId: pin.schoolId },
-            select: { admissionLetterTemplate: true, employmentLetterTemplate: true }
+            select: { admissionLetterTemplate: true, employmentLetterTemplate: true, logoUrl: true }
         });
+
+        const schoolInfo = { ...pin.school };
+        if (settings?.logoUrl) {
+            schoolInfo.logoUrl = settings.logoUrl;
+        }
 
         res.status(StatusCodes.OK).json({
             message: 'Application found.',
-            school: pin.school,
+            school: schoolInfo,
             application: pin.application,
             letterTemplate: applicationType === 'ADMISSION_APPLICATION' ? settings?.admissionLetterTemplate : settings?.employmentLetterTemplate
         });
@@ -378,11 +388,155 @@ const getAllApplications = async (req, res) => {
     res.status(StatusCodes.OK).json({ applications });
 };
 
+// ─── PARENT PORTAL: Initialize Application (Bypass check) ───────────────────
+const initParentApplication = async (req, res) => {
+    // Only parents should access this
+    if (req.user.role !== 'PARENT') {
+        throw new CustomError.UnauthorizedError('Unauthorized access');
+    }
+
+    const schoolId = req.user.schoolId;
+    const settings = await prisma.schoolSettings.findFirst({
+        where: { schoolId },
+        select: { parentAdmissionRequiresPin: true, admissionFormConfig: true, logoUrl: true }
+    });
+    
+    const school = await prisma.school.findUnique({ 
+        where: { id: schoolId }, 
+        select: { id: true, name: true, logoUrl: true } 
+    });
+    
+    if (settings?.logoUrl) school.logoUrl = settings.logoUrl;
+
+    res.status(StatusCodes.OK).json({
+        requiresPin: settings?.parentAdmissionRequiresPin ?? true,
+        school,
+        formConfig: settings?.admissionFormConfig
+    });
+};
+
+// ─── PARENT PORTAL: Submit Application (Bypass logic) ─────────────────────
+const parentSubmitApplication = async (req, res) => {
+    // Only parents should access this
+    if (req.user.role !== 'PARENT') {
+        throw new CustomError.UnauthorizedError('Unauthorized access');
+    }
+
+    const { applicationType, applicantName, applicantEmail, applicantPhone } = req.body;
+    let formData = req.body.formData;
+
+    if (typeof formData === 'string') {
+        try {
+            formData = JSON.parse(formData);
+        } catch (e) {
+            formData = {};
+        }
+    }
+
+    if (!applicationType || !applicantName) {
+        throw new CustomError.BadRequestError('Missing required application fields.');
+    }
+
+    const schoolId = req.user.schoolId;
+
+    // Check if bypass is actually allowed
+    const settings = await prisma.schoolSettings.findFirst({ where: { schoolId } });
+    if (settings?.parentAdmissionRequiresPin) {
+        throw new CustomError.BadRequestError('Admission PIN is required by the school. Please purchase a PIN and use the standard submission route.');
+    }
+
+    let passportUrl = null;
+    let birthCertificateUrl = null;
+    let otherCertificatesUrl = null;
+
+    if (req.files) {
+        for (const key of Object.keys(req.files)) {
+            const file = req.files[key];
+            const up = await uploadApplicationDocument(file, schoolId);
+            if (key === 'passport') passportUrl = up.secure_url;
+            else if (key === 'birthCertificate') birthCertificateUrl = up.secure_url;
+            else if (key === 'otherCertificates') otherCertificatesUrl = up.secure_url;
+            else {
+                // Dynamic image field!
+                formData[key] = up.secure_url;
+            }
+        }
+    }
+
+    // Auto-generate a unique PIN
+    const [newPinCode] = await generateUniquePins(prisma, 1, 12);
+    
+    // Create the dummy PIN and link it to the application directly
+    const application = await prisma.$transaction(async (tx) => {
+        // 1. Create the consumed PIN
+        const pin = await tx.schoolPin.create({
+            data: {
+                schoolId: schoolId,
+                batchId: null, // No batch for auto-generated manual pins
+                pinCode: newPinCode,
+                serialNumber: 'PARENT-' + Date.now().toString().slice(-6),
+                pinType: applicationType,
+                maxUsage: 1,
+                usageCount: 1,
+                status: 'USED',
+                purchasedBy: req.user.name,
+                createdBy: req.user.userId
+            }
+        });
+
+        // 2. Log the usage
+        await tx.pinUsageLog.create({
+            data: {
+                pinId: pin.id,
+                usageContext: 'PARENT_APPLICATION_SUBMISSION',
+                action: `SUBMITTED_${applicationType}`,
+                metadata: { applicantName, parentName: req.user.name }
+            }
+        });
+
+        // 3. Create the application
+        return await tx.application.create({
+            data: {
+                schoolId: schoolId,
+                pinId: pin.id,
+                applicationType,
+                applicantName,
+                applicantEmail,
+                applicantPhone,
+                formData,
+                passportUrl,
+                birthCertificateUrl,
+                otherCertificatesUrl,
+                status: 'PENDING'
+            }
+        });
+    });
+
+    // Create a notification for the school admin outside transaction
+    await prisma.notification.create({
+        data: {
+            schoolId: schoolId,
+            title: `New ${applicationType === 'EMPLOYMENT' ? 'Employment' : 'Admission'} Application`,
+            message: `${applicantName} has just submitted an application.`,
+            type: 'APPLICATION',
+            link: '/dashboard/admission/applications'
+        }
+    });
+
+    res.status(StatusCodes.CREATED).json({
+        message: 'Application submitted successfully!',
+        applicationId: application.id,
+        application
+    });
+};
+
 module.exports = {
     validateApplicationPin,
     submitApplication,
     adminSubmitApplication,
     getSchoolApplications,
     updateApplicationStatus,
-    getAllApplications
+    getAllApplications,
+    initParentApplication,
+    parentSubmitApplication
 };

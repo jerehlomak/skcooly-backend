@@ -1,6 +1,6 @@
 const express = require('express');
 const router = express.Router();
-const { validateApplicationPin, submitApplication, adminSubmitApplication, getSchoolApplications, updateApplicationStatus, getAllApplications } = require('../controllers/application.controller');
+const { validateApplicationPin, submitApplication, adminSubmitApplication, getSchoolApplications, updateApplicationStatus, getAllApplications, initParentApplication, parentSubmitApplication } = require('../controllers/application.controller');
 const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
 
 // Public
@@ -9,6 +9,10 @@ router.post('/submit', submitApplication);
 
 // Protected (School Admin / Super Admin)
 router.use(authenticateUser);
+
+// Parent Portal
+router.get('/parent/init', authorizePermissions('PARENT'), initParentApplication);
+router.post('/parent/submit', authorizePermissions('PARENT'), parentSubmitApplication);
 
 // Central Admin only
 router.get('/all', authorizePermissions('ADMIN'), getAllApplications);

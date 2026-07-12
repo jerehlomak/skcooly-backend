@@ -1,10 +1,12 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes');
+const { invalidateRoleAccess } = require('../services/permissions.service');
 
 // ─── GET ALL ROLES ────────────────────────────────────────────────────────────
 const getAllRoles = async (req, res) => {
     const roles = await prisma.customRole.findMany({
         where: { schoolId: req.user.schoolId },
+        include: { rolePermissions: { include: { permission: true } } },
         orderBy: { createdAt: 'asc' }
     });
     res.status(StatusCodes.OK).json({ roles, count: roles.length });
@@ -12,7 +14,7 @@ const getAllRoles = async (req, res) => {
 
 // ─── CREATE ROLE ──────────────────────────────────────────────────────────────
 const createRole = async (req, res) => {
-    const { name, description, permissions } = req.body;
+    const { name, description, permissionIds } = req.body;
     if (!name) {
         return res.status(StatusCodes.BAD_REQUEST).json({ msg: 'Role name is required' });
     }
@@ -29,9 +31,12 @@ const createRole = async (req, res) => {
             schoolId: req.user.schoolId,
             name: name.trim(),
             description: description || '',
-            permissions: permissions || [],
-            isSystemDefault: false
-        }
+            isSystemDefault: false,
+            rolePermissions: {
+                create: (permissionIds || []).map((permissionId) => ({ permissionId })),
+            },
+        },
+        include: { rolePermissions: { include: { permission: true } } },
     });
     res.status(StatusCodes.CREATED).json({ role });
 };
@@ -39,7 +44,7 @@ const createRole = async (req, res) => {
 // ─── UPDATE ROLE ──────────────────────────────────────────────────────────────
 const updateRole = async (req, res) => {
     const { id } = req.params;
-    const { name, description, permissions } = req.body;
+    const { name, description, permissionIds } = req.body;
 
     const existingRole = await prisma.customRole.findFirst({ where: { id, schoolId: req.user.schoolId } });
     if (!existingRole) {
@@ -59,14 +64,25 @@ const updateRole = async (req, res) => {
         }
     }
 
+    if (permissionIds !== undefined) {
+        await prisma.$transaction([
+            prisma.rolePermission.deleteMany({ where: { customRoleId: id } }),
+            prisma.rolePermission.createMany({
+                data: permissionIds.map((permissionId) => ({ customRoleId: id, permissionId })),
+            }),
+        ]);
+    }
+
     const role = await prisma.customRole.update({
         where: { id },
         data: {
             ...(name !== undefined && { name: name.trim() }),
             ...(description !== undefined && { description }),
-            ...(permissions !== undefined && { permissions }),
-        }
+        },
+        include: { rolePermissions: { include: { permission: true } } },
     });
+
+    await invalidateRoleAccess(id);
     res.status(StatusCodes.OK).json({ role });
 };
 
@@ -84,102 +100,35 @@ const deleteRole = async (req, res) => {
     }
 
     await prisma.customRole.delete({ where: { id } });
+    await invalidateRoleAccess(id);
     res.status(StatusCodes.OK).json({ msg: 'Role deleted successfully' });
 };
 
-// ─── SEED DEFAULT ROLES ───────────────────────────────────────────────────────
-const seedDefaultRoles = async (req, res) => {
-    const defaultRoles = [
-        {
-            name: 'Super Admin',
-            description: 'Full access to all modules including sensitive financial settings.',
-            isSystemDefault: true,
-            permissions: [
-                'std_view', 'std_add', 'std_edit', 'std_delete',
-                'acd_view', 'acd_manage', 'cbt_create', 'cbt_grade',
-                'fin_view', 'fin_collect', 'fin_refund', 'fin_salary',
-                'adm_staff', 'adm_settings', 'adm_sms'
-            ]
-        },
-        {
-            name: 'Form Teacher',
-            description: 'Can manage academics for assigned classes and view basic student info.',
-            isSystemDefault: true,
-            permissions: ['std_view', 'acd_view', 'acd_manage', 'cbt_create', 'cbt_grade']
-        },
-        {
-            name: 'Bursar / Cashier',
-            description: 'Dedicated to fee collections and financial reporting only.',
-            isSystemDefault: true,
-            permissions: ['std_view', 'fin_view', 'fin_collect']
-        },
-        {
-            name: 'Accountant',
-            description: 'Manages payroll, expenses, and comprehensive financial reports.',
-            isSystemDefault: true,
-            permissions: ['std_view', 'fin_view', 'fin_collect', 'fin_refund', 'fin_salary']
-        },
-        {
-            name: 'Exam Officer',
-            description: 'Responsible for managing CBTs, grading, and academic records.',
-            isSystemDefault: true,
-            permissions: ['std_view', 'acd_view', 'acd_manage', 'cbt_create', 'cbt_grade']
-        },
-        {
-            name: 'Receptionist / Front Desk',
-            description: 'Handles basic student inquiries, viewing profiles, and managing basic records.',
-            isSystemDefault: true,
-            permissions: ['std_view']
-        }
-    ];
+// ─── GET PERMISSIONS CATALOG ──────────────────────────────────────────────────
+// Only the STAFF-dashboard menu items the school is actually subscribed to
+// (SchoolFeature) — grouped by module, mirroring the real sidebar structure.
+// Items the school hasn't subscribed to never appear here, so there's nothing
+// to tick for them.
+const getPermissions = async (req, res) => {
+    const subscribedRows = await prisma.schoolFeature.findMany({
+        where: { schoolId: req.user.schoolId, enabled: true },
+        select: { permissionId: true },
+    });
+    const subscribedIds = new Set(subscribedRows.map((r) => r.permissionId));
 
-    const createdRoles = [];
-    for (const roleData of defaultRoles) {
-        const existing = await prisma.customRole.findFirst({ 
-            where: { schoolId: req.user.schoolId, name: roleData.name } 
-        });
-        if (!existing) {
-            const role = await prisma.customRole.create({ 
-                data: { ...roleData, schoolId: req.user.schoolId } 
-            });
-            createdRoles.push(role);
-        }
+    const allStaffPermissions = await prisma.permission.findMany({
+        where: { dashboardType: 'STAFF', isActive: true },
+        orderBy: [{ module: 'asc' }, { sortOrder: 'asc' }],
+    });
+
+    const grouped = {};
+    for (const p of allStaffPermissions) {
+        if (!subscribedIds.has(p.id)) continue;
+        if (!grouped[p.module]) grouped[p.module] = [];
+        grouped[p.module].push({ id: p.id, key: p.key, label: p.label });
     }
 
-    res.status(StatusCodes.OK).json({ msg: `Seeded ${createdRoles.length} default roles`, createdRoles });
-};
-
-// ─── GET PERMISSIONS DICTIONARY ──────────────────────────────────────────────────
-const getPermissions = async (req, res) => {
-    // A structured dictionary of all available permissions in the system
-    const permissions = {
-        student: [
-            { id: 'std_view', label: 'View Students' },
-            { id: 'std_add', label: 'Register Students' },
-            { id: 'std_edit', label: 'Edit Students' },
-            { id: 'std_delete', label: 'Delete Students' }
-        ],
-        academic: [
-            { id: 'acd_view', label: 'View Academics (Classes/Subjects)' },
-            { id: 'acd_manage', label: 'Manage Academics' },
-            { id: 'cbt_create', label: 'Create CBT Exams' },
-            { id: 'cbt_grade', label: 'Grade CBT Exams' }
-        ],
-        finance: [
-            { id: 'fin_view', label: 'View Financial Records' },
-            { id: 'fin_collect', label: 'Collect Fees' },
-            { id: 'fin_refund', label: 'Issue Refunds' },
-            { id: 'fin_salary', label: 'Manage Payroll' }
-        ],
-        admin: [
-            { id: 'adm_staff', label: 'Manage Staff' },
-            { id: 'adm_settings', label: 'School Settings' },
-            { id: 'adm_sms', label: 'Send SMS/Communication' },
-            { id: 'adm_roles', label: 'Manage Roles & Permissions' }
-        ]
-    };
-    
-    res.status(StatusCodes.OK).json({ permissions });
+    res.status(StatusCodes.OK).json({ permissions: grouped });
 };
 
 module.exports = {
@@ -187,6 +136,5 @@ module.exports = {
     createRole,
     updateRole,
     deleteRole,
-    seedDefaultRoles,
     getPermissions
 };

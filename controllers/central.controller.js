@@ -5,6 +5,7 @@ const jwt = require('jsonwebtoken')
 const prisma = require('../db/prisma')
 const { getTransporter, getFromEmail } = require('../utils/emailTransporter')
 const { generateOtpEmailTemplate } = require('../utils/emailTemplates')
+const { invalidateSchoolAccess } = require('../services/permissions.service')
 
 // In-memory store for initial setup OTPs since admin record doesn't exist yet
 const setupOtps = new Map();
@@ -747,45 +748,91 @@ const getFinancialAnalytics = async (req, res) => {
     res.status(StatusCodes.OK).json({ monthlyData, debtorSchools })
 }
 
-// ─── FEATURE FLAGS ───────────────────────────────────────────────────────────
+// ─── RBAC: DASHBOARD TOGGLES (Layer 1) ────────────────────────────────────────
+
+const ALL_DASHBOARD_TYPES = ['STUDENT', 'PARENT', 'TEACHER', 'STAFF']
+
+const getSchoolDashboards = async (req, res) => {
+    const { schoolId } = req.params
+    const rows = await prisma.schoolDashboard.findMany({ where: { schoolId } })
+    const byType = new Map(rows.map((r) => [r.dashboardType, r.enabled]))
+    // Any dashboard type without a row yet defaults to enabled, matching the schema default.
+    const dashboards = ALL_DASHBOARD_TYPES.map((dashboardType) => ({
+        dashboardType,
+        enabled: byType.has(dashboardType) ? byType.get(dashboardType) : true,
+    }))
+    res.status(StatusCodes.OK).json({ dashboards })
+}
+
+const upsertSchoolDashboard = async (req, res) => {
+    const { schoolId } = req.params
+    const { dashboardType, enabled } = req.body
+
+    const dashboard = await prisma.schoolDashboard.upsert({
+        where: { schoolId_dashboardType: { schoolId, dashboardType } },
+        update: { enabled, updatedById: req.centralAdmin.id },
+        create: { schoolId, dashboardType, enabled, updatedById: req.centralAdmin.id },
+    })
+
+    await invalidateSchoolAccess(schoolId)
+    await logAudit(req.centralAdmin.id, enabled ? 'ENABLE_DASHBOARD' : 'DISABLE_DASHBOARD', 'SchoolDashboard', schoolId, { dashboardType }, req.ip)
+    res.status(StatusCodes.OK).json({ dashboard })
+}
+
+// ─── RBAC: MENU-ITEM SUBSCRIPTION (Layer 2) ───────────────────────────────────
+// Replaces the old free-text FeatureFlag mechanism — keyed to the real
+// Permission catalog (currently STAFF dashboard only) instead of an arbitrary
+// hardcoded string list, so central admin subscribes a school to real menu
+// items/submenus rather than a handful of loose "feature" checkboxes.
 
 const getFeatureFlags = async (req, res) => {
     const { schoolId } = req.params
-    const flags = await prisma.featureFlag.findMany({
-        where: { schoolId },
-        include: { school: { select: { name: true } } },
-    })
+    const [permissions, subscribed] = await Promise.all([
+        prisma.permission.findMany({ where: { isActive: true }, orderBy: [{ module: 'asc' }, { sortOrder: 'asc' }] }),
+        prisma.schoolFeature.findMany({ where: { schoolId } }),
+    ])
+    const enabledByPermissionId = new Map(subscribed.map((s) => [s.permissionId, s.enabled]))
+    const flags = permissions.map((p) => ({
+        permissionId: p.id,
+        key: p.key,
+        label: p.label,
+        module: p.module,
+        dashboardType: p.dashboardType,
+        enabled: enabledByPermissionId.get(p.id) || false,
+    }))
     res.status(StatusCodes.OK).json({ flags })
 }
 
 const upsertFeatureFlag = async (req, res) => {
     const { schoolId } = req.params
-    const { feature, enabled } = req.body
+    const { permissionId, enabled } = req.body
 
-    const flag = await prisma.featureFlag.upsert({
-        where: { schoolId_feature: { schoolId, feature } },
-        update: { enabled },
-        create: { schoolId, feature, enabled },
+    const flag = await prisma.schoolFeature.upsert({
+        where: { schoolId_permissionId: { schoolId, permissionId } },
+        update: { enabled, updatedById: req.centralAdmin.id },
+        create: { schoolId, permissionId, enabled, updatedById: req.centralAdmin.id },
     })
 
-    await logAudit(req.centralAdmin.id, enabled ? 'ENABLE_FEATURE' : 'DISABLE_FEATURE', 'FeatureFlag', schoolId, { feature }, req.ip)
+    await invalidateSchoolAccess(schoolId)
+    await logAudit(req.centralAdmin.id, enabled ? 'ENABLE_FEATURE' : 'DISABLE_FEATURE', 'SchoolFeature', schoolId, { permissionId }, req.ip)
     res.status(StatusCodes.OK).json({ flag })
 }
 
 const bulkUpsertFeatureFlags = async (req, res) => {
     const { schoolId } = req.params
-    const { flags } = req.body // [{ feature, enabled }]
+    const { flags } = req.body // [{ permissionId, enabled }]
 
-    const operations = flags.map(({ feature, enabled }) =>
-        prisma.featureFlag.upsert({
-            where: { schoolId_feature: { schoolId, feature } },
-            update: { enabled },
-            create: { schoolId, feature, enabled },
+    const operations = flags.map(({ permissionId, enabled }) =>
+        prisma.schoolFeature.upsert({
+            where: { schoolId_permissionId: { schoolId, permissionId } },
+            update: { enabled, updatedById: req.centralAdmin.id },
+            create: { schoolId, permissionId, enabled, updatedById: req.centralAdmin.id },
         })
     )
 
     const results = await Promise.all(operations)
-    await logAudit(req.centralAdmin.id, 'BULK_FEATURE_UPDATE', 'FeatureFlag', schoolId, { flags }, req.ip)
+    await invalidateSchoolAccess(schoolId)
+    await logAudit(req.centralAdmin.id, 'BULK_FEATURE_UPDATE', 'SchoolFeature', schoolId, { count: flags.length }, req.ip)
     res.status(StatusCodes.OK).json({ flags: results })
 }
 
@@ -1205,6 +1252,7 @@ module.exports = {
     getPlans, createPlan, updatePlan, deletePlan,
     getAnalytics,
     getFinancialAnalytics,
+    getSchoolDashboards, upsertSchoolDashboard,
     getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags,
     getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
     getTickets, getTicket, replyToTicket, createTicket,

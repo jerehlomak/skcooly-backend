@@ -189,8 +189,41 @@ const validateAndLinkPin = async (req, res) => {
     })
 }
 
+// ─── SCHOOL ADMIN: Reactivate a PIN ──────────────────────────────────────────
+const reactivatePin = async (req, res) => {
+    const { id } = req.params;
+    
+    const pin = await prisma.schoolPin.findUnique({ where: { id } });
+    if (!pin) throw new CustomError.NotFoundError('PIN not found');
+    if (pin.schoolId !== req.user.schoolId) throw new CustomError.UnauthorizedError('Not authorized');
+
+    const updatedPin = await prisma.schoolPin.update({
+        where: { id },
+        data: {
+            usageCount: 0,
+            status: 'ACTIVE'
+        }
+    });
+
+    res.status(StatusCodes.OK).json({ message: 'PIN reactivated successfully.', pin: updatedPin });
+};
+
+// ─── SCHOOL ADMIN: Reveal full PIN code ──────────────────────────────────────
+const revealPin = async (req, res) => {
+    const { id } = req.params;
+
+    const pin = await prisma.schoolPin.findUnique({ where: { id } });
+    if (!pin) throw new CustomError.NotFoundError('PIN not found');
+    if (pin.schoolId !== req.user.schoolId) throw new CustomError.UnauthorizedError('Not authorized');
+
+    // Only allow revealing if it's already bound to a student (lost PIN scenario) or if they are admin
+    res.status(StatusCodes.OK).json({ pinCode: pin.pinCode });
+};
+
 module.exports = {
     getSchoolBatches,
     getSchoolPins,
-    validateAndLinkPin
+    validateAndLinkPin,
+    reactivatePin,
+    revealPin
 }

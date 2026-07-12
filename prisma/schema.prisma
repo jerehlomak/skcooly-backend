@@ -393,13 +393,79 @@ model CustomRole {
   name            String
   description     String?
   isSystemDefault Boolean  @default(false)
-  permissions     String[]
   users           User[]
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
+  rolePermissions RolePermission[]
+
   @@unique([schoolId, name])
   @@index([schoolId])
+}
+
+// ─── RBAC: Permission catalog + three-layer access control ──────────────────
+
+enum DashboardType {
+  STUDENT
+  PARENT
+  TEACHER
+  STAFF
+}
+
+model Permission {
+  id            String        @id @default(uuid())
+  key           String        @unique // stable slug derived from route path, e.g. "results.record"
+  label         String
+  module        String // top-level grouping for the toggle UI, e.g. "Result Management"
+  dashboardType DashboardType
+  path          String?
+  parentKey     String?
+  sortOrder     Int           @default(0)
+  isActive      Boolean       @default(true)
+
+  schoolFeatures  SchoolFeature[]
+  rolePermissions RolePermission[]
+
+  @@index([dashboardType, module])
+}
+
+model SchoolDashboard {
+  id            String        @id @default(uuid())
+  schoolId      String
+  dashboardType DashboardType
+  enabled       Boolean       @default(true)
+  updatedAt     DateTime      @updatedAt
+  updatedById   String?
+
+  school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, dashboardType])
+}
+
+model SchoolFeature {
+  id           String   @id @default(uuid())
+  schoolId     String
+  permissionId String
+  enabled      Boolean  @default(false)
+  updatedAt    DateTime @updatedAt
+  updatedById  String?
+
+  school     School     @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([schoolId, permissionId])
+}
+
+model RolePermission {
+  id           String   @id @default(uuid())
+  customRoleId String
+  permissionId String
+  createdAt    DateTime @default(now())
+
+  customRole CustomRole @relation(fields: [customRoleId], references: [id], onDelete: Cascade)
+  permission Permission @relation(fields: [permissionId], references: [id], onDelete: Cascade)
+
+  @@unique([customRoleId, permissionId])
 }
 
 model User {
@@ -626,23 +692,23 @@ model SubjectCategory {
 }
 
 model Subject {
-  id             String           @id @default(uuid())
-  schoolId       String? // tenant isolation
-  name           String
-  code           String?
-  categoryId     String?
-  type           String?
-  description    String?
-  status         String           @default("Active")
-  teacherId      String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  classes        ClassSubject[]
+  id               String            @id @default(uuid())
+  schoolId         String? // tenant isolation
+  name             String
+  code             String?
+  categoryId       String?
+  type             String?
+  description      String?
+  status           String            @default("Active")
+  teacherId        String?
+  createdAt        DateTime          @default(now())
+  updatedAt        DateTime          @updatedAt
+  classes          ClassSubject[]
   enrollments      Enrollment[]
   studentElectives StudentElective[]
   studentResults   StudentResult[]
-  teacher        TeacherProfile?  @relation("SubjectTeacher", fields: [teacherId], references: [id])
-  category       SubjectCategory? @relation(fields: [categoryId], references: [id])
+  teacher          TeacherProfile?   @relation("SubjectTeacher", fields: [teacherId], references: [id])
+  category         SubjectCategory?  @relation(fields: [categoryId], references: [id])
 
   isDeleted         Boolean             @default(false)
   deletedAt         DateTime?
@@ -697,11 +763,11 @@ model Enrollment {
 }
 
 model StudentElective {
-  id               String         @id @default(uuid())
+  id               String   @id @default(uuid())
   schoolId         String
   studentProfileId String
   subjectId        String
-  createdAt        DateTime       @default(now())
+  createdAt        DateTime @default(now())
 
   student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
   subject Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
@@ -977,7 +1043,7 @@ model GroupAdmin {
 
 // Tenant schools registered on the platform
 model School {
-  notifications    Notification[]
+  notifications              Notification[]
   id                         String                       @id @default(uuid())
   schoolCode                 String?                      @unique // e.g. SKL-A1B2C3 — required for user login
   name                       String
@@ -1048,6 +1114,8 @@ model School {
   Scholarship                Scholarship[]
   AcademicTerm               AcademicTerm[]
   applications               Application[]
+  schoolDashboards           SchoolDashboard[]
+  schoolFeatures             SchoolFeature[]
 }
 
 // ─── BRANCHES (Phase 1) ──────────────────────────────────────────────────────
@@ -1653,7 +1721,7 @@ model GradingScale {
   id             String   @id @default(uuid())
   schoolId       String
   category       String?  @default("ALL") // Primary, JSS, SSS, ALL
-  classId        String?  // Optional override per class
+  classId        String? // Optional override per class
   type           String   @default("SUBJECT") // Deprecated somewhat, keeping for backwards compatibility
   resultType     String   @default("SCORE_BASED") // SCORE_BASED | COMMENT_BASED
   assessmentType String   @default("EXAM") // EXAM | CA
@@ -1753,14 +1821,14 @@ model TraitConfiguration {
   schoolId    String
   domain      String // AFFECTIVE, PSYCHOMOTOR
   category    String   @default("ALL") // Nursery, Primary, Secondary, etc.
-    classId     String?  // Optional override per class
-    traits      String[] // ["Neatness", "Punctuality", ...]
+  classId     String? // Optional override per class
+  traits      String[] // ["Neatness", "Punctuality", ...]
   ratingScale Json // [{"rating": "A", "description": "Excellent"}]
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 
   @@index([schoolId, domain, category])
-    @@index([schoolId, classId])
+  @@index([schoolId, classId])
 }
 
 // ─── LMS & CBT (Phase 1 Expansion) ───────────────────────────────────────────
@@ -1903,6 +1971,8 @@ model SchoolPinBatch {
   pricePerPin Float    @default(0)
   currency    String   @default("NGN")
   status      String   @default("ACTIVE") // ACTIVE, DEPLETED, CANCELLED
+  maxUsage    Int      @default(5)
+  validityDays Int?    // Null means no time limit once activated
   adminId     String?
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
@@ -1920,12 +1990,14 @@ model SchoolPin {
   batchId      String
   schoolId     String?
   studentId    String?
-  usageCount   Int       @default(0)
-  maxUsage     Int       @default(5)
-  status       String    @default("ACTIVE") // ACTIVE, USED, EXPIRED
-  expiresAt    DateTime?
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  usageCount       Int       @default(0)
+  maxUsage         Int       @default(5)
+  status           String    @default("ACTIVE") // ACTIVE, USED, EXPIRED
+  expiresAt        DateTime?
+  activatedForTerm String?   // Term the PIN is locked to
+  activatedForYear String?   // Session/Year the PIN is locked to
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   batch       SchoolPinBatch  @relation(fields: [batchId], references: [id], onDelete: Cascade)
   school      School?         @relation(fields: [schoolId], references: [id])
@@ -2786,7 +2858,6 @@ model Application {
   school School    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   pin    SchoolPin @relation(fields: [pinId], references: [id], onDelete: Cascade)
 }
-
 
 model Notification {
   id        String   @id @default(uuid())

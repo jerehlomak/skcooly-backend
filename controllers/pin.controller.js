@@ -5,7 +5,7 @@ const { generateUniquePins } = require('../utils/pinCodeGenerator')
 // ─── PIN MANAGEMENT API ──────────────────────────────────────────────────
 
 const generatePins = async (req, res) => {
-    const { quantity, pricePerPin, schoolId, pinType } = req.body
+    const { quantity, pricePerPin, schoolId, pinType, maxUsage, validityDays } = req.body
     const adminId = req.centralAdmin.id
 
     if (!quantity || quantity < 1) {
@@ -25,6 +25,8 @@ const generatePins = async (req, res) => {
                 quantity,
                 pricePerPin: pricePerPin || 0,
                 schoolId: schoolId || null,
+                maxUsage: maxUsage ? Number(maxUsage) : 5,
+                validityDays: validityDays ? Number(validityDays) : null,
                 adminId
             }
         })
@@ -40,7 +42,7 @@ const generatePins = async (req, res) => {
                 serialNumber: `${batchNumber}-${String(index + 1).padStart(5, '0')}`,
                 pinType: pinType || 'RESULT_CHECKING',
                 schoolId: schoolId || null,
-                maxUsage: ['ADMISSION_APPLICATION', 'EMPLOYMENT'].includes(pinType) ? 1 : 5 // Applications are single-use
+                maxUsage: ['ADMISSION_APPLICATION', 'EMPLOYMENT'].includes(pinType) ? 1 : (maxUsage ? Number(maxUsage) : 5)
             }
         })
 
@@ -97,22 +99,33 @@ const assignBatch = async (req, res) => {
 }
 
 const getPins = async (req, res) => {
-    const { batchId, schoolId, status } = req.query
+    const { batchId, schoolId, status, pinType, page = 1, limit = 10 } = req.query
     const where = {}
     if (batchId) where.batchId = batchId
     if (schoolId) where.schoolId = schoolId
     if (status) where.status = status
+    if (pinType) where.pinType = pinType
+
+    const parsedPage = parseInt(page, 10);
+    const parsedLimit = parseInt(limit, 10);
+    const skip = (parsedPage - 1) * parsedLimit;
+
+    const total = await prisma.schoolPin.count({ where });
+    const totalPages = Math.ceil(total / parsedLimit) || 1;
 
     const pins = await prisma.schoolPin.findMany({
         where,
-        take: 200, // Limit to 200 for view
+        take: parsedLimit,
+        skip,
         orderBy: { createdAt: 'desc' },
-        include: { school: { select: { name: true } } }
+        include: { 
+            school: { select: { name: true } },
+            batch: { select: { batchNumber: true } },
+            student: { select: { firstName: true, lastName: true, admissionNo: true } }
+        }
     })
 
-    console.log("pins", pins);
-
-    res.status(StatusCodes.OK).json({ pins })
+    res.status(StatusCodes.OK).json({ pins, total, totalPages, currentPage: parsedPage })
 }
 
 module.exports = {

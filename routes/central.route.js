@@ -11,6 +11,7 @@ const {
     getSchools, getSchool, createSchool, updateSchool, suspendSchool, activateSchool, deleteSchool,
     getPlans, createPlan, updatePlan, deletePlan,
     getAnalytics, getFinancialAnalytics,
+    getSchoolDashboards, upsertSchoolDashboard,
     getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags,
     getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
     getTickets, getTicket, replyToTicket, createTicket,
@@ -72,7 +73,11 @@ router.route('/plans/:id').put(requireSuperAdmin, updatePlan).delete(requireSupe
 router.get('/analytics', getAnalytics)
 router.get('/analytics/financials', getFinancialAnalytics)
 
-// ─── Feature Flags ─────────────────────────────────────────────────────────
+// ─── RBAC: Dashboard toggles (Layer 1) ──────────────────────────────────────
+router.get('/schools/:schoolId/dashboards', getSchoolDashboards)
+router.put('/schools/:schoolId/dashboards', upsertSchoolDashboard)
+
+// ─── RBAC: Menu-item subscription (Layer 2) ─────────────────────────────────
 router.get('/features/:schoolId', getFeatureFlags)
 router.post('/features/:schoolId', upsertFeatureFlag)
 router.put('/features/:schoolId/bulk', bulkUpsertFeatureFlags)

@@ -35,7 +35,7 @@ const updateSettings = async (req, res) => {
     let settings = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } })
     const { 
         schoolName, tagline, motto, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, currencySymbol, timezone, rulesContent,
-        resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode, parentTranscriptAccess,
+        resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode, pinLifespan, parentTranscriptAccess,
         issuedResultTypes, caResultMode, examResultMode, resultConfig,
         admissionFormConfig, employmentFormConfig, admissionLetterTemplate, employmentLetterTemplate, parentAdmissionRequiresPin,
         smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom
@@ -70,6 +70,7 @@ const updateSettings = async (req, res) => {
                 ...(resultShowNextTermFees !== undefined && { resultShowNextTermFees }),
                 ...(resultAutomaticComments !== undefined && { resultAutomaticComments }),
                 ...(parentResultAccessMode !== undefined && { parentResultAccessMode }),
+                ...(pinLifespan !== undefined && { pinLifespan }),
                 ...(parentTranscriptAccess !== undefined && { parentTranscriptAccess }),
                 ...(issuedResultTypes !== undefined && { issuedResultTypes }),
                 ...(caResultMode !== undefined && { caResultMode }),

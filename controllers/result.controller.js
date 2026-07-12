@@ -71,6 +71,105 @@ const computeGrade = (totalScore, grades) => {
     return { grade: 'F', remark: 'Fail' };
 };
 
+// ─── PIN VALIDATION HELPER ──────────────────────────────────────────────────
+const verifyAndConsumePin = async (req, res, studentProfileId, term, academicYear, schoolSettingsRecord, consume = true) => {
+    if (req.user.role !== 'PARENT' && req.user.role !== 'STUDENT') return true;
+    
+    const accessMode = schoolSettingsRecord?.parentResultAccessMode;
+    if (accessMode !== 'PIN') return true;
+
+    const { pinCode } = req.query;
+    
+    const lifespan = schoolSettingsRecord?.pinLifespan || 'PER_TERM';
+
+    let existingPinWhere = {
+        studentId: studentProfileId,
+        schoolId: req.user.schoolId,
+        status: 'ACTIVE'
+    };
+
+    if (lifespan === 'PER_SESSION') {
+        existingPinWhere.activatedForYear = academicYear;
+    } else if (lifespan === 'PER_TERM') {
+        existingPinWhere.activatedForTerm = term;
+        existingPinWhere.activatedForYear = academicYear;
+    }
+    // If lifespan === 'PERMANENT', we don't filter by term or year.
+
+    const existingPin = await prisma.schoolPin.findFirst({
+        where: existingPinWhere,
+        orderBy: { updatedAt: 'desc' } // Get the most recently used one
+    });
+
+    if (existingPin) {
+        if (!consume) return true;
+        
+        // We found an active PIN already bound to this student for the correct lifespan.
+        // We do NOT increment usageCount for every page load to prevent premature exhaustion.
+        // We just log the view action.
+        await prisma.pinUsageLog.create({
+            data: {
+                pinId: existingPin.id,
+                usageContext: 'RESULT_VERIFICATION',
+                action: 'VIEWED_TERM_RESULT',
+                metadata: { term, academicYear },
+                usedByIdentifier: studentProfileId
+            }
+        });
+        
+        return true;
+    } else {
+        if (!pinCode) {
+            res.status(403).json({ message: 'PIN_REQUIRED' });
+            return false;
+        }
+        const pin = await prisma.schoolPin.findUnique({ where: { pinCode } });
+        if (!pin) { res.status(403).json({ message: 'Invalid PIN code.' }); return false; }
+        if (pin.schoolId !== req.user.schoolId) { res.status(403).json({ message: 'Invalid PIN for this school.' }); return false; }
+        if (pin.pinType !== 'RESULT_CHECKING') { res.status(403).json({ message: 'Invalid PIN type.' }); return false; }
+        if (pin.status !== 'ACTIVE' || pin.usageCount >= pin.maxUsage) {
+            res.status(403).json({ message: 'This PIN has expired or reached its maximum usage limit.' }); return false;
+        }
+        if (pin.studentId && pin.studentId !== studentProfileId) {
+            res.status(403).json({ message: 'This PIN is already bound to another student.' }); return false;
+        }
+        if (lifespan === 'PER_SESSION') {
+            if (pin.activatedForYear && pin.activatedForYear !== academicYear) {
+                res.status(403).json({ message: `This PIN is only valid for the ${pin.activatedForYear} session.` }); return false;
+            }
+        } else if (lifespan === 'PER_TERM') {
+            if (pin.activatedForTerm && (pin.activatedForTerm !== term || pin.activatedForYear !== academicYear)) {
+                res.status(403).json({ message: `This PIN is only valid for ${pin.activatedForTerm} ${pin.activatedForYear}.` }); return false;
+            }
+        }
+
+        await prisma.$transaction(async (tx) => {
+            const newUsageCount = pin.usageCount + 1;
+            const newStatus = newUsageCount >= pin.maxUsage ? 'USED' : 'ACTIVE';
+            await tx.schoolPin.update({
+                where: { id: pin.id },
+                data: {
+                    studentId: studentProfileId,
+                    activatedForTerm: term,
+                    activatedForYear: academicYear,
+                    usageCount: newUsageCount,
+                    status: newStatus
+                }
+            });
+            await tx.pinUsageLog.create({
+                data: {
+                    pinId: pin.id,
+                    usageContext: 'RESULT_VERIFICATION',
+                    action: 'VIEWED_TERM_RESULT',
+                    metadata: { term, academicYear },
+                    usedByIdentifier: studentProfileId
+                }
+            });
+        });
+        return true;
+    }
+};
+
 // ─── GET FULL REPORT CARD FOR A STUDENT ──────────────────────────────────────
 const getStudentReportCard = async (req, res) => {
     let { studentProfileId, term, academicYear, classId } = req.query;
@@ -132,6 +231,13 @@ const getStudentReportCard = async (req, res) => {
 
     const effectiveClassId = classId || student.classId;
 
+    const schoolSettingsRecord = await prisma.schoolSettings.findFirst({
+        where: { schoolId: req.user.schoolId }
+    });
+
+    const isPinValid = await verifyAndConsumePin(req, res, studentProfileId, term, academicYear, schoolSettingsRecord);
+    if (!isPinValid) return; // Response is handled in the helper
+
     // ── TASK 1.5: Release Gate — parents and students cannot see unreleased results ──
     if (req.user.role === 'STUDENT' || req.user.role === 'PARENT') {
         if (effectiveClassId) {
@@ -179,9 +285,19 @@ const getStudentReportCard = async (req, res) => {
     });
 
     // 4. Grading scale — look up by category first, then fall back to 'ALL'
-    const studentCategory = results[0]?.category || null;
-    let gradingScaleRecord = null;
+    let studentCategory = results[0]?.category || null;
     const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
+    
+    if (studentCategory) {
+        const classLevelRec = await prisma.classLevel.findFirst({
+            where: { schoolId: req.user.schoolId, name: studentCategory }
+        });
+        if (classLevelRec && classLevelRec.category) {
+            studentCategory = classLevelRec.category;
+        }
+    }
+
+    let gradingScaleRecord = null;
     
     if (studentCategory) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
@@ -234,11 +350,6 @@ const getStudentReportCard = async (req, res) => {
     const totalScore = enrichedResults.reduce((sum, r) => sum + r.totalScore, 0);
     const average = totalSubjects > 0 ? (totalScore / totalSubjects).toFixed(1) : '0';
 
-    // Fetch SchoolSettings right away for feature toggles
-    const schoolSettingsRecord = await prisma.schoolSettings.findFirst({
-        where: { schoolId: req.user.schoolId }
-    });
-    
     // Fetch trait configuration
     const traitConfiguration = await prisma.traitConfiguration.findMany({
         where: { schoolId: req.user.schoolId }
@@ -516,7 +627,9 @@ const getStudentReportCard = async (req, res) => {
                 display: sectionDisplay,
                 signatures: sectionSignatures,
                 traitConfiguration: traitConfiguration,
-                resultConfig: resultConfig
+                resultConfig: resultConfig,
+                resultClassPosition: sectionDisplay?.showClassPosition ?? true,
+                resultSubjectPosition: sectionDisplay?.showSubjectPosition ?? true
             };
         })() : null,
         gradingScale: { grades, passMark }
@@ -580,6 +693,13 @@ const generateReportCardPDF = async (req, res) => {
 
     const effectiveClassId = classId || student.classId;
 
+    const schoolSettingsRecord = await prisma.schoolSettings.findFirst({
+        where: { schoolId: req.user.schoolId }
+    });
+
+    const isPinValid = await verifyAndConsumePin(req, res, studentProfileId, term, academicYear, schoolSettingsRecord);
+    if (!isPinValid) return;
+
     let results = await prisma.studentResult.findMany({
         where: { studentProfileId, term, academicYear, schoolId: req.user.schoolId },
         include: { subject: { select: { name: true, code: true, categoryId: true } } },
@@ -590,9 +710,19 @@ const generateReportCardPDF = async (req, res) => {
         results = results.filter(r => !r.subject.categoryId || r.subject.categoryId === student.subjectCategoryId);
     }
 
-    const studentCategory = results[0]?.category || null;
-    let gradingScaleRecord = null;
+    let studentCategory = results[0]?.category || null;
     const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
+    
+    if (studentCategory) {
+        const classLevelRec = await prisma.classLevel.findFirst({
+            where: { schoolId: req.user.schoolId, name: studentCategory }
+        });
+        if (classLevelRec && classLevelRec.category) {
+            studentCategory = classLevelRec.category;
+        }
+    }
+
+    let gradingScaleRecord = null;
     
     if (studentCategory) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
@@ -642,9 +772,6 @@ const generateReportCardPDF = async (req, res) => {
     const totalScore = enrichedResults.reduce((sum, r) => sum + r.totalScore, 0);
     const average = totalSubjects > 0 ? (totalScore / totalSubjects).toFixed(1) : '0';
 
-    const schoolSettingsRecord = await prisma.schoolSettings.findFirst({
-        where: { schoolId: req.user.schoolId }
-    });
 
     let classAverage = null;
     let highestAvg = null;
@@ -768,7 +895,9 @@ const generateReportCardPDF = async (req, res) => {
             psychomotorTraits: [],
             comment: teacherComment,
             principalComment: principalComment,
-            narrativeComments: manualComment?.narrativeComments || {}
+            narrativeComments: manualComment?.narrativeComments || {},
+            showClassPosition: schoolSettingsRecord?.resultConfig?.display?.showClassPosition ?? true,
+            showSubjectPosition: schoolSettingsRecord?.resultConfig?.display?.showSubjectPosition ?? true
         }
     };
 
@@ -1933,5 +2062,6 @@ module.exports = {
     getBatchIds,
     getBatchReportCards,
     deleteTraitConfiguration,
-    renameTraitConfiguration
+    renameTraitConfiguration,
+    verifyAndConsumePin
 };

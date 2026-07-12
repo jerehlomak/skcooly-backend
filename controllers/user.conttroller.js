@@ -4,6 +4,7 @@ const argon2 = require('argon2')
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
 const { createTokenUser, attachCookiesToResponse, checkPermissions } = require('../utils')
+const { resolveUserAccess } = require('../services/permissions.service')
 
 const getAllUsers = async (req, res) => {
     // Only looking for users, filtering out password hash
@@ -69,6 +70,7 @@ const showCurrentUser = async (req, res) => {
             role: true,
             schoolId: true,
             branchId: true, // Phase 1/2
+            customRoleId: true, // RBAC: client uses this to know the user is role-constrained
             studentProfile: true,
             teacherProfile: true,
             parentProfile: true,
@@ -104,7 +106,9 @@ const showCurrentUser = async (req, res) => {
         schoolData = school ? { ...school, logoUrl: schoolSettings?.logoUrl || school.logoUrl, blockedFeatures: schoolSettings?.blockedFeatures || [] } : null;
     }
 
-    res.status(StatusCodes.OK).json({ user: { ...user, school: schoolData } })
+    const { permissions, enabledDashboards } = await resolveUserAccess(user.id);
+
+    res.status(StatusCodes.OK).json({ user: { ...user, school: schoolData, permissions, enabledDashboards } })
 }
 
 const updateUser = async (req, res) => {
@@ -152,7 +156,8 @@ const updateUser = async (req, res) => {
 
     const tokenUser = createTokenUser(user)
     attachCookiesToResponse({ res, user: tokenUser })
-    res.status(StatusCodes.OK).json({ user: refreshedUser })
+    const { permissions, enabledDashboards } = await resolveUserAccess(user.id);
+    res.status(StatusCodes.OK).json({ user: { ...refreshedUser, permissions, enabledDashboards } })
 }
 
 const updateUserPassword = async (req, res) => {
@@ -309,25 +314,35 @@ const restrictUser = async (req, res) => {
     });
 };
 
-// ─── BULK RESTRICT BY ROLE ────────────────────────────────────────────────────
+// ─── BULK RESTRICT BY ROLE OR IDS ───────────────────────────────────────────────
 const bulkRestrictUsers = async (req, res) => {
-    const { role, isRestricted, reason } = req.body;
+    const { role, userIds, isRestricted, reason } = req.body;
 
-    if (!role) throw new CustomError.BadRequestError('role is required');
+    if (!role && (!userIds || !Array.isArray(userIds) || userIds.length === 0)) {
+        throw new CustomError.BadRequestError('Either role or userIds array is required');
+    }
     if (isRestricted === undefined) throw new CustomError.BadRequestError('isRestricted (boolean) is required');
     if (isRestricted && !reason) throw new CustomError.BadRequestError('A restriction reason is required when restricting');
 
     const PROTECTED_ROLES = ['SUPER_ADMIN', 'SCHOOL_SUPER_ADMIN', 'GROUP_ADMIN'];
-    if (PROTECTED_ROLES.includes(role)) {
-        throw new CustomError.UnauthorizedError('That role cannot be bulk restricted');
+    
+    let whereClause = {
+        schoolId: req.user.schoolId,
+        isDeleted: false
+    };
+
+    if (role) {
+        if (PROTECTED_ROLES.includes(role)) {
+            throw new CustomError.UnauthorizedError('That role cannot be bulk restricted');
+        }
+        whereClause.role = role;
+    } else if (userIds) {
+        whereClause.id = { in: userIds };
+        whereClause.role = { notIn: ['ADMIN', 'SCHOOL_SUPER_ADMIN'] }; // Protect admins (using valid enum values)
     }
 
     const result = await prisma.user.updateMany({
-        where: {
-            schoolId: req.user.schoolId,
-            role,
-            isDeleted: false
-        },
+        where: whereClause,
         data: {
             isRestricted: Boolean(isRestricted),
             restrictionReason: isRestricted ? reason.trim() : null,
@@ -337,7 +352,7 @@ const bulkRestrictUsers = async (req, res) => {
     });
 
     res.status(StatusCodes.OK).json({
-        msg: `${result.count} ${role.toLowerCase()}(s) ${isRestricted ? 'restricted' : 'unrestricted'} successfully`,
+        msg: `${result.count} user(s) ${isRestricted ? 'restricted' : 'unrestricted'} successfully`,
         count: result.count
     });
 };

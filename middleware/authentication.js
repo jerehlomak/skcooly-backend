@@ -1,6 +1,7 @@
 const CustomError = require('../errors')
 const { isTokenValid } = require('../utils')
 const prisma = require('../db/prisma')
+const { resolveUserAccess } = require('../services/permissions.service')
 
 const authenticateUser = async (req, res, next) => {
     let token = req.signedCookies?.token;
@@ -78,24 +79,18 @@ const authorizePermissions = (...roles) => {
     };
 };
 
-const requirePermission = (requiredPerm) => {
+// Three-layer RBAC gate: dashboard enabled (Layer 1) -> school subscribed (Layer 2)
+// -> role has this permission (Layer 3). Backed by a per-user resolved & cached
+// permission set (see services/permissions.service.js) so this is a plain
+// array-includes check on the hot path, not a fresh DB round-trip per request.
+const requirePermission = (permissionKey) => {
     return async (req, res, next) => {
         try {
-            // Super admins and school admins bypass granular permission checks
-            if (['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'].includes(req.user.role)) {
-                return next();
+            const { permissions } = await resolveUserAccess(req.user.userId);
+            if (!permissions.includes(permissionKey)) {
+                throw new CustomError.UnauthorizedError(`Permission denied. Requires: ${permissionKey}`);
             }
-            
-            const user = await prisma.user.findUnique({
-                where: { id: req.user.userId },
-                include: { customRole: true }
-            });
-            
-            if (user?.customRole?.permissions?.includes(requiredPerm)) {
-                return next();
-            }
-            
-            throw new CustomError.UnauthorizedError(`Permission denied. Requires: ${requiredPerm}`);
+            next();
         } catch (error) {
             next(error);
         }

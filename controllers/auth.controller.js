@@ -4,6 +4,7 @@ const argon2 = require('argon2')
 const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
 const { createTokenUser, attachCookiesToResponse } = require('../utils')
+const { resolveUserAccess } = require('../services/permissions.service')
 
 const register = async (req, res) => {
     const { email, name, password } = req.body
@@ -131,6 +132,8 @@ const login = async (req, res) => {
         user.teacherProfile.formClasses = formClasses;
     }
 
+    const { permissions, enabledDashboards } = await resolveUserAccess(user.id)
+
     const userContextData = {
         id: user.id,
         name: user.name,
@@ -138,10 +141,13 @@ const login = async (req, res) => {
         role: user.role,
         schoolId: user.schoolId || null,
         branchId: user.branchId || null, // Phase 1: null for school-scope, set for branch users
+        customRoleId: user.customRoleId || null, // RBAC: client uses this to know the user is role-constrained
         school: { ...school, blockedFeatures: schoolSettings?.blockedFeatures || [] },
         studentProfile: user.studentProfile,
         teacherProfile: user.teacherProfile,
         parentProfile: user.parentProfile,
+        permissions,
+        enabledDashboards,
     }
 
     res.status(StatusCodes.OK).json({ user: userContextData })
