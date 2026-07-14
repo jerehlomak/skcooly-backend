@@ -33,11 +33,21 @@ const addStudent = async (req, res) => {
 
     const currentYear = new Date().getFullYear()
 
-    // Fetch the school's code to namespace the generated email globally
+    // Fetch the school and its active plan
     const school = await prisma.school.findUnique({
         where: { id: req.user.schoolId },
-        select: { schoolCode: true }
+        include: { plan: true }
     })
+
+    if (school && school.plan && school.plan.maxStudents) {
+        const currentStudentCount = await prisma.studentProfile.count({
+            where: { schoolId: req.user.schoolId, isDeleted: false }
+        })
+        if (currentStudentCount >= school.plan.maxStudents) {
+            throw new CustomError.ForbiddenError(`Plan limit reached: Maximum allowed students is ${school.plan.maxStudents}. Please upgrade your plan to add more.`)
+        }
+    }
+
     // Sanitize schoolCode for use in email: e.g. "SKL-A1B2C3" → "skla1b2c3"
     const schoolTag = (school?.schoolCode || req.user.schoolId.slice(0, 8))
         .toLowerCase().replace(/[^a-z0-9]/g, '')

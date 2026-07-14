@@ -83,9 +83,21 @@ const createBranch = async (req, res) => {
     }
 
     // Verify school exists
-    const school = await prisma.school.findUnique({ where: { id: schoolId } })
+    const school = await prisma.school.findUnique({ 
+        where: { id: schoolId },
+        include: { plan: true }
+    })
     if (!school) {
         return res.status(StatusCodes.NOT_FOUND).json({ message: 'School not found.' })
+    }
+
+    if (school.plan && school.plan.maxBranches) {
+        const currentBranchCount = await prisma.branch.count({
+            where: { schoolId }
+        })
+        if (currentBranchCount >= school.plan.maxBranches) {
+            return res.status(StatusCodes.FORBIDDEN).json({ message: `Plan limit reached: Maximum allowed branches is ${school.plan.maxBranches}. Please upgrade your plan to add more.` })
+        }
     }
 
     try {

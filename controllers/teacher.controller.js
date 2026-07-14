@@ -16,12 +16,22 @@ const addTeacher = async (req, res) => {
         throw new CustomError.BadRequestError('Please provide name and gender');
     }
 
+    const school = await prisma.school.findUnique({
+        where: { id: req.user.schoolId },
+        include: { plan: true }
+    });
+
+    if (school && school.plan && school.plan.maxTeachers) {
+        const currentTeacherCount = await prisma.teacherProfile.count({
+            where: { schoolId: req.user.schoolId, isDeleted: false }
+        });
+        if (currentTeacherCount >= school.plan.maxTeachers) {
+            throw new CustomError.ForbiddenError(`Plan limit reached: Maximum allowed teachers is ${school.plan.maxTeachers}. Please upgrade your plan to add more.`);
+        }
+    }
+
     let generatedEmail = email;
     if (!generatedEmail) {
-        const school = await prisma.school.findUnique({
-            where: { id: req.user.schoolId },
-            select: { schoolCode: true }
-        });
         const schoolTag = (school?.schoolCode || req.user.schoolId.slice(0, 8))
             .toLowerCase().replace(/[^a-z0-9]/g, '');
         const safeName = (name.toLowerCase()

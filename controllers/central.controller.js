@@ -283,8 +283,13 @@ const getOverview = async (req, res) => {
         }),
     ])
 
-    const studentTotal = await prisma.school.aggregate({ _sum: { studentCount: true } })
-    const teacherTotal = await prisma.school.aggregate({ _sum: { teacherCount: true } })
+    const totalStudents = await prisma.user.count({ where: { role: 'STUDENT', isDeleted: false } })
+    const totalTeachers = await prisma.user.count({ 
+        where: { 
+            role: { in: ['TEACHER', 'ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN', 'BRANCH_ADMIN', 'BRANCH_STAFF'] },
+            isDeleted: false 
+        } 
+    })
 
     // Extended Financial Metrics (Sprint D)
     const thirtyDaysAgo = new Date()
@@ -310,8 +315,8 @@ const getOverview = async (req, res) => {
             totalSchools,
             activeSchools,
             suspendedSchools,
-            totalStudents: studentTotal._sum.studentCount || 0,
-            totalTeachers: teacherTotal._sum.teacherCount || 0,
+            totalStudents: totalStudents || 0,
+            totalTeachers: totalTeachers || 0,
             totalPlans,
             monthlyRevenue: revenueAgg._sum.amount || 0,
             totalReceivables: receivablesAgg._sum.amountDue || 0,
@@ -461,6 +466,8 @@ const createSchool = async (req, res) => {
                     data: { schoolId: school.id, planId, amountPaid: plan.monthlyPrice },
                 })
             }
+            // Auto-sync features for the school based on the plan
+            await syncSchoolFeaturesToPlan(school.id, planId, req.centralAdmin.id);
         }
 
         // ── Auto-provision school admin credentials ───────────────────────────────
@@ -524,6 +531,10 @@ const updateSchool = async (req, res) => {
             },
             include: { plan: { select: { name: true, monthlyPrice: true } } },
         })
+
+        if (planId) {
+            await syncSchoolFeaturesToPlan(school.id, planId, req.centralAdmin.id);
+        }
 
         await logAudit(req.centralAdmin.id, 'UPDATE_SCHOOL', 'School', school.id, req.body, req.ip)
         res.status(StatusCodes.OK).json({ school })
@@ -785,12 +796,66 @@ const upsertSchoolDashboard = async (req, res) => {
 // hardcoded string list, so central admin subscribes a school to real menu
 // items/submenus rather than a handful of loose "feature" checkboxes.
 
+// Sync school features automatically based on its subscription plan
+const syncSchoolFeaturesToPlan = async (schoolId, planId, adminId) => {
+    if (!planId) return;
+    const plan = await prisma.subscriptionPlan.findUnique({ where: { id: planId } });
+    if (!plan) return;
+    
+    let planFeatures = plan.features || [];
+    if (typeof planFeatures === 'string') {
+        try { planFeatures = JSON.parse(planFeatures); } catch { planFeatures = []; }
+    }
+
+    const permissions = await prisma.permission.findMany({ where: { isActive: true } });
+    
+    const operations = permissions.map(p => {
+        const enabled = planFeatures.includes(p.module) || planFeatures.includes(p.module.toLowerCase());
+        return prisma.schoolFeature.upsert({
+            where: { schoolId_permissionId: { schoolId, permissionId: p.id } },
+            update: { enabled, updatedById: adminId },
+            create: { schoolId, permissionId: p.id, enabled, updatedById: adminId }
+        });
+    });
+
+    if (operations.length > 0) {
+        await prisma.$transaction(operations);
+    }
+}
+
+const getPermissionModules = async (req, res) => {
+    const permissions = await prisma.permission.findMany({
+        select: { module: true },
+        where: { isActive: true },
+        distinct: ['module']
+    });
+    const modules = permissions.map(p => p.module).filter(Boolean).sort();
+    res.status(StatusCodes.OK).json({ modules });
+}
+
 const getFeatureFlags = async (req, res) => {
     const { schoolId } = req.params
-    const [permissions, subscribed] = await Promise.all([
+
+    const school = await prisma.school.findUnique({
+        where: { id: schoolId },
+        include: { plan: true }
+    });
+    
+    let planFeatures = school?.plan?.features || [];
+    if (typeof planFeatures === 'string') {
+        try { planFeatures = JSON.parse(planFeatures); } catch { planFeatures = []; }
+    }
+
+    const [allPermissions, subscribed] = await Promise.all([
         prisma.permission.findMany({ where: { isActive: true }, orderBy: [{ module: 'asc' }, { sortOrder: 'asc' }] }),
         prisma.schoolFeature.findMany({ where: { schoolId } }),
     ])
+    
+    // Only return permissions whose module is included in the plan's features
+    const permissions = allPermissions.filter(p => 
+        planFeatures.includes(p.module) || planFeatures.includes(p.module.toLowerCase())
+    );
+
     const enabledByPermissionId = new Map(subscribed.map((s) => [s.permissionId, s.enabled]))
     const flags = permissions.map((p) => ({
         permissionId: p.id,
@@ -1249,11 +1314,10 @@ module.exports = {
     getOverview,
     getSchools, getSchool, createSchool, updateSchool, suspendSchool, activateSchool, deleteSchool,
     getSchoolCredentials, resetSchoolCredentials, syncSchoolCounts,
-    getPlans, createPlan, updatePlan, deletePlan,
-    getAnalytics,
-    getFinancialAnalytics,
+    getPlans,    createPlan, updatePlan, deletePlan,
+    getAnalytics, getFinancialAnalytics,
     getSchoolDashboards, upsertSchoolDashboard,
-    getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags,
+    getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags, getPermissionModules,
     getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
     getTickets, getTicket, replyToTicket, createTicket,
     getAuditLogs, getGroups, createGroup,

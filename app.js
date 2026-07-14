@@ -207,6 +207,11 @@ const start = async () => {
         await prisma.$connect()
         console.log('Successfully connected to the PostgreSQL database via Prisma')
 
+        // Auto-seed permissions on startup so new menus are always available
+        const seedPermissions = require('./scripts/seed-permissions')
+        await seedPermissions()
+        console.log('Menu permissions automatically seeded on startup.')
+
         startBillingCron()
         initSmsWorker()
         app.listen(PORT, () => console.log(`Server is listening at port ${PORT}`))

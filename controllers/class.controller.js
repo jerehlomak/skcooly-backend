@@ -9,6 +9,21 @@ const addClass = async (req, res) => {
     const { name, sectionId, arms, sessionId, order } = req.body
     if (!name || !sectionId) throw new CustomError.BadRequestError('Class base name and section are required')
 
+    const school = await prisma.school.findUnique({
+        where: { id: req.user.schoolId },
+        include: { plan: true }
+    });
+
+    if (school && school.plan && school.plan.maxClasses) {
+        const currentClassCount = await prisma.class.count({
+            where: { schoolId: req.user.schoolId, isDeleted: false }
+        });
+        const classesToAdd = (arms && Array.isArray(arms) && arms.length > 0) ? arms.length : 1;
+        if (currentClassCount + classesToAdd > school.plan.maxClasses) {
+            throw new CustomError.ForbiddenError(`Plan limit reached: Maximum allowed classes is ${school.plan.maxClasses}. Please upgrade your plan to add more.`);
+        }
+    }
+
     const section = await prisma.section.findUnique({ where: { id: sectionId } })
     if (!section) throw new CustomError.BadRequestError('Invalid section selected')
 

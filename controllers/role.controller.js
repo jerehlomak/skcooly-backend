@@ -110,6 +110,16 @@ const deleteRole = async (req, res) => {
 // Items the school hasn't subscribed to never appear here, so there's nothing
 // to tick for them.
 const getPermissions = async (req, res) => {
+    const school = await prisma.school.findUnique({
+        where: { id: req.user.schoolId },
+        include: { plan: true }
+    });
+    
+    let planFeatures = school?.plan?.features || [];
+    if (typeof planFeatures === 'string') {
+        try { planFeatures = JSON.parse(planFeatures); } catch { planFeatures = []; }
+    }
+
     const subscribedRows = await prisma.schoolFeature.findMany({
         where: { schoolId: req.user.schoolId, enabled: true },
         select: { permissionId: true },
@@ -123,7 +133,14 @@ const getPermissions = async (req, res) => {
 
     const grouped = {};
     for (const p of allStaffPermissions) {
+        // Skip if the module is not included in the school's active plan
+        if (!planFeatures.includes(p.module) && !planFeatures.includes(p.module.toLowerCase())) {
+            continue;
+        }
+        
+        // Skip if explicitly disabled via the layer-2 SchoolFeature toggle
         if (!subscribedIds.has(p.id)) continue;
+
         if (!grouped[p.module]) grouped[p.module] = [];
         grouped[p.module].push({ id: p.id, key: p.key, label: p.label });
     }

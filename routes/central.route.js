@@ -12,7 +12,7 @@ const {
     getPlans, createPlan, updatePlan, deletePlan,
     getAnalytics, getFinancialAnalytics,
     getSchoolDashboards, upsertSchoolDashboard,
-    getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags,
+    getFeatureFlags, upsertFeatureFlag, bulkUpsertFeatureFlags, getPermissionModules,
     getAnnouncements, createAnnouncement, updateAnnouncement, deleteAnnouncement,
     getTickets, getTicket, replyToTicket, createTicket,
     getAuditLogs, getSchoolCredentials, resetSchoolCredentials, syncSchoolCounts,
@@ -78,6 +78,7 @@ router.get('/schools/:schoolId/dashboards', getSchoolDashboards)
 router.put('/schools/:schoolId/dashboards', upsertSchoolDashboard)
 
 // ─── RBAC: Menu-item subscription (Layer 2) ─────────────────────────────────
+router.get('/permissions/modules', getPermissionModules)
 router.get('/features/:schoolId', getFeatureFlags)
 router.post('/features/:schoolId', upsertFeatureFlag)
 router.put('/features/:schoolId/bulk', bulkUpsertFeatureFlags)
