@@ -208,9 +208,9 @@ const start = async () => {
         console.log('Successfully connected to the PostgreSQL database via Prisma')
 
         // Auto-seed permissions on startup so new menus are always available
-        const seedPermissions = require('./scripts/seed-permissions')
-        await seedPermissions()
-        console.log('Menu permissions automatically seeded on startup.')
+        const syncPermissions = require('./scripts/sync-permissions')
+        await syncPermissions()
+        console.log('Menu permissions automatically synced on startup.')
 
         startBillingCron()
         initSmsWorker()
