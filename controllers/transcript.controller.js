@@ -12,7 +12,7 @@ const generateTranscript = async (req, res) => {
     if (req.user.role === 'PARENT') {
         const schoolSettings = await prisma.schoolSettings.findFirst({ where: { schoolId } });
         if (!schoolSettings || !schoolSettings.parentTranscriptAccess) {
-            throw new CustomError.ForbiddenError('Transcripts are not currently available for download by parents.');
+            throw new CustomError.UnauthorizedError('Transcripts are not currently available for download by parents.');
         }
         
         // Ensure the parent is actually requesting their own child's transcript
@@ -22,10 +22,10 @@ const generateTranscript = async (req, res) => {
         });
 
         if (!student || student.parentProfileId !== req.user.profileId) {
-            throw new CustomError.ForbiddenError('You can only download transcripts for your own children.');
+            throw new CustomError.UnauthorizedError('You can only download transcripts for your own children.');
         }
     } else if (!['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'].includes(req.user.role)) {
-        throw new CustomError.ForbiddenError('You do not have permission to download transcripts.');
+        throw new CustomError.UnauthorizedError('You do not have permission to download transcripts.');
     }
 
     // 1. Fetch Student Info & School Info

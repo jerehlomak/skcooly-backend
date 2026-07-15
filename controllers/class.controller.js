@@ -20,7 +20,7 @@ const addClass = async (req, res) => {
         });
         const classesToAdd = (arms && Array.isArray(arms) && arms.length > 0) ? arms.length : 1;
         if (currentClassCount + classesToAdd > school.plan.maxClasses) {
-            throw new CustomError.ForbiddenError(`Plan limit reached: Maximum allowed classes is ${school.plan.maxClasses}. Please upgrade your plan to add more.`);
+            throw new CustomError.UnauthorizedError(`Plan limit reached: Maximum allowed classes is ${school.plan.maxClasses}. Please upgrade your plan to add more.`);
         }
     }
 

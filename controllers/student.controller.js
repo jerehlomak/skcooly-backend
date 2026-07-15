@@ -44,7 +44,7 @@ const addStudent = async (req, res) => {
             where: { schoolId: req.user.schoolId, isDeleted: false }
         })
         if (currentStudentCount >= school.plan.maxStudents) {
-            throw new CustomError.ForbiddenError(`Plan limit reached: Maximum allowed students is ${school.plan.maxStudents}. Please upgrade your plan to add more.`)
+            throw new CustomError.UnauthorizedError(`Plan limit reached: Maximum allowed students is ${school.plan.maxStudents}. Please upgrade your plan to add more.`)
         }
     }
 

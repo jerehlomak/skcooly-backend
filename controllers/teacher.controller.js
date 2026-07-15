@@ -26,7 +26,7 @@ const addTeacher = async (req, res) => {
             where: { schoolId: req.user.schoolId, isDeleted: false }
         });
         if (currentTeacherCount >= school.plan.maxTeachers) {
-            throw new CustomError.ForbiddenError(`Plan limit reached: Maximum allowed teachers is ${school.plan.maxTeachers}. Please upgrade your plan to add more.`);
+            throw new CustomError.UnauthorizedError(`Plan limit reached: Maximum allowed teachers is ${school.plan.maxTeachers}. Please upgrade your plan to add more.`);
         }
     }
 
