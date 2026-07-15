@@ -25,8 +25,8 @@ const getGradingScale = async (req, res) => {
     const resultType = req.query.resultType || 'SCORE_BASED';
     const assessmentType = req.query.assessmentType || 'EXAM';
     
-    const scale = await prisma.gradingScale.findUnique({
-        where: { schoolId_category_type_resultType_assessmentType: { schoolId: req.user.schoolId, category, type, resultType, assessmentType } }
+    const scale = await prisma.gradingScale.findFirst({
+        where: { schoolId: req.user.schoolId, category, type, resultType, assessmentType }
     });
 
     const defaultGrades = [
@@ -50,11 +50,21 @@ const saveGradingScale = async (req, res) => {
         throw new CustomError.BadRequestError('grades array is required');
     }
 
-    const scale = await prisma.gradingScale.upsert({
-        where: { schoolId_category_type_resultType_assessmentType: { schoolId: req.user.schoolId, category, type, resultType, assessmentType } },
-        update: { passMark: Number(passMark) || 40, grades },
-        create: { schoolId: req.user.schoolId, category, type, resultType, assessmentType, passMark: Number(passMark) || 40, grades }
+    let scale;
+    const existing = await prisma.gradingScale.findFirst({
+        where: { schoolId: req.user.schoolId, category, type, resultType, assessmentType }
     });
+
+    if (existing) {
+        scale = await prisma.gradingScale.update({
+            where: { id: existing.id },
+            data: { passMark: Number(passMark) || 40, grades }
+        });
+    } else {
+        scale = await prisma.gradingScale.create({
+            data: { schoolId: req.user.schoolId, category, type, resultType, assessmentType, passMark: Number(passMark) || 40, grades }
+        });
+    }
 
     res.status(StatusCodes.OK).json({ msg: 'Grading scale saved', scale });
 };
