@@ -1084,8 +1084,8 @@ const getClassReportCards = async (req, res) => {
         }));
 
         // Rank students
-        const rankingStrategy = schoolSettingsRecord?.resultConfig?.rankingStrategy || 'standard';
-        const tieBreaker = schoolSettingsRecord?.resultConfig?.tieBreaker || 'total';
+        const rankingStrategy = settings?.resultConfig?.rankingStrategy || 'standard';
+        const tieBreaker = settings?.resultConfig?.tieBreaker || 'total';
         const ranked = applyRanking([...summaries], 'average', 'totalScore', rankingStrategy, tieBreaker);
 
         res.status(StatusCodes.OK).json({ students: ranked, term, academicYear, classId });
