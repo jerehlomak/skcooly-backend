@@ -5,6 +5,7 @@ const { generateResultPDF, generateDynamicPDF, generateDynamicPDFs } = require('
 const { uploadBufferToCloudinary } = require('../services/cloudinary-upload.service');
 const { shareResult } = require('../services/sharing.service');
 const jwt = require('jsonwebtoken');
+const { applyRanking } = require('../utils/resultUtils');
 
 const getGradingScaleType = (resultType) => {
     let rType = 'SCORE_BASED';
@@ -384,12 +385,16 @@ const getStudentReportCard = async (req, res) => {
             studentTotals[r.studentProfileId].count += 1;
         }
 
-        const averages = Object.entries(studentTotals)
-            .map(([sid, d]) => ({ sid, avg: d.count > 0 ? d.total / d.count : 0 }))
-            .sort((a, b) => b.avg - a.avg);
+        const rankingStrategy = schoolSettingsRecord?.resultConfig?.rankingStrategy || 'standard';
+        const tieBreaker = schoolSettingsRecord?.resultConfig?.tieBreaker || 'total';
 
-        const rank = averages.findIndex(a => a.sid === studentProfileId);
-        overallPosition = rank >= 0 ? rank + 1 : null;
+        const averages = Object.entries(studentTotals)
+            .map(([sid, d]) => ({ sid, avg: d.count > 0 ? d.total / d.count : 0, total: d.total }));
+
+        applyRanking(averages, 'avg', 'total', rankingStrategy, tieBreaker);
+
+        const studentRankObj = averages.find(a => a.sid === studentProfileId);
+        overallPosition = studentRankObj ? studentRankObj.position : null;
 
         const allAvgs = averages.map(a => a.avg);
         classAverage = allAvgs.length > 0 ? (allAvgs.reduce((s, v) => s + v, 0) / allAvgs.length).toFixed(1) : null;
@@ -406,12 +411,12 @@ const getStudentReportCard = async (req, res) => {
                  if (!subjectScores[r.subjectId]) subjectScores[r.subjectId] = [];
                  subjectScores[r.subjectId].push({ sid: r.studentProfileId, score: r.totalScore });
              }
-             Object.values(subjectScores).forEach(arr => arr.sort((a,b) => b.score - a.score));
+             Object.values(subjectScores).forEach(arr => applyRanking(arr, 'score', null, rankingStrategy, 'none'));
              enrichedResults.forEach(er => {
                  const ranks = subjectScores[er.subjectId];
                  if (ranks && ranks.length > 0) {
-                     const r = ranks.findIndex(x => x.sid === studentProfileId);
-                     if (r >= 0) er.subjectPosition = r + 1;
+                     const studentSubjectRank = ranks.find(x => x.sid === studentProfileId);
+                     if (studentSubjectRank) er.subjectPosition = studentSubjectRank.position;
                      er.highestScore = ranks[0].score;
                      er.lowestScore = ranks[ranks.length - 1].score;
                      er.classAvgScore = Number((ranks.reduce((sum, item) => sum + item.score, 0) / ranks.length).toFixed(1));
@@ -800,12 +805,16 @@ const generateReportCardPDF = async (req, res) => {
             studentTotals[r.studentProfileId].count += 1;
         }
 
-        const averages = Object.entries(studentTotals)
-            .map(([sid, d]) => ({ sid, avg: d.count > 0 ? d.total / d.count : 0 }))
-            .sort((a, b) => b.avg - a.avg);
+        const rankingStrategy = schoolSettingsRecord?.resultConfig?.rankingStrategy || 'standard';
+        const tieBreaker = schoolSettingsRecord?.resultConfig?.tieBreaker || 'total';
 
-        const rank = averages.findIndex(a => a.sid === studentProfileId);
-        overallPosition = rank >= 0 ? rank + 1 : null;
+        const averages = Object.entries(studentTotals)
+            .map(([sid, d]) => ({ sid, avg: d.count > 0 ? d.total / d.count : 0, total: d.total }));
+
+        applyRanking(averages, 'avg', 'total', rankingStrategy, tieBreaker);
+
+        const studentRankObj = averages.find(a => a.sid === studentProfileId);
+        overallPosition = studentRankObj ? studentRankObj.position : null;
 
         const allAvgs = averages.map(a => a.avg);
         classAverage = allAvgs.length > 0 ? (allAvgs.reduce((s, v) => s + v, 0) / allAvgs.length).toFixed(1) : null;
@@ -1075,8 +1084,9 @@ const getClassReportCards = async (req, res) => {
         }));
 
         // Rank students
-        const ranked = [...summaries].sort((a, b) => parseFloat(b.average) - parseFloat(a.average));
-        ranked.forEach((s, idx) => { s.position = idx + 1; });
+        const rankingStrategy = schoolSettingsRecord?.resultConfig?.rankingStrategy || 'standard';
+        const tieBreaker = schoolSettingsRecord?.resultConfig?.tieBreaker || 'total';
+        const ranked = applyRanking([...summaries], 'average', 'totalScore', rankingStrategy, tieBreaker);
 
         res.status(StatusCodes.OK).json({ students: ranked, term, academicYear, classId });
     } catch (error) {
@@ -1307,13 +1317,16 @@ const getBroadsheet = async (req, res) => {
         }
     }
 
+    const rankingStrategy = schoolSettingsRecord?.resultConfig?.rankingStrategy || 'standard';
+    const tieBreaker = schoolSettingsRecord?.resultConfig?.tieBreaker || 'total';
+
     const broadsheetData = Object.values(broadsheetMap).map(sb => {
         sb.average = sb.totalSubjectCount > 0 ? sb.overallTotal / sb.totalSubjectCount : 0;
         sb.averageStr = sb.average.toFixed(1);
         return sb;
-    }).sort((a, b) => b.average - a.average);
+    });
 
-    broadsheetData.forEach((st, idx) => st.position = idx + 1);
+    applyRanking(broadsheetData, 'average', 'overallTotal', rankingStrategy, tieBreaker);
 
     res.status(StatusCodes.OK).json({
         classInfo,
@@ -1401,7 +1414,7 @@ const getCumulativeBroadsheet = async (req, res) => {
         sb.averageStr = sb.avg.toFixed(1);
         sb.cumTotal = Number(sumAverages.toFixed(1));
         return sb;
-    }).sort((a, b) => b.avg - a.avg);
+    });
 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
         where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
@@ -1419,7 +1432,9 @@ const getCumulativeBroadsheet = async (req, res) => {
         sb.remark = remark;
     });
 
-    broadsheetData.forEach((st, idx) => st.position = idx + 1);
+    const rankingStrategy = schoolSettingsRecord?.resultConfig?.rankingStrategy || 'standard';
+    const tieBreaker = schoolSettingsRecord?.resultConfig?.tieBreaker || 'total';
+    applyRanking(broadsheetData, 'avg', 'cumTotal', rankingStrategy, tieBreaker);
 
     res.status(StatusCodes.OK).json({
         classInfo,
