@@ -257,7 +257,16 @@ const getScoresRoster = async (req, res) => {
             name: s.user.name,
             gender: s.gender,
         })),
-        results: existingResults
+        results: existingResults.map(r => {
+            let parsedScores = r.scores;
+            if (typeof parsedScores === 'string') {
+                try { parsedScores = JSON.parse(parsedScores); } catch(e) {}
+            }
+            return {
+                ...r,
+                scores: parsedScores
+            };
+        })
     });
 };
 
@@ -386,6 +395,8 @@ const saveScores = async (req, res) => {
                     }
                 },
                 update: {
+                    classId,
+                    category: resolvedCategory,
                     scores: data.scores,
                     totalScore,
                     grade,
