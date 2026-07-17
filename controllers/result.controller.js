@@ -1369,7 +1369,7 @@ const getBroadsheet = async (req, res) => {
     });
 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
+        where: { schoolId: req.user.schoolId, category: classInfo.sectionId || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
     });
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
@@ -1508,7 +1508,7 @@ const getCumulativeBroadsheet = async (req, res) => {
     });
 
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId, category: classInfo.category || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
+        where: { schoolId: req.user.schoolId, category: classInfo.sectionId || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
     });
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
