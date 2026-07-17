@@ -17,7 +17,12 @@ async function resolveCategoryForClass(classInfo, schoolId) {
     }
     if (!catStr) return null;
     
-    const sec = await prisma.section.findFirst({ where: { schoolId, name: catStr } });
+    const sec = await prisma.section.findFirst({ 
+        where: { 
+            schoolId, 
+            name: { contains: catStr, mode: 'insensitive' } 
+        } 
+    });
     return sec ? sec.id : catStr;
 }
 
@@ -785,7 +790,10 @@ const generateReportCardPDF = async (req, res) => {
             studentCategory = classLevelRec.category;
         }
         const sec = await prisma.section.findFirst({
-            where: { schoolId: req.user.schoolId, name: studentCategory }
+            where: { 
+                schoolId: req.user.schoolId, 
+                name: { contains: studentCategory, mode: 'insensitive' } 
+            }
         });
         if (sec) studentCategory = sec.id;
     }
