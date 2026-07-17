@@ -7,6 +7,20 @@ const { shareResult } = require('../services/sharing.service');
 const jwt = require('jsonwebtoken');
 const { applyRanking } = require('../utils/resultUtils');
 
+async function resolveCategoryForClass(classInfo, schoolId) {
+    if (classInfo.sectionId) return classInfo.sectionId;
+    
+    let catStr = classInfo.section;
+    if (!catStr) {
+        const classLevelRec = await prisma.classLevel.findFirst({ where: { schoolId, name: classInfo.level } });
+        catStr = classLevelRec && classLevelRec.category ? classLevelRec.category : classInfo.level;
+    }
+    if (!catStr) return null;
+    
+    const sec = await prisma.section.findFirst({ where: { schoolId, name: catStr } });
+    return sec ? sec.id : catStr;
+}
+
 const getGradingScaleType = (resultType) => {
     let rType = 'SCORE_BASED';
     let aType = 'EXAM';
@@ -770,6 +784,10 @@ const generateReportCardPDF = async (req, res) => {
         if (classLevelRec && classLevelRec.category) {
             studentCategory = classLevelRec.category;
         }
+        const sec = await prisma.section.findFirst({
+            where: { schoolId: req.user.schoolId, name: studentCategory }
+        });
+        if (sec) studentCategory = sec.id;
     }
 
     let gradingScaleRecord = null;
@@ -1051,15 +1069,17 @@ const getClassReportCards = async (req, res) => {
         // Determine the section for this class to pick the right 
         const classInfo = await prisma.class.findUnique({
             where: { id: classId },
-            select: { section: true, nextTermFee: true }
+            select: { section: true, sectionId: true, level: true, nextTermFee: true }
         });
 
         let gradingScaleRecord = null;
         const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
         
-        if (classInfo?.section) {
+        const resolvedClassSection = await resolveCategoryForClass(classInfo, req.user.schoolId);
+        
+        if (resolvedClassSection) {
             gradingScaleRecord = await prisma.gradingScale.findFirst({
-                where: { schoolId: req.user.schoolId, category: classInfo.section, resultType: scaleResultType, assessmentType: scaleAssessmentType }
+                where: { schoolId: req.user.schoolId, category: resolvedClassSection, resultType: scaleResultType, assessmentType: scaleAssessmentType }
             });
         }
         if (!gradingScaleRecord) {
@@ -1368,8 +1388,10 @@ const getBroadsheet = async (req, res) => {
         return true;
     });
 
+    const resolvedCategory = await resolveCategoryForClass(classInfo, req.user.schoolId);
+
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId, category: classInfo.sectionId || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
+        where: { schoolId: req.user.schoolId, category: resolvedCategory || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
     });
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({
@@ -1507,8 +1529,10 @@ const getCumulativeBroadsheet = async (req, res) => {
         return sb;
     });
 
+    const resolvedCategory = await resolveCategoryForClass(classInfo, req.user.schoolId);
+
     let gradingScaleRecord = await prisma.gradingScale.findFirst({
-        where: { schoolId: req.user.schoolId, category: classInfo.sectionId || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
+        where: { schoolId: req.user.schoolId, category: resolvedCategory || 'ALL', resultType: 'SCORE_BASED', assessmentType: 'EXAM' }
     });
     if (!gradingScaleRecord) {
         gradingScaleRecord = await prisma.gradingScale.findFirst({

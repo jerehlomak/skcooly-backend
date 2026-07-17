@@ -124,6 +124,10 @@ const getScoresRoster = async (req, res) => {
         if (classLevelRec && classLevelRec.category) {
             category = classLevelRec.category;
         }
+        const sec = await prisma.section.findFirst({
+            where: { schoolId: req.user.schoolId, name: category }
+        });
+        if (sec) category = sec.id;
     }
     
     let structureRecord = await prisma.assessmentStructure.findFirst({
@@ -316,6 +320,10 @@ const saveScores = async (req, res) => {
                     where: { schoolId: req.user.schoolId, name: cls.level }
                 });
                 resolvedCategory = classLevelRec && classLevelRec.category ? classLevelRec.category : cls.level;
+                const sec = await prisma.section.findFirst({
+                    where: { schoolId: req.user.schoolId, name: resolvedCategory }
+                });
+                if (sec) resolvedCategory = sec.id;
             }
         }
 
