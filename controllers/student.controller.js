@@ -287,7 +287,7 @@ const updateStudent = async (req, res) => {
         const payloadClassId = (classId && classId.trim() !== '') ? classId : null;
         const payloadSubjectCategoryId = (subjectCategoryId && subjectCategoryId.trim() !== '') ? subjectCategoryId : null;
         
-        await prisma.studentProfile.update({
+        const updatedProfile = await prisma.studentProfile.update({
             where: { userId: req.params.id },
             data: {
                 classId: payloadClassId,
@@ -306,6 +306,29 @@ const updateStudent = async (req, res) => {
                 profilePicture: req.body.profilePicture !== undefined ? req.body.profilePicture : undefined
             }
         });
+
+        // Update active term enrollment if class was changed, so corrections reflect immediately on current term results
+        if (payloadClassId) {
+            const currentSession = await prisma.academicSession.findFirst({
+                where: { schoolId: req.user.schoolId, isCurrent: true, isDeleted: false }
+            });
+            if (currentSession) {
+                const currentTerm = await prisma.academicTerm.findFirst({
+                    where: { schoolId: req.user.schoolId, sessionId: currentSession.id, isActive: true }
+                });
+                if (currentTerm) {
+                    await prisma.studentTermEnrollment.updateMany({
+                        where: {
+                            studentProfileId: updatedProfile.id,
+                            academicTermId: currentTerm.id
+                        },
+                        data: {
+                            classId: payloadClassId
+                        }
+                    });
+                }
+            }
+        }
     }
 
     res.status(StatusCodes.OK).json({ msg: 'Student updated successfully' });
@@ -461,6 +484,29 @@ const promoteStudents = async (req, res) => {
         where: { id: { in: studentIds }, schoolId: req.user.schoolId },
         data: updateData
     });
+
+    // Also explicitly update the active term enrollment so current term results reflect the new class
+    if (targetClassId) {
+        const currentSession = await prisma.academicSession.findFirst({
+            where: { schoolId: req.user.schoolId, isCurrent: true, isDeleted: false }
+        });
+        if (currentSession) {
+            const currentTerm = await prisma.academicTerm.findFirst({
+                where: { schoolId: req.user.schoolId, sessionId: currentSession.id, isActive: true }
+            });
+            if (currentTerm) {
+                await prisma.studentTermEnrollment.updateMany({
+                    where: {
+                        studentProfileId: { in: studentIds },
+                        academicTermId: currentTerm.id
+                    },
+                    data: {
+                        classId: targetClassId
+                    }
+                });
+            }
+        }
+    }
 
     res.status(StatusCodes.OK).json({ msg: 'Students promoted successfully' });
 };

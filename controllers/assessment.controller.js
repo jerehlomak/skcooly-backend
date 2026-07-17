@@ -22,11 +22,14 @@ const getAssessmentStructures = async (req, res) => {
 
     // If fetching for a class and no specific structure is found, try fetching its category's structure
     if (classId && structures.length === 0) {
-        const cls = await prisma.class.findUnique({ where: { id: classId }, select: { level: true } });
-        if (cls && cls.level) {
-            structures = await prisma.assessmentStructure.findMany({
-                where: { schoolId: req.user.schoolId, resultType, category: cls.level, classId: null }
-            });
+        const cls = await prisma.class.findUnique({ where: { id: classId }, select: { level: true, sectionId: true } });
+        if (cls) {
+            let catToFind = cls.sectionId || cls.level;
+            if (catToFind) {
+                structures = await prisma.assessmentStructure.findMany({
+                    where: { schoolId: req.user.schoolId, resultType, category: catToFind, classId: null }
+                });
+            }
         }
     }
 
@@ -102,21 +105,25 @@ const getScoresRoster = async (req, res) => {
         throw new CustomError.BadRequestError('Please provide classId, subjectId, term, and academicYear');
     }
 
-    // 1. Get Class level -> category mapping to fetch exactly the right columns
+    // 1. Get Class sectionId mapping to fetch exactly the right columns
     const cls = await prisma.class.findFirst({
         where: { id: classId, schoolId: req.user.schoolId },
-        select: { level: true }
+        select: { level: true, sectionId: true }
     });
 
     if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${classId}`);
 
-    // Find the current assessment structure based on class override OR class level name OR class category
+    // Find the current assessment structure based on class override OR class sectionId OR class level name OR class category
     let category = cls.level;
-    const classLevelRec = await prisma.classLevel.findFirst({
-        where: { schoolId: req.user.schoolId, name: cls.level }
-    });
-    if (classLevelRec && classLevelRec.category) {
-        category = classLevelRec.category;
+    if (cls.sectionId) {
+        category = cls.sectionId;
+    } else {
+        const classLevelRec = await prisma.classLevel.findFirst({
+            where: { schoolId: req.user.schoolId, name: cls.level }
+        });
+        if (classLevelRec && classLevelRec.category) {
+            category = classLevelRec.category;
+        }
     }
     
     let structureRecord = await prisma.assessmentStructure.findFirst({
@@ -161,35 +168,64 @@ const getScoresRoster = async (req, res) => {
         where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
     });
 
+    // --- HISTORICAL ISOLATION FETCH LOGIC ---
+    let combinedIds = new Set();
+
+    // 1. Get IDs from Results (which stores scores)
+    const results = await prisma.studentResult.findMany({
+        where: { schoolId: req.user.schoolId, classId, term, academicYear },
+        select: { studentProfileId: true }
+    });
+    results.forEach(r => combinedIds.add(r.studentProfileId));
+
+    // 3. Get IDs from Term Enrollments
     if (termRecord) {
         const enrollments = await prisma.studentTermEnrollment.findMany({
             where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
-            include: { student: { include: { user: { select: { name: true } } } } }
+            select: { studentProfileId: true }
         });
-        if (enrollments.length > 0) {
-            students = enrollments.map(e => e.student).filter(s => s.status === 'Active' && !s.isDeleted);
-        }
+        enrollments.forEach(e => combinedIds.add(e.studentProfileId));
     }
 
-    if (students.length === 0) {
-        const studentWhere = { classId: classId, status: 'Active', schoolId: req.user.schoolId };
-        if (subject && subject.categoryId) {
-            studentWhere.OR = [
-                { subjectCategoryId: null },
-                { subjectCategoryId: subject.categoryId }
-            ];
-        }
+    if (combinedIds.size > 0) {
         students = await prisma.studentProfile.findMany({
-            where: studentWhere,
-            include: { user: { select: { name: true } } },
-            orderBy: { user: { name: 'asc' } }
+            where: { id: { in: Array.from(combinedIds) }, status: 'Active', isDeleted: false },
+            include: { user: { select: { name: true } } }
         });
-    } else {
-        if (subject && subject.categoryId) {
-            students = students.filter(s => !s.subjectCategoryId || s.subjectCategoryId === subject.categoryId);
-        }
-        students.sort((a, b) => a.user.name.localeCompare(b.user.name));
     }
+
+    // 4. Fallback ONLY for the current active term
+    const currentSession = await prisma.academicSession.findFirst({
+        where: { schoolId: req.user.schoolId, isCurrent: true, isDeleted: false }
+    });
+    const currentTerm = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, sessionId: currentSession?.id, isActive: true }
+    });
+    const isCurrentTermRequested = (currentSession?.name === academicYear && currentTerm?.name === term);
+    console.log('DEBUG: academicYear=', academicYear, 'term=', term, 'currentSession=', currentSession?.name, 'currentTerm=', currentTerm?.name, 'isCurrentTermRequested=', isCurrentTermRequested);
+
+    if (isCurrentTermRequested) {
+        const currentClassStudents = await prisma.studentProfile.findMany({
+            where: { classId, status: 'Active', isDeleted: false, schoolId: req.user.schoolId },
+            include: { user: { select: { name: true } } }
+        });
+        console.log('DEBUG: currentClassStudents found=', currentClassStudents.length);
+        const existingIds = new Set(students.map(s => s.id));
+        currentClassStudents.forEach(cs => {
+            if (!existingIds.has(cs.id)) {
+                students.push(cs);
+                existingIds.add(cs.id);
+            }
+        });
+    }
+
+    console.log('DEBUG: students length before filters=', students.length);
+
+    // Apply subject category filters
+    if (subject && subject.categoryId) {
+        students = students.filter(s => !s.subjectCategoryId || s.subjectCategoryId === subject.categoryId);
+    }
+    students.sort((a, b) => a.user.name.localeCompare(b.user.name));
 
     // NEW: Filter by Elective Allocation if subject is an ELECTIVE
     if (subject && subject.type === 'ELECTIVE') {
@@ -269,14 +305,18 @@ const saveScores = async (req, res) => {
         if (!resolvedCategory) {
             const cls = await prisma.class.findFirst({
                 where: { id: classId, schoolId: req.user.schoolId },
-                select: { level: true }
+                select: { level: true, sectionId: true }
             });
             if (!cls) throw new CustomError.NotFoundError(`No class found with id: ${classId}`);
             
-            const classLevelRec = await prisma.classLevel.findFirst({
-                where: { schoolId: req.user.schoolId, name: cls.level }
-            });
-            resolvedCategory = classLevelRec && classLevelRec.category ? classLevelRec.category : cls.level;
+            if (cls.sectionId) {
+                resolvedCategory = cls.sectionId;
+            } else {
+                const classLevelRec = await prisma.classLevel.findFirst({
+                    where: { schoolId: req.user.schoolId, name: cls.level }
+                });
+                resolvedCategory = classLevelRec && classLevelRec.category ? classLevelRec.category : cls.level;
+            }
         }
 
         // Fetch Grading Scale for this category (case-insensitive)

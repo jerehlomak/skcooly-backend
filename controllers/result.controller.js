@@ -225,18 +225,48 @@ const getStudentReportCard = async (req, res) => {
 
     if (!student) throw new CustomError.NotFoundError('Student not found');
 
-    // Override with historical class if enrolled for this specific term
+    // --- HISTORICAL ISOLATION CLASS DISCOVERY ---
+    let historicalClassId = null;
+
+    const resRecord = await prisma.studentResult.findFirst({
+        where: { schoolId: req.user.schoolId, studentProfileId, term, academicYear },
+        select: { classId: true }
+    });
+    if (resRecord) historicalClassId = resRecord.classId;
+
     const termRecord = await prisma.academicTerm.findFirst({
         where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
     });
-    if (termRecord) {
+    if (!historicalClassId && termRecord) {
         const histEnroll = await prisma.studentTermEnrollment.findFirst({
             where: { schoolId: req.user.schoolId, studentProfileId, academicTermId: termRecord.id },
-            include: { class: { select: { name: true, level: true, id: true } } }
+            select: { classId: true }
         });
-        if (histEnroll && histEnroll.class) {
-            student.classArm = histEnroll.class;
-            student.classId = histEnroll.classId;
+        if (histEnroll) historicalClassId = histEnroll.classId;
+    }
+
+    if (!historicalClassId) {
+        const currentSession = await prisma.academicSession.findFirst({
+            where: { schoolId: req.user.schoolId, isCurrent: true, isDeleted: false }
+        });
+        const currentTerm = await prisma.academicTerm.findFirst({
+            where: { schoolId: req.user.schoolId, sessionId: currentSession?.id, isActive: true }
+        });
+        const isCurrentTermRequested = (currentSession?.name === academicYear && currentTerm?.name === term);
+        
+        if (isCurrentTermRequested) {
+            historicalClassId = student.classId;
+        }
+    }
+
+    if (historicalClassId && historicalClassId !== student.classId) {
+        const histClass = await prisma.class.findUnique({
+            where: { id: historicalClassId },
+            select: { name: true, level: true, id: true }
+        });
+        if (histClass) {
+            student.classArm = histClass;
+            student.classId = histClass.id;
         }
     }
 
@@ -361,10 +391,15 @@ const getStudentReportCard = async (req, res) => {
     const totalScore = enrichedResults.reduce((sum, r) => sum + r.totalScore, 0);
     const average = totalSubjects > 0 ? (totalScore / totalSubjects).toFixed(1) : '0';
 
-    // Fetch trait configuration
-    const traitConfiguration = await prisma.traitConfiguration.findMany({
-        where: { schoolId: req.user.schoolId }
+    // Fetch trait configuration (Override Logic)
+    let traitConfiguration = await prisma.traitConfiguration.findMany({
+        where: { schoolId: req.user.schoolId, category: studentCategory || 'ALL' }
     });
+    if (traitConfiguration.length === 0 && studentCategory && studentCategory !== 'ALL') {
+        traitConfiguration = await prisma.traitConfiguration.findMany({
+            where: { schoolId: req.user.schoolId, category: 'ALL' }
+        });
+    }
 
     // 7. Class context for position/average
     let classAverage = null;
@@ -965,25 +1000,53 @@ const getClassReportCards = async (req, res) => {
             where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
         });
 
+        // --- HISTORICAL ISOLATION FETCH LOGIC ---
+        let combinedIds = new Set();
+
+        const resRecords = await prisma.studentResult.findMany({
+            where: { schoolId: req.user.schoolId, classId, term, academicYear },
+            select: { studentProfileId: true }
+        });
+        resRecords.forEach(r => combinedIds.add(r.studentProfileId));
+
         if (termRecord) {
             const enrollments = await prisma.studentTermEnrollment.findMany({
                 where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
-                include: { student: { include: { user: { select: { name: true } } } } }
+                select: { studentProfileId: true }
             });
-            if (enrollments.length > 0) {
-                students = enrollments.map(e => e.student).filter(s => s.status === 'Active' && !s.isDeleted);
-            }
+            enrollments.forEach(e => combinedIds.add(e.studentProfileId));
         }
 
-        if (students.length === 0) {
+        if (combinedIds.size > 0) {
             students = await prisma.studentProfile.findMany({
-                where: { classId, schoolId: req.user.schoolId, isDeleted: false, status: 'Active' },
-                include: { user: { select: { name: true } } },
-                orderBy: { user: { name: 'asc' } }
+                where: { id: { in: Array.from(combinedIds) }, status: 'Active', isDeleted: false },
+                include: { user: { select: { name: true } } }
             });
-        } else {
-            students.sort((a, b) => a.user.name.localeCompare(b.user.name));
         }
+
+        const currentSession = await prisma.academicSession.findFirst({
+            where: { schoolId: req.user.schoolId, isCurrent: true, isDeleted: false }
+        });
+        const currentTerm = await prisma.academicTerm.findFirst({
+            where: { schoolId: req.user.schoolId, sessionId: currentSession?.id, isActive: true }
+        });
+        const isCurrentTermRequested = (currentSession?.name === academicYear && currentTerm?.name === term);
+
+        if (isCurrentTermRequested) {
+            const currentClassStudents = await prisma.studentProfile.findMany({
+                where: { classId, status: 'Active', isDeleted: false, schoolId: req.user.schoolId },
+                include: { user: { select: { name: true } } }
+            });
+            const existingIds = new Set(students.map(s => s.id));
+            currentClassStudents.forEach(cs => {
+                if (!existingIds.has(cs.id)) {
+                    students.push(cs);
+                    existingIds.add(cs.id);
+                }
+            });
+        }
+
+        students.sort((a, b) => a.user.name.localeCompare(b.user.name));
 
         // Determine the section for this class to pick the right 
         const classInfo = await prisma.class.findUnique({
@@ -1157,25 +1220,53 @@ const getAdminClassResults = async (req, res) => {
         where: { schoolId: req.user.schoolId, name: term, session: { name: academicYear } }
     });
 
+    // --- HISTORICAL ISOLATION FETCH LOGIC ---
+    let combinedIds = new Set();
+
+    const resRecords = await prisma.studentResult.findMany({
+        where: { schoolId: req.user.schoolId, classId, term, academicYear },
+        select: { studentProfileId: true }
+    });
+    resRecords.forEach(r => combinedIds.add(r.studentProfileId));
+
     if (termRecord) {
         const enrollments = await prisma.studentTermEnrollment.findMany({
             where: { schoolId: req.user.schoolId, academicTermId: termRecord.id, classId },
-            include: { student: { include: { user: { select: { name: true } } } } }
+            select: { studentProfileId: true }
         });
-        if (enrollments.length > 0) {
-            students = enrollments.map(e => e.student).filter(s => !s.isDeleted);
-        }
+        enrollments.forEach(e => combinedIds.add(e.studentProfileId));
     }
 
-    if (students.length === 0) {
+    if (combinedIds.size > 0) {
         students = await prisma.studentProfile.findMany({
-            where: { classId, schoolId: req.user.schoolId, isDeleted: false },
-            include: { user: { select: { name: true } } },
-            orderBy: { user: { name: 'asc' } }
+            where: { id: { in: Array.from(combinedIds) }, isDeleted: false },
+            include: { user: { select: { name: true } } }
         });
-    } else {
-        students.sort((a, b) => a.user.name.localeCompare(b.user.name));
     }
+
+    const currentSession = await prisma.academicSession.findFirst({
+        where: { schoolId: req.user.schoolId, isCurrent: true, isDeleted: false }
+    });
+    const currentTerm = await prisma.academicTerm.findFirst({
+        where: { schoolId: req.user.schoolId, sessionId: currentSession?.id, isActive: true }
+    });
+    const isCurrentTermRequested = (currentSession?.name === academicYear && currentTerm?.name === term);
+
+    if (isCurrentTermRequested) {
+        const currentClassStudents = await prisma.studentProfile.findMany({
+            where: { classId, isDeleted: false, schoolId: req.user.schoolId },
+            include: { user: { select: { name: true } } }
+        });
+        const existingIds = new Set(students.map(s => s.id));
+        currentClassStudents.forEach(cs => {
+            if (!existingIds.has(cs.id)) {
+                students.push(cs);
+                existingIds.add(cs.id);
+            }
+        });
+    }
+
+    students.sort((a, b) => a.user.name.localeCompare(b.user.name));
 
     let results = await prisma.studentResult.findMany({
         where: { classId, term, academicYear, schoolId: req.user.schoolId },
@@ -1583,11 +1674,21 @@ const saveTraitConfiguration = async (req, res) => {
     const { domain, traits, ratingScale, category = 'ALL' } = req.body;
     if (!domain || !traits || !ratingScale) throw new CustomError.BadRequestError('Missing fields');
 
-    const config = await prisma.traitConfiguration.upsert({
-        where: { schoolId_domain_category: { schoolId: req.user.schoolId, domain, category } },
-        update: { traits, ratingScale },
-        create: { schoolId: req.user.schoolId, domain, category, traits, ratingScale }
+    const existing = await prisma.traitConfiguration.findFirst({
+        where: { schoolId: req.user.schoolId, domain, category }
     });
+    
+    let config;
+    if (existing) {
+        config = await prisma.traitConfiguration.update({
+            where: { id: existing.id },
+            data: { traits, ratingScale }
+        });
+    } else {
+        config = await prisma.traitConfiguration.create({
+            data: { schoolId: req.user.schoolId, domain, category, traits, ratingScale }
+        });
+    }
     res.status(StatusCodes.OK).json({ msg: 'Configuration saved', config });
 };
 
@@ -1595,9 +1696,14 @@ const deleteTraitConfiguration = async (req, res) => {
     const { domain, category = 'ALL' } = req.query;
     if (!domain) throw new CustomError.BadRequestError('Missing domain');
 
-    await prisma.traitConfiguration.delete({
-        where: { schoolId_domain_category: { schoolId: req.user.schoolId, domain, category } }
-    }).catch(() => null); // ignore if doesn't exist
+    const existing = await prisma.traitConfiguration.findFirst({
+        where: { schoolId: req.user.schoolId, domain, category }
+    });
+    if (existing) {
+        await prisma.traitConfiguration.delete({
+            where: { id: existing.id }
+        });
+    }
     
     res.status(StatusCodes.OK).json({ msg: 'Configuration deleted' });
 };
@@ -1607,8 +1713,13 @@ const renameTraitConfiguration = async (req, res) => {
     if (!oldDomain || !newDomain) throw new CustomError.BadRequestError('Missing oldDomain or newDomain');
 
     // Rename the TraitConfiguration
+    const existing = await prisma.traitConfiguration.findFirst({
+        where: { schoolId: req.user.schoolId, domain: oldDomain, category }
+    });
+    if (!existing) throw new CustomError.NotFoundError('Trait configuration not found');
+    
     await prisma.traitConfiguration.update({
-        where: { schoolId_domain_category: { schoolId: req.user.schoolId, domain: oldDomain, category } },
+        where: { id: existing.id },
         data: { domain: newDomain }
     }).catch((e) => {
         throw new CustomError.BadRequestError('Failed to rename or domain already exists');
