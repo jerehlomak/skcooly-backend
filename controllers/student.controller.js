@@ -13,7 +13,7 @@ const generateRandomPassword = () => { return '12345'; }
 const addStudent = async (req, res) => {
     let {
         name, classLevel, classId, gender, phone,
-        admissionDate, dateOfBirth, orphan, religion, bloodGroup, genotype,
+        admissionDate, dateOfBirth, orphan, religion, club, bloodGroup, genotype,
         address, previousSchool, parentProfileId, sessionId, subjectCategoryId, profilePicture
     } = req.body
 
@@ -282,7 +282,7 @@ const updateStudent = async (req, res) => {
     })
 
     // Because updateMany doesn't support nested updates, we update the profile separately
-    if (Object.keys(updateData).length > 0 || classLevel || classId || gender || status || phone || dateOfBirth || orphan !== undefined || religion || bloodGroup || address || previousSchool || parentProfileId || subjectCategoryId !== undefined) {
+    if (Object.keys(updateData).length > 0 || classLevel || classId || gender || status || phone || dateOfBirth || orphan !== undefined || religion || club !== undefined || bloodGroup || address || previousSchool || parentProfileId || subjectCategoryId !== undefined) {
         
         const payloadClassId = (classId && classId.trim() !== '') ? classId : null;
         const payloadSubjectCategoryId = (subjectCategoryId && subjectCategoryId.trim() !== '') ? subjectCategoryId : null;
@@ -299,6 +299,7 @@ const updateStudent = async (req, res) => {
                 dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
                 orphan: orphan === 'yes',
                 religion,
+                club,
                 bloodGroup,
                 genotype,
                 address,

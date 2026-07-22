@@ -693,6 +693,7 @@ const getStudentReportCard = async (req, res) => {
                 phone: schoolSettingsRecord?.phone || schoolInfo.phone,
                 email: schoolSettingsRecord?.email || schoolInfo.email,
                 logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo.logoUrl,
+                arabicName: schoolSettingsRecord?.arabicName || schoolInfo?.arabicName,
                 display: sectionDisplay,
                 signatures: sectionSignatures,
                 traitConfiguration: traitConfiguration,
@@ -948,7 +949,8 @@ const generateReportCardPDF = async (req, res) => {
             motto: schoolSettingsRecord?.motto || schoolSettingsRecord?.tagline || "Knowledge and Integrity",
             address: schoolSettingsRecord?.address || schoolInfo?.address,
             phone: schoolSettingsRecord?.phone || schoolInfo?.phone,
-            logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl
+            logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl,
+            arabicName: schoolSettingsRecord?.arabicName || schoolInfo?.arabicName
         },
         student: {
             name: student.user.name,
@@ -1336,7 +1338,8 @@ const getBroadsheet = async (req, res) => {
     const schoolSettingsRecord = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } });
     const school = {
         name: schoolSettingsRecord?.schoolName || schoolInfo?.name,
-        logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl
+        logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl,
+        arabicName: schoolSettingsRecord?.arabicName || schoolInfo?.arabicName
     };
 
     // Get subjects taught in this class
@@ -1478,7 +1481,8 @@ const getCumulativeBroadsheet = async (req, res) => {
     const schoolSettingsRecord = await prisma.schoolSettings.findFirst({ where: { schoolId: req.user.schoolId } });
     const school = {
         name: schoolSettingsRecord?.schoolName || schoolInfo?.name,
-        logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl
+        logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl,
+        arabicName: schoolSettingsRecord?.arabicName || schoolInfo?.arabicName
     };
 
     const students = await prisma.studentProfile.findMany({

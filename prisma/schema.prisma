@@ -12,6 +12,7 @@ model SchoolSettings {
   id               String      @id @default(uuid())
   schoolId         String? // tenant isolation
   schoolName       String      @default("My School")
+  arabicName       String?
   motto            String?
   tagline          String?
   phone            String?
@@ -524,6 +525,7 @@ model StudentProfile {
   previousSchool        String?
   profilePicture        String?                 @db.Text
   religion              String?
+  club                  String?
   classId               String? // specific class arm relation
   sessionId             String? // enrollment session
   subjectCategoryId     String? // links student to a subject category (for filtered result sheets)

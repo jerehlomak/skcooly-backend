@@ -115,11 +115,39 @@ const updateSubject = async (req, res) => {
     };
 
     if (classIds && Array.isArray(classIds)) {
-        // If classIds are provided, delete old relations and set new ones
-        updateData.classes = {
-            deleteMany: {},
-            create: classIds.map(cid => ({ classId: cid, teacherId: teacherId || null }))
-        };
+        // Fetch existing class assignments to prevent overwriting specific teacher assignments
+        const existingClasses = await prisma.classSubject.findMany({
+            where: { subjectId: id }
+        });
+        const existingClassIds = existingClasses.map(c => c.classId);
+
+        const classesToAdd = classIds.filter(cid => !existingClassIds.includes(cid));
+        const classesToRemove = existingClassIds.filter(cid => !classIds.includes(cid));
+
+        if (classesToRemove.length > 0) {
+            await prisma.classSubject.deleteMany({
+                where: { subjectId: id, classId: { in: classesToRemove } }
+            });
+        }
+
+        if (classesToAdd.length > 0) {
+            await prisma.classSubject.createMany({
+                data: classesToAdd.map(cid => ({
+                    subjectId: id,
+                    classId: cid,
+                    teacherId: teacherId || null,
+                    categoryId: categoryId || null
+                }))
+            });
+        }
+        
+        // Update categoryId for existing class assignments if it was modified
+        if (categoryId !== undefined) {
+            await prisma.classSubject.updateMany({
+                where: { subjectId: id },
+                data: { categoryId: categoryId || null }
+            });
+        }
     }
 
     await prisma.subject.update({
