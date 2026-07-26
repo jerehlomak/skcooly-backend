@@ -93,6 +93,7 @@ const getAllClasses = async (req, res) => {
                 session: { select: { id: true, name: true } },
                 students: { where: { isDeleted: false }, select: { id: true } },
                 subjects: {
+                    where: { subject: { isDeleted: false, status: 'Active' } },
                     select: {
                         id: true,
                         subjectId: true,
@@ -117,7 +118,7 @@ const getClass = async (req, res) => {
             formTeacher: { include: { user: { select: { id: true, name: true, email: true } } } },
             sectionRel: true,
             session: true,
-            subjects: { include: { subject: true, teacher: { include: { user: { select: { name: true } } } } } },
+            subjects: { where: { subject: { isDeleted: false, status: 'Active' } }, include: { subject: true, teacher: { include: { user: { select: { name: true } } } } } },
             students: { where: { isDeleted: false }, include: { user: { select: { name: true } } } }
         }
     })

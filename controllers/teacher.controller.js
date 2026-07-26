@@ -341,12 +341,12 @@ const getMyClasses = async (req, res) => {
         
         let mySubjectsForThisClass = [];
         if (isFormTeacher) {
-            mySubjectsForThisClass = cls.subjects.map(cs => cs.subject).filter(Boolean);
+            mySubjectsForThisClass = cls.subjects.map(cs => cs.subject).filter(s => s && s.status === 'Active');
         } else {
             mySubjectsForThisClass = classSubjects
                 .filter(cs => cs.classId === cls.id)
                 .map(cs => cls.subjects.find(s => s.subjectId === cs.subjectId)?.subject)
-                .filter(Boolean);
+                .filter(s => s && s.status === 'Active');
         }
 
         return {

@@ -370,7 +370,31 @@ const saveScores = async (req, res) => {
             ];
         }
 
-        const upsertPromises = scoresData.map(data => {
+        const deletePromises = [];
+        const upsertPromises = [];
+
+        scoresData.forEach(data => {
+            // Check if there's any valid score
+            let hasValidScore = false;
+            for (const val of Object.values(data.scores)) {
+                if (val !== '' && val !== null && val !== undefined) {
+                    hasValidScore = true;
+                    break;
+                }
+            }
+
+            if (!hasValidScore) {
+                deletePromises.push(prisma.studentResult.deleteMany({
+                    where: {
+                        studentProfileId: data.studentProfileId,
+                        subjectId,
+                        term,
+                        academicYear
+                    }
+                }));
+                return;
+            }
+
             // Calculate Total
             let totalScore = 0;
             for (const val of Object.values(data.scores)) {
@@ -385,7 +409,7 @@ const saveScores = async (req, res) => {
                 }
             }
 
-            return prisma.studentResult.upsert({
+            upsertPromises.push(prisma.studentResult.upsert({
                 where: {
                     studentProfileId_subjectId_term_academicYear: {
                         studentProfileId: data.studentProfileId,
@@ -415,10 +439,10 @@ const saveScores = async (req, res) => {
                     teacherId,
                     schoolId: req.user.schoolId
                 }
-            });
+            }));
         });
 
-        await prisma.$transaction(upsertPromises);
+        await prisma.$transaction([...deletePromises, ...upsertPromises]);
 
         // Dispatch the Result Added event
         publishEvent(EVENTS.RESULT_ADDED, {

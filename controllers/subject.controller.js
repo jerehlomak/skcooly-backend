@@ -42,14 +42,14 @@ const addSubject = async (req, res) => {
 
 // ─── GET ALL SUBJECTS ─────────────────────────────────────────────────────────
 const getAllSubjects = async (req, res) => {
-    const { category, classId, search, page, limit } = req.query
+    const { category, classId, search, page, limit, activeOnly, showDeleted } = req.query
     const pageNum = parseInt(page) || 1;
     const limitNum = parseInt(limit) || 10;
     const skip = (pageNum - 1) * limitNum;
 
     const where = {
         schoolId: req.user.schoolId,
-        isDeleted: false,
+        ...(showDeleted === 'true' ? {} : { isDeleted: false }),
         ...(category && category !== 'all' ? { classes: { some: { categoryId: category } } } : {}),
         ...(classId && classId !== 'all' ? { classes: { some: { classId } } } : {}),
         ...(search && {
@@ -57,7 +57,8 @@ const getAllSubjects = async (req, res) => {
                 { name: { contains: search, mode: 'insensitive' } },
                 { code: { contains: search, mode: 'insensitive' } }
             ]
-        })
+        }),
+        ...(activeOnly === 'true' ? { status: 'Active' } : {})
     };
 
     const count = await prisma.subject.count({ where });
@@ -148,6 +149,14 @@ const updateSubject = async (req, res) => {
                 data: { categoryId: categoryId || null }
             });
         }
+
+        // Update teacherId for existing class assignments if it was modified
+        if (teacherId !== undefined) {
+            await prisma.classSubject.updateMany({
+                where: { subjectId: id },
+                data: { teacherId: teacherId || null }
+            });
+        }
     }
 
     await prisma.subject.update({
@@ -165,12 +174,20 @@ const deleteSubject = async (req, res) => {
     // Check if subject has existing scores
     if (!force) {
         const scoresExist = await prisma.studentResult.count({
-            where: { subjectId: id, schoolId: req.user.schoolId, isDeleted: false }
+            where: { subjectId: id, schoolId: req.user.schoolId, isDeleted: false, totalScore: { gt: 0 } }
         });
         // We could also check AssessmentScore if it exists, but usually studentResult is the summary.
         if (scoresExist > 0) {
             throw new CustomError.BadRequestError(`This subject has existing score entries. Deleting it will archive these records but they won't be permanently lost. Pass ?force=true to confirm.`);
         }
+    }
+
+    if (force) {
+        // If they forced it, we can safely sweep away any "empty" 0-score results 
+        // to prevent them from showing up on the current term's report card.
+        await prisma.studentResult.deleteMany({
+            where: { subjectId: id, schoolId: req.user.schoolId, totalScore: 0 }
+        });
     }
 
     // Soft Delete the subject
@@ -191,8 +208,31 @@ const deleteSubject = async (req, res) => {
 
     res.status(StatusCodes.OK).json({ msg: 'Subject deleted successfully' })
 }
+// ─── RESTORE SUBJECT ──────────────────────────────────────────────────────────
+const restoreSubject = async (req, res) => {
+    const { id } = req.params
 
-// Returns all subjects that are assigned to the authenticated student's class arm
+    const existing = await prisma.subject.findFirst({ where: { id, schoolId: req.user.schoolId } })
+    if (!existing) throw new CustomError.NotFoundError(`No subject found with id: ${id}`)
+
+    await prisma.subject.update({
+        where: { id },
+        data: { isDeleted: false, deletedAt: null, status: 'Active' }
+    })
+
+    await logTenantAction({
+        schoolId: req.user.schoolId,
+        userId: req.user.userId,
+        action: 'RESTORE_SUBJECT',
+        entityType: 'Subject',
+        entityId: id,
+        ipAddress: req.ip
+    })
+
+    res.status(StatusCodes.OK).json({ msg: 'Subject restored successfully' })
+}
+
+// ─── GET MY SUBJECTS ──────────────────────────────────────────────────────────
 const getMySubjects = async (req, res) => {
     // Resolve the student's class from their profile
     const profile = await prisma.studentProfile.findFirst({
@@ -299,6 +339,6 @@ const updateSubjectAllocations = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Subject allocations updated successfully' });
 };
 
-module.exports = { addSubject, getAllSubjects, getSubject, updateSubject, deleteSubject, getMySubjects, getSubjectAllocations, updateSubjectAllocations }
+module.exports = { addSubject, getAllSubjects, getSubject, updateSubject, deleteSubject, restoreSubject, getMySubjects, getSubjectAllocations, updateSubjectAllocations }
 
 

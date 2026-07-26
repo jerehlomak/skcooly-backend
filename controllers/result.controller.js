@@ -248,7 +248,7 @@ const getStudentReportCard = async (req, res) => {
     let historicalClassId = null;
 
     const resRecord = await prisma.studentResult.findFirst({
-        where: { schoolId: req.user.schoolId, studentProfileId, term, academicYear },
+        where: { isDeleted: false,  schoolId: req.user.schoolId, studentProfileId, term, academicYear },
         select: { classId: true }
     });
     if (resRecord) historicalClassId = resRecord.classId;
@@ -339,7 +339,7 @@ const getStudentReportCard = async (req, res) => {
 
     // 3. Results (scores)
     const results = await prisma.studentResult.findMany({
-        where: { studentProfileId, term, academicYear, schoolId: req.user.schoolId },
+        where: { isDeleted: false,  studentProfileId, term, academicYear, schoolId: req.user.schoolId },
         include: { subject: { select: { name: true, code: true } } },
         orderBy: { subject: { name: 'asc' } }
     });
@@ -428,7 +428,7 @@ const getStudentReportCard = async (req, res) => {
     let overallPosition = null;
     if (effectiveClassId) {
         const allClassResults = await prisma.studentResult.findMany({
-            where: { classId: effectiveClassId, term, academicYear, schoolId: req.user.schoolId }
+        where: { isDeleted: false,  classId: effectiveClassId, term, academicYear, schoolId: req.user.schoolId }
         });
 
         // Group by student to compute average per student
@@ -598,7 +598,7 @@ const getStudentReportCard = async (req, res) => {
         });
         
         const allTermsResults = await prisma.studentResult.findMany({
-            where: { studentProfileId, academicYear, schoolId: req.user.schoolId },
+        where: { isDeleted: false,  studentProfileId, academicYear, schoolId: req.user.schoolId },
             include: { subject: { select: { name: true, id: true } } }
         });
 
@@ -771,7 +771,7 @@ const generateReportCardPDF = async (req, res) => {
     if (!isPinValid) return;
 
     let results = await prisma.studentResult.findMany({
-        where: { studentProfileId, term, academicYear, schoolId: req.user.schoolId },
+        where: { isDeleted: false,  studentProfileId, term, academicYear, schoolId: req.user.schoolId },
         include: { subject: { select: { name: true, code: true, categoryId: true } } },
         orderBy: { subject: { name: 'asc' } }
     });
@@ -857,7 +857,7 @@ const generateReportCardPDF = async (req, res) => {
     let overallPosition = null;
     if (effectiveClassId) {
         const allClassResults = await prisma.studentResult.findMany({
-            where: { classId: effectiveClassId, term, academicYear, schoolId: req.user.schoolId }
+        where: { isDeleted: false,  classId: effectiveClassId, term, academicYear, schoolId: req.user.schoolId }
         });
 
         const studentTotals = {};
@@ -1032,7 +1032,7 @@ const getClassReportCards = async (req, res) => {
         let combinedIds = new Set();
 
         const resRecords = await prisma.studentResult.findMany({
-            where: { schoolId: req.user.schoolId, classId, term, academicYear },
+        where: { isDeleted: false,  schoolId: req.user.schoolId, classId, term, academicYear },
             select: { studentProfileId: true }
         });
         resRecords.forEach(r => combinedIds.add(r.studentProfileId));
@@ -1112,7 +1112,7 @@ const getClassReportCards = async (req, res) => {
 
         const summaries = await Promise.all(students.map(async (student) => {
             let results = await prisma.studentResult.findMany({
-                where: { studentProfileId: student.id, term, academicYear, schoolId: req.user.schoolId },
+        where: { isDeleted: false,  studentProfileId: student.id, term, academicYear, schoolId: req.user.schoolId },
                 include: { subject: { select: { categoryId: true } } }
             });
 
@@ -1254,7 +1254,7 @@ const getAdminClassResults = async (req, res) => {
     let combinedIds = new Set();
 
     const resRecords = await prisma.studentResult.findMany({
-        where: { schoolId: req.user.schoolId, classId, term, academicYear },
+        where: { isDeleted: false,  schoolId: req.user.schoolId, classId, term, academicYear },
         select: { studentProfileId: true }
     });
     resRecords.forEach(r => combinedIds.add(r.studentProfileId));
@@ -1299,7 +1299,7 @@ const getAdminClassResults = async (req, res) => {
     students.sort((a, b) => a.user.name.localeCompare(b.user.name));
 
     let results = await prisma.studentResult.findMany({
-        where: { classId, term, academicYear, schoolId: req.user.schoolId },
+        where: { isDeleted: false,  classId, term, academicYear, schoolId: req.user.schoolId },
         include: { subject: { select: { name: true, code: true, categoryId: true } } }
     });
 
@@ -1492,7 +1492,7 @@ const getCumulativeBroadsheet = async (req, res) => {
     });
 
     const results = await prisma.studentResult.findMany({
-        where: { classId, academicYear, schoolId: req.user.schoolId }
+        where: { isDeleted: false,  classId, academicYear, schoolId: req.user.schoolId }
     });
 
     const uniqueTerms = [...new Set(results.map(r => r.term))];
@@ -2044,7 +2044,7 @@ const validateResults = async (req, res) => {
     const students = enrollments.map(e => e.student).filter(s => s.status === 'Active' && !s.isDeleted);
     
     const results = await prisma.studentResult.findMany({
-        where: { schoolId: req.user.schoolId, classId, term, academicYear }
+        where: { isDeleted: false,  schoolId: req.user.schoolId, classId, term, academicYear }
     });
 
     const warnings = [];
