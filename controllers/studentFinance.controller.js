@@ -58,7 +58,10 @@ const getMyInvoices = async (req, res) => {
         orderBy: { createdAt: 'desc' }
     });
 
-    res.status(StatusCodes.OK).json({ invoices, count: invoices.length });
+    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
+    const showItemizedBreakdown = financeSettings?.showItemizedBreakdown !== false;
+
+    res.status(StatusCodes.OK).json({ invoices, count: invoices.length, showItemizedBreakdown });
 };
 
 const getMyPayments = async (req, res) => {

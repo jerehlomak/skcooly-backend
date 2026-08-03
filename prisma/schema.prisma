@@ -606,6 +606,7 @@ model TeacherProfile {
   // Payroll relations
   payrollSettings PayrollSetting[] @relation("StaffPayrollSettings")
   staffLoans      StaffLoan[]      @relation("StaffLoans")
+  loanRepayments  StaffLoanRepayment[] @relation("StaffLoanRepayments")
   pensionEntries  PensionLedger[]  @relation("StaffPension")
   payrollRunItems PayrollRunItem[] @relation("StaffPayrollRunItems")
 
@@ -635,8 +636,9 @@ model ParentProfile {
   students         StudentProfile[]
   school           School?          @relation(fields: [schoolId], references: [id])
 
-  isDeleted Boolean   @default(false)
-  deletedAt DateTime?
+  isDeleted    Boolean       @default(false)
+  deletedAt    DateTime?
+  FamilyWallet FamilyWallet?
 
   @@unique([schoolId, parentId])
   @@index([schoolId, isDeleted])
@@ -1118,6 +1120,13 @@ model School {
   applications               Application[]
   schoolDashboards           SchoolDashboard[]
   schoolFeatures             SchoolFeature[]
+  FeeRule                    FeeRule[]
+  financeMessages            FinanceMessage[]
+  FamilyWallet               FamilyWallet[]
+  FamilyWalletTransaction    FamilyWalletTransaction[]
+  assets                     SchoolAsset[]
+  inventoryItems             InventoryItem[]
+  posSales                   PosSale[]
 }
 
 // ─── BRANCHES (Phase 1) ──────────────────────────────────────────────────────
@@ -1145,6 +1154,8 @@ model Branch {
   PaymentTransaction       PaymentTransaction[]
   TransferSubmission       TransferSubmission[]
   FinanceReceipt           FinanceReceipt[]
+  FamilyWallet             FamilyWallet[]
+  FamilyWalletTransaction  FamilyWalletTransaction[]
 
   @@index([schoolId])
 }
@@ -1965,19 +1976,19 @@ model LessonResource {
 // ─── PIN MANAGEMENT SYSTEM (PHASE 3) ───────────────────────────────────────
 
 model SchoolPinBatch {
-  id          String   @id @default(uuid())
-  batchNumber String   @unique // e.g. BATCH-2025-001
-  pinType     String   @default("RESULT_CHECKING") // RESULT_CHECKING, ADMISSION_APPLICATION, EMPLOYMENT
-  schoolId    String? // If pre-assigned to a school
-  quantity    Int
-  pricePerPin Float    @default(0)
-  currency    String   @default("NGN")
-  status      String   @default("ACTIVE") // ACTIVE, DEPLETED, CANCELLED
-  maxUsage    Int      @default(5)
-  validityDays Int?    // Null means no time limit once activated
-  adminId     String?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
+  id           String   @id @default(uuid())
+  batchNumber  String   @unique // e.g. BATCH-2025-001
+  pinType      String   @default("RESULT_CHECKING") // RESULT_CHECKING, ADMISSION_APPLICATION, EMPLOYMENT
+  schoolId     String? // If pre-assigned to a school
+  quantity     Int
+  pricePerPin  Float    @default(0)
+  currency     String   @default("NGN")
+  status       String   @default("ACTIVE") // ACTIVE, DEPLETED, CANCELLED
+  maxUsage     Int      @default(5)
+  validityDays Int? // Null means no time limit once activated
+  adminId      String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
 
   school School?       @relation(fields: [schoolId], references: [id], onDelete: SetNull)
   admin  CentralAdmin? @relation(fields: [adminId], references: [id], onDelete: SetNull)
@@ -1985,19 +1996,19 @@ model SchoolPinBatch {
 }
 
 model SchoolPin {
-  id           String    @id @default(uuid())
-  pinCode      String    @unique
-  serialNumber String    @unique
-  pinType      String    @default("RESULT_CHECKING") // RESULT_CHECKING, ADMISSION_APPLICATION, EMPLOYMENT
-  batchId      String
-  schoolId     String?
-  studentId    String?
+  id               String    @id @default(uuid())
+  pinCode          String    @unique
+  serialNumber     String    @unique
+  pinType          String    @default("RESULT_CHECKING") // RESULT_CHECKING, ADMISSION_APPLICATION, EMPLOYMENT
+  batchId          String
+  schoolId         String?
+  studentId        String?
   usageCount       Int       @default(0)
   maxUsage         Int       @default(5)
   status           String    @default("ACTIVE") // ACTIVE, USED, EXPIRED
   expiresAt        DateTime?
-  activatedForTerm String?   // Term the PIN is locked to
-  activatedForYear String?   // Session/Year the PIN is locked to
+  activatedForTerm String? // Term the PIN is locked to
+  activatedForYear String? // Session/Year the PIN is locked to
   createdAt        DateTime  @default(now())
   updatedAt        DateTime  @updatedAt
 
@@ -2136,9 +2147,29 @@ model FeeDefinition {
   deletedAt DateTime?
   deletedBy String?
 
-  school      School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
-  branch      Branch?                @relation(fields: [branchId], references: [id], onDelete: SetNull)
-  assignments StudentFeeAssignment[]
+  school        School                 @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch        Branch?                @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  assignments   StudentFeeAssignment[]
+  bankAccountId String?
+  bankAccount   SchoolBankAccount?     @relation(fields: [bankAccountId], references: [id], onDelete: SetNull)
+  feeRules      FeeRule[]
+}
+
+model FeeRule {
+  id             String   @id @default(uuid())
+  schoolId       String
+  name           String
+  targetFeeId    String?
+  conditionType  String
+  conditionValue String?
+  actionType     String
+  actionValue    Float
+  isActive       Boolean  @default(true)
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  school    School         @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  targetFee FeeDefinition? @relation(fields: [targetFeeId], references: [id], onDelete: SetNull)
 }
 
 model StudentFeeAssignment {
@@ -2285,6 +2316,43 @@ model StudentWalletTransaction {
   branch Branch?       @relation(fields: [branchId], references: [id], onDelete: SetNull)
 }
 
+model FamilyWallet {
+  id       String  @id @default(uuid())
+  schoolId String
+  branchId String?
+  parentId String  @unique
+  balance  Float   @default(0)
+  status   String  @default("ACTIVE")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  school       School                    @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch       Branch?                   @relation(fields: [branchId], references: [id], onDelete: SetNull)
+  parent       ParentProfile             @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  transactions FamilyWalletTransaction[]
+}
+
+model FamilyWalletTransaction {
+  id            String              @id @default(uuid())
+  walletId      String
+  schoolId      String
+  branchId      String?
+  type          StudentWalletTxType
+  amount        Float
+  balanceBefore Float
+  balanceAfter  Float
+  reference     String              @unique
+  description   String?
+  auditMetadata Json?
+
+  createdAt DateTime @default(now())
+
+  wallet FamilyWallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  school School       @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  branch Branch?      @relation(fields: [branchId], references: [id], onDelete: SetNull)
+}
+
 model FinanceInvoice {
   id              String        @id @default(uuid())
   schoolId        String
@@ -2303,6 +2371,14 @@ model FinanceInvoice {
   status          InvoiceStatus @default(DRAFT)
   dueDate         DateTime?
 
+  isSent     Boolean   @default(false)
+  lastSentAt DateTime?
+  isPrinted  Boolean   @default(false)
+
+  isDisputed    Boolean   @default(false)
+  disputeReason String?
+  lastPrintedAt DateTime?
+
   createdAt DateTime  @default(now())
   updatedAt DateTime  @updatedAt
   isDeleted Boolean   @default(false)
@@ -2313,6 +2389,7 @@ model FinanceInvoice {
   student           StudentProfile       @relation(fields: [studentId], references: [id], onDelete: Cascade)
   items             FinanceInvoiceItem[]
   PaymentAllocation PaymentAllocation[]
+  financeMessages   FinanceMessage[]
 }
 
 model FinanceInvoiceItem {
@@ -2348,7 +2425,9 @@ enum PaymentTxStatus {
 }
 
 enum PaymentTxMethod {
+  FLUTTERWAVE
   PAYSTACK
+  MONNIFY
   REMITA
   BANK_TRANSFER
   CASH
@@ -2367,24 +2446,45 @@ enum TransferSubmissionStatus {
 model SchoolPaymentSettings {
   id                    String     @id @default(uuid())
   schoolId              String     @unique
+  activeGateway         String     @default("FLUTTERWAVE")
+
+  // Flutterwave
+  flwPublicKey          String?
+  flwSecretEnc          String?
+  flwWebhookSecret      String?
+  flwEnv                PaymentEnv @default(TEST)
+  flwEnabled            Boolean    @default(false)
+
+  // Paystack
   paystackPublicKey     String?
   paystackSecretEnc     String?
   paystackWebhookSecret String?
   paystackEnv           PaymentEnv @default(TEST)
   paystackEnabled       Boolean    @default(false)
 
-  remitaPublicKey     String?
-  remitaSecretEnc     String?
-  remitaMerchantId    String?
-  remitaWebhookSecret String?
-  remitaEnabled       Boolean @default(false)
+  // Monnify
+  monnifyApiKey         String?
+  monnifySecretEnc      String?
+  monnifyContractCode   String?
+  monnifyWebhookSecret  String?
+  monnifyEnv            PaymentEnv @default(TEST)
+  monnifyEnabled        Boolean    @default(false)
+
+  // Remita
+  remitaPublicKey       String?
+  remitaSecretEnc       String?
+  remitaMerchantId      String?
+  remitaWebhookSecret   String?
+  remitaEnabled         Boolean    @default(false)
 
   merchantDisplayName      String?
-  bankTransferEnabled      Boolean @default(true)
-  transferEvidenceRequired Boolean @default(true)
-  allowPartialPayment      Boolean @default(true)
-  allowOverpayment         Boolean @default(false)
-  autoApplyWallet          Boolean @default(false)
+  bankTransferEnabled      Boolean    @default(true)
+  transferEvidenceRequired Boolean    @default(true)
+  allowPartialPayment      Boolean    @default(true)
+  allowOverpayment         Boolean    @default(false)
+  autoApplyWallet          Boolean    @default(false)
+  allowWalletCheckout      Boolean    @default(true)
+  allowFamilyWalletSharing Boolean    @default(true)
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -2411,6 +2511,8 @@ model SchoolBankAccount {
 
   school School  @relation(fields: [schoolId], references: [id], onDelete: Cascade)
   branch Branch? @relation(fields: [branchId], references: [id], onDelete: SetNull)
+
+  feeDefinitions FeeDefinition[]
 
   @@index([schoolId])
 }
@@ -2509,6 +2611,11 @@ model FinanceReceipt {
   walletBalanceAfter    Float?
   remainingBalanceAfter Float?
   metadata              Json?
+
+  isSent        Boolean   @default(false)
+  lastSentAt    DateTime?
+  isPrinted     Boolean   @default(false)
+  lastPrintedAt DateTime?
 
   createdAt DateTime @default(now())
 
@@ -2747,9 +2854,31 @@ model StaffLoan {
   createdAt          DateTime @default(now())
   updatedAt          DateTime @updatedAt
 
-  staff TeacherProfile @relation("StaffLoans", fields: [staffId], references: [id], onDelete: Cascade)
+  staff      TeacherProfile       @relation("StaffLoans", fields: [staffId], references: [id], onDelete: Cascade)
+  repayments StaffLoanRepayment[]
 
   @@index([schoolId, staffId])
+}
+
+// Staff loan repayment transactions
+model StaffLoanRepayment {
+  id           String      @id @default(uuid())
+  schoolId     String?
+  loanId       String
+  staffId      String
+  amount       Float
+  date         DateTime    @default(now())
+  payrollRunId String?
+  source       String      @default("PAYROLL") // PAYROLL | MANUAL
+  notes        String?
+  createdAt    DateTime    @default(now())
+
+  loan       StaffLoan       @relation(fields: [loanId], references: [id], onDelete: Cascade)
+  staff      TeacherProfile  @relation("StaffLoanRepayments", fields: [staffId], references: [id], onDelete: Cascade)
+  payrollRun PayrollRun?     @relation(fields: [payrollRunId], references: [id], onDelete: SetNull)
+
+  @@index([schoolId, staffId])
+  @@index([loanId])
 }
 
 // Pension contribution accumulation per staff
@@ -2786,6 +2915,7 @@ model PayrollRun {
 
   items          PayrollRunItem[]
   pensionEntries PensionLedger[]
+  loanRepayments StaffLoanRepayment[]
 
   @@index([schoolId])
 }
@@ -2873,3 +3003,217 @@ model Notification {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
+
+model FinanceMessage {
+  id            String   @id @default(uuid())
+  schoolId      String
+  senderType    String // "ADMIN" | "PARENT"
+  senderId      String // userId of admin or parent
+  receiverId    String? // userId of parent (if senderType is ADMIN) or admin (if PARENT)
+  invoiceId     String? // Reference to FinanceInvoice
+  subject       String?
+  body          String
+  attachmentUrl String?
+  isRead        Boolean  @default(false)
+  replyToId     String? // for thread threading
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  school  School           @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  invoice FinanceInvoice?  @relation(fields: [invoiceId], references: [id], onDelete: SetNull)
+  replyTo FinanceMessage?  @relation("MessageReplies", fields: [replyToId], references: [id], onDelete: SetNull)
+  replies FinanceMessage[] @relation("MessageReplies")
+}
+
+// ─── PHASE 12: ASSETS MANAGEMENT, INVENTORY & POINT OF SALE (POS) ─────────────
+
+enum AssetCondition {
+  GOOD
+  FAIR
+  NEEDS_REPAIR
+  DAMAGED
+  MISSING
+  DISPOSED
+}
+
+model SchoolAsset {
+  id                String          @id @default(uuid())
+  schoolId          String
+  branchId          String?
+  assetTag          String          // e.g. AST-FUR-001, AST-BUS-01
+  name              String          // e.g. Student Wooden Double Desks, School Bus Toyota Coaster
+  category          String          // Furniture & Fixtures, IT & Electronics, Vehicles & Transport, Laboratory & Science, Books & Library, Facilities & Machinery, Sports & Recreation, Other
+  location          String          // e.g. JSS1 A Classroom, ICT Lab 1, Science Block, Admin Office
+  quantity          Int             @default(1)
+  purchaseDate      DateTime?
+  purchaseCost      Float           @default(0) // Acquisition cost per unit or total
+  salvageValue      Float           @default(0) // Estimated scrap value
+  usefulLifeYears   Int             @default(5)
+  depreciationRate  Float           @default(20) // Percentage per year
+  currentValue      Float           @default(0) // Estimated net book value
+  condition         AssetCondition  @default(GOOD)
+  assignedStaffId   String?
+  assignedStaffName String?
+  serialNumber      String?
+  vendor            String?
+  warrantyExpiry    DateTime?
+  notes             String?
+  isDeleted         Boolean         @default(false)
+  deletedAt         DateTime?
+  createdAt         DateTime        @default(now())
+  updatedAt         DateTime        @updatedAt
+
+  school       School             @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  auditRecords AssetAuditRecord[]
+
+  @@index([schoolId, isDeleted])
+  @@index([schoolId, category])
+  @@index([schoolId, location])
+}
+
+model AssetAuditRecord {
+  id               String         @id @default(uuid())
+  schoolId         String
+  assetId          String
+  auditDate        DateTime       @default(now())
+  auditorId        String?
+  auditorName      String         // Staff member who performed the audit
+  expectedQuantity Int
+  actualQuantity   Int
+  discrepancy      Int            // actualQuantity - expectedQuantity (negative means missing)
+  condition        AssetCondition @default(GOOD)
+  location         String
+  status           String         @default("VERIFIED") // VERIFIED | DISCREPANCY | FLAGGED
+  notes            String?
+  createdAt        DateTime       @default(now())
+
+  asset SchoolAsset @relation(fields: [assetId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, assetId])
+  @@index([schoolId, auditDate])
+}
+
+model InventoryItem {
+  id             String   @id @default(uuid())
+  schoolId       String
+  branchId       String?
+  sku            String   // e.g. BK-MATH-JSS1, UNIF-SML-01
+  barcode        String?
+  name           String   // e.g. Oxford Mathematics Textbook JSS 1, School Polo Shirt (Medium)
+  category       String   // Textbooks, Stationery, Uniforms, Lab Supplies, Tuck Shop, Boarding, Sports, Consumables, Other
+  unit           String   @default("Pieces") // Pieces, Cartons, Packs, Bundles, Pairs, Rolls, Bottles, Sets
+  costPrice      Float    @default(0) // Average purchase cost
+  sellingPrice   Float    @default(0) // POS / retail selling price
+  quantityOnHand Int      @default(0) // Current remaining on-ground stock
+  reorderLevel   Int      @default(10) // Red alert threshold
+  isSellable     Boolean  @default(true) // Whether available for POS sale
+  location       String?  // Main Store, Tuck Shop, Book Depository
+  description    String?
+  isActive       Boolean  @default(true)
+  isDeleted      Boolean  @default(false)
+  deletedAt      DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  school      School              @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  restocks    InventoryRestock[]
+  movements   InventoryMovement[]
+  posItems    PosSaleItem[]
+
+  @@index([schoolId, isDeleted])
+  @@index([schoolId, category])
+  @@index([schoolId, isSellable])
+}
+
+model InventoryRestock {
+  id            String   @id @default(uuid())
+  schoolId      String
+  itemId        String
+  batchNumber   String?  // e.g. BATCH-2026-08-01
+  supplier      String?  // e.g. LearnAfrica Publishers Ltd
+  invoiceRef    String?  // Vendor Invoice / Receipt Number
+  quantityAdded Int      // e.g. 40 cartons (or 40 units)
+  unitCost      Float    @default(0)
+  totalCost     Float    @default(0)
+  receivedDate  DateTime @default(now())
+  receivedBy    String?  // Name of storekeeper / staff
+  notes         String?
+  createdAt     DateTime @default(now())
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, itemId])
+}
+
+model InventoryMovement {
+  id               String   @id @default(uuid())
+  schoolId         String
+  itemId           String
+  type             String   // RESTOCK | POS_SALE | USAGE | DAMAGE | RETURN | ADJUSTMENT
+  quantityChange   Int      // Positive for additions, negative for deductions
+  previousQuantity Int
+  newQuantity      Int
+  unitPrice        Float?
+  referenceId      String?  // PosSale ID or Restock ID
+  reason           String?  // e.g. "Sold via POS #POS-1002", "Classroom distribution to SS2", "Damaged in transit"
+  performedBy      String?  // User / Cashier who initiated
+  createdAt        DateTime @default(now())
+
+  item InventoryItem @relation(fields: [itemId], references: [id], onDelete: Cascade)
+
+  @@index([schoolId, itemId])
+  @@index([schoolId, type])
+}
+
+model PosSale {
+  id               String        @id @default(uuid())
+  schoolId         String
+  branchId         String?
+  saleNumber       String        @unique // e.g. POS-2026-0001
+  customerType     String        @default("WALK_IN") // WALK_IN | STUDENT | STAFF | PARENT
+  studentId        String?
+  customerName     String?       // Name of student/staff/parent or "Walk-in Customer"
+  studentAdmNo     String?
+  studentClass     String?
+  cashierId        String?
+  cashierName      String?
+  subtotal         Float         @default(0)
+  discount         Float         @default(0)
+  tax              Float         @default(0)
+  totalAmount      Float         @default(0)
+  amountPaid       Float         @default(0)
+  change           Float         @default(0)
+  paymentMethod    String        @default("CASH") // CASH | POS | TRANSFER | WALLET | SPLIT
+  paymentReference String?
+  status           String        @default("COMPLETED") // COMPLETED | VOIDED | REFUNDED
+  notes            String?
+  createdAt        DateTime      @default(now())
+  updatedAt        DateTime      @updatedAt
+
+  school School        @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+  items  PosSaleItem[]
+
+  @@index([schoolId, status])
+  @@index([schoolId, createdAt])
+  @@index([schoolId, customerType])
+}
+
+model PosSaleItem {
+  id              String         @id @default(uuid())
+  posSaleId       String
+  inventoryItemId String?
+  itemName        String
+  sku             String?
+  unitPrice       Float          @default(0)
+  quantity        Int            @default(1)
+  discount        Float          @default(0)
+  totalPrice      Float          @default(0)
+  createdAt       DateTime       @default(now())
+
+  sale          PosSale        @relation(fields: [posSaleId], references: [id], onDelete: Cascade)
+  inventoryItem InventoryItem? @relation(fields: [inventoryItemId], references: [id], onDelete: SetNull)
+
+  @@index([posSaleId])
+  @@index([inventoryItemId])
+}
+

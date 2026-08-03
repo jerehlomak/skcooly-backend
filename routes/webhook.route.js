@@ -1,9 +1,19 @@
-const express = require('express')
-const router = express.Router()
+const express = require('express');
+const router = express.Router();
 
-const { handlePaymentWebhook } = require('../controllers/webhook.controller')
+const {
+    handlePaymentWebhook,
+    handleFlutterwaveWebhook,
+    handleMonnifyWebhook,
+    handlePaystackWebhook
+} = require('../controllers/webhook.controller');
 
-// Webhook endpoint (must not use standard auth middleware to allow external providers)
-router.post('/payment', express.json({ type: 'application/json' }), handlePaymentWebhook)
+// Dedicated webhook endpoints
+router.post('/flutterwave', express.json({ type: 'application/json' }), handleFlutterwaveWebhook);
+router.post('/paystack', express.json({ type: 'application/json' }), handlePaystackWebhook);
+router.post('/monnify', express.json({ type: 'application/json' }), handleMonnifyWebhook);
 
-module.exports = router
+// Generic / legacy fallback endpoint
+router.post('/payment', express.json({ type: 'application/json' }), handlePaymentWebhook);
+
+module.exports = router;

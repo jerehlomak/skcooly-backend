@@ -6,6 +6,9 @@ const prisma = require('../db/prisma')
 const { getTransporter, getFromEmail } = require('../utils/emailTransporter')
 const { generateOtpEmailTemplate } = require('../utils/emailTemplates')
 const { invalidateSchoolAccess } = require('../services/permissions.service')
+const flutterwaveClient = require('../utils/flutterwave')
+const paystackClient = require('../utils/paystack')
+const { decrypt } = require('../utils/financeEncryption')
 
 // In-memory store for initial setup OTPs since admin record doesn't exist yet
 const setupOtps = new Map();
@@ -1307,6 +1310,109 @@ const updateLeadStatus = async (req, res) => {
     res.status(StatusCodes.OK).json({ lead });
 }
 
+const initializeSchoolInvoicePayment = async (req, res) => {
+    const { schoolId } = req.user;
+    const { id } = req.params;
+    const { gateway = 'FLUTTERWAVE' } = req.body;
+
+    const invoice = await prisma.invoice.findUnique({
+        where: { id },
+        include: { school: true }
+    });
+
+    if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) {
+        return res.status(StatusCodes.NOT_FOUND).json({ message: 'Invoice not found' });
+    }
+
+    if (invoice.status === 'PAID') {
+        return res.status(StatusCodes.BAD_REQUEST).json({ message: 'Invoice has already been paid.' });
+    }
+
+    const selectedGateway = (gateway || 'FLUTTERWAVE').toUpperCase();
+    const amount = invoice.totalAmount;
+    const currency = invoice.currency || 'NGN';
+    const clientBaseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const redirectUrl = `${clientBaseUrl}/dashboard/billing?status=success&invoiceId=${invoice.id}`;
+    const payerEmail = invoice.school?.email || req.user?.email || 'admin@school.com';
+    const schoolName = invoice.school?.name || 'School';
+
+    if (selectedGateway === 'PAYSTACK') {
+        let secretKey = process.env.PAYSTACK_SECRET_KEY;
+        if (!secretKey) {
+            const settings = await prisma.schoolPaymentSettings.findUnique({ where: { schoolId: invoice.schoolId } });
+            if (settings?.paystackSecretEnc) secretKey = decrypt(settings.paystackSecretEnc);
+        }
+        if (!secretKey) {
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: 'Paystack is not configured for platform payments' });
+        }
+        const reference = `SAAS-PSK-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+        const pskRes = await paystackClient.initializePayment({
+            secretKey,
+            email: payerEmail,
+            amount: Number(amount),
+            reference,
+            currency,
+            callbackUrl: redirectUrl,
+            metadata: {
+                invoiceId: invoice.id,
+                schoolId: invoice.schoolId,
+                purpose: 'CENTRAL_SAAS_SUBSCRIPTION'
+            }
+        });
+
+        return res.status(StatusCodes.OK).json({
+            gateway: 'PAYSTACK',
+            authorizationUrl: pskRes.authorizationUrl,
+            reference
+        });
+    }
+
+    // Default: FLUTTERWAVE
+    let secretKey = process.env.FLUTTERWAVE_SECRET_KEY;
+    let publicKey = null;
+    if (!secretKey) {
+        const settings = await prisma.schoolPaymentSettings.findUnique({ where: { schoolId: invoice.schoolId } });
+        if (settings?.flwSecretEnc) {
+            secretKey = decrypt(settings.flwSecretEnc);
+            publicKey = settings.flwPublicKey;
+        }
+    }
+    if (!secretKey) {
+        return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: 'Flutterwave is not configured for platform payments' });
+    }
+
+    const txRef = `SAAS-FLW-${Date.now()}-${Math.floor(Math.random() * 1000)}`;
+    const flwRes = await flutterwaveClient.initializePayment({
+        secretKey,
+        publicKey,
+        amount: Number(amount),
+        currency,
+        txRef,
+        redirectUrl,
+        email: payerEmail,
+        name: schoolName,
+        customer: {
+            email: payerEmail,
+            name: schoolName
+        },
+        customizations: {
+            title: 'Skooly Platform Subscription',
+            description: `Payment for Invoice #${invoice.invoiceNumber}`
+        },
+        meta: {
+            invoiceId: invoice.id,
+            schoolId: invoice.schoolId,
+            purpose: 'CENTRAL_SAAS_SUBSCRIPTION'
+        }
+    });
+
+    return res.status(StatusCodes.OK).json({
+        gateway: 'FLUTTERWAVE',
+        authorizationUrl: flwRes.link || flwRes.checkoutUrl,
+        reference: txRef
+    });
+};
+
 module.exports = {
     setupAdmin, verifySetupAdmin,
     login, verifyLogin, getMe, logout,
@@ -1324,6 +1430,7 @@ module.exports = {
     createInvoice, getInvoices, getInvoice, updateInvoice, deleteInvoice,
     sendInvoice, recordInvoicePayment, sendInvoiceReminder,
     getMyInvoices, getMyInvoice, getBillingProfile, updateBillingProfile,
+    initializeSchoolInvoicePayment,
     createLead, getLeads, updateLeadStatus
 }
 

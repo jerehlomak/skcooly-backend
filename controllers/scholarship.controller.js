@@ -44,23 +44,26 @@ const getStudentScholarships = async (req, res) => {
 // ─── CREATE ───────────────────────────────────────────────────────────────────
 const createScholarship = async (req, res) => {
     const { schoolId } = req.user;
-    const { studentId, type, value, description, sponsorName, status, startTerm, startYear, endTerm, endYear } = req.body;
+    const { studentId, classIds, type, value, description, sponsorName, status, startTerm, startYear, endTerm, endYear } = req.body;
 
-    if (!studentId) throw new CustomError.BadRequestError('studentId is required');
+    if (!studentId && (!classIds || classIds.length === 0)) throw new CustomError.BadRequestError('studentId or classIds is required');
     if (!type) throw new CustomError.BadRequestError('type is required');
     if (value === undefined || value === null || Number(value) < 0) {
         throw new CustomError.BadRequestError('Valid value is required');
     }
 
-    // Validate student belongs to school
-    const student = await prisma.studentProfile.findUnique({ where: { id: studentId } });
-    if (!student || (student.schoolId && student.schoolId !== schoolId)) {
-        throw new CustomError.NotFoundError('Student not found');
-    }
+    if (classIds && classIds.length > 0) {
+        const students = await prisma.studentProfile.findMany({
+            where: { schoolId, classId: { in: classIds }, status: { not: 'INACTIVE' } }
+        });
 
-    const scholarship = await prisma.scholarship.create({
-        data: {
-            schoolId, studentId,
+        if (students.length === 0) {
+            throw new CustomError.BadRequestError('No students found in the selected classes');
+        }
+
+        const data = students.map(student => ({
+            schoolId,
+            studentId: student.id,
             type,
             value: Number(value),
             description: description || null,
@@ -70,13 +73,36 @@ const createScholarship = async (req, res) => {
             startYear: startYear || null,
             endTerm: endTerm || null,
             endYear: endYear || null,
-        },
-        include: {
-            student: { select: { id: true, admissionNo: true, classLevel: true, user: { select: { name: true } } } }
-        }
-    });
+        }));
 
-    res.status(StatusCodes.CREATED).json({ scholarship, msg: 'Scholarship/discount created successfully' });
+        await prisma.scholarship.createMany({ data });
+        return res.status(StatusCodes.CREATED).json({ bulk: true, msg: `Scholarships created for ${students.length} students.` });
+    } else {
+        const student = await prisma.studentProfile.findUnique({ where: { id: studentId } });
+        if (!student || (student.schoolId && student.schoolId !== schoolId)) {
+            throw new CustomError.NotFoundError('Student not found');
+        }
+
+        const scholarship = await prisma.scholarship.create({
+            data: {
+                schoolId, studentId,
+                type,
+                value: Number(value),
+                description: description || null,
+                sponsorName: sponsorName || null,
+                status: status || 'ACTIVE',
+                startTerm: startTerm || null,
+                startYear: startYear || null,
+                endTerm: endTerm || null,
+                endYear: endYear || null,
+            },
+            include: {
+                student: { select: { id: true, admissionNo: true, classLevel: true, user: { select: { name: true } } } }
+            }
+        });
+
+        res.status(StatusCodes.CREATED).json({ scholarship, msg: 'Scholarship/discount created successfully' });
+    }
 };
 
 // ─── UPDATE ───────────────────────────────────────────────────────────────────

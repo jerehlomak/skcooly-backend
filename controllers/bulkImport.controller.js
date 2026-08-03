@@ -513,6 +513,251 @@ const bulkImportParents = async (req, res) => {
     });
 };
 
+// ─── DOWNLOAD BILLING TEMPLATE ────────────────────────────────────────────────
+const downloadBillingTemplate = (req, res) => {
+    const headers = ['admissionNo', 'term', 'academicYear', 'title', 'amount'];
+    const example = ['ADM-2023-001', 'FIRST_TERM', '2023/2024', 'Tuition Fee', '50000'];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
+    ws['!cols'] = headers.map(() => ({ wch: 20 }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Billing Import');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="billing_import_template.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+};
+
+// ─── DOWNLOAD PAYMENT TEMPLATE ────────────────────────────────────────────────
+const downloadPaymentTemplate = (req, res) => {
+    const headers = ['invoiceNumber', 'amount', 'method', 'discountAmount'];
+    const example = ['INV-1234567890', '50000', 'BANK_TRANSFER', '0'];
+    const wb = XLSX.utils.book_new();
+    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
+    ws['!cols'] = headers.map(() => ({ wch: 20 }));
+    XLSX.utils.book_append_sheet(wb, ws, 'Payment Import');
+    const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
+    res.setHeader('Content-Disposition', 'attachment; filename="payment_import_template.xlsx"');
+    res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
+    res.send(buffer);
+};
+
+// ─── BULK IMPORT BILLING ────────────────────────────────────────────────────────
+const bulkImportBilling = async (req, res) => {
+    if (!req.files || !req.files.file) throw new CustomError.BadRequestError('Please upload an Excel file (.xlsx)');
+    const file = req.files.file;
+    const wb = XLSX.read(file.data, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    if (!rows.length) throw new CustomError.BadRequestError('Excel file is empty');
+    const schoolId = req.user.schoolId;
+
+    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
+    const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
+    const isTermLocked = financeSettings?.financeModuleToggles?.termLock ?? false;
+    const activeTerm = financeSettings?.currentTerm;
+    const activeYear = financeSettings?.currentYear;
+
+    const created = [];
+    const failed = [];
+
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+        try {
+            if (!row.admissionNo || !row.amount) {
+                throw new Error('Missing required fields: admissionNo, amount');
+            }
+
+            const targetTerm = isTermLocked && activeTerm ? activeTerm : (row.term || activeTerm || 'FIRST');
+            const targetYear = isTermLocked && activeYear ? activeYear : (row.academicYear || activeYear || new Date().getFullYear().toString());
+
+            const student = await prisma.studentProfile.findFirst({ where: { admissionNo: String(row.admissionNo), schoolId } });
+            if (!student) throw new Error(`Student not found: ${row.admissionNo}`);
+
+            const amount = Number(row.amount);
+            if (isNaN(amount) || amount <= 0) throw new Error(`Invalid amount: ${row.amount}`);
+
+            const invoiceNumber = `${invoicePrefix}${Date.now()}-${Math.floor(Math.random()*1000)}`;
+            const title = row.title || 'Bulk Billing Invoice';
+
+            const newInvoice = await prisma.financeInvoice.create({
+                data: {
+                    schoolId,
+                    studentId: student.id,
+                    title,
+                    term: targetTerm,
+                    academicYear: targetYear,
+                    invoiceNumber,
+                    subTotal: amount,
+                    discountTotal: 0,
+                    totalAmount: amount,
+                    amountPaid: 0,
+                    balanceDue: amount,
+                    status: 'UNPAID',
+                    dueDate: new Date(),
+                    items: {
+                        create: [{
+                            itemName: title,
+                            label: title,
+                            quantity: 1,
+                            unitPrice: amount,
+                            amount: amount,
+                            total: amount
+                        }]
+                    }
+                }
+            });
+            created.push({ row: rowNum, invoiceNumber: newInvoice.invoiceNumber });
+        } catch (err) {
+            failed.push({ row: rowNum, admissionNo: row.admissionNo, error: err.message });
+        }
+    }
+    res.status(StatusCodes.OK).json({ created, failed, summary: { total: rows.length, created: created.length, failed: failed.length } });
+};
+
+// ─── BULK IMPORT PAYMENTS ───────────────────────────────────────────────────────
+const bulkImportPayments = async (req, res) => {
+    if (!req.files || !req.files.file) throw new CustomError.BadRequestError('Please upload an Excel file (.xlsx)');
+    const file = req.files.file;
+    const wb = XLSX.read(file.data, { type: 'buffer' });
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+
+    if (!rows.length) throw new CustomError.BadRequestError('Excel file is empty');
+    const schoolId = req.user.schoolId;
+
+    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
+    const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
+
+    const created = [];
+    const failed = [];
+
+    const generateRef = (prefix) => `${prefix}-${Date.now()}-${Math.floor(Math.random()*1000)}`;
+
+    for (let i = 0; i < rows.length; i++) {
+        const row = rows[i];
+        const rowNum = i + 2;
+        try {
+            if (!row.invoiceNumber || !row.amount || !row.method) {
+                throw new Error('Missing required fields: invoiceNumber, amount, method');
+            }
+            const invoiceNumber = String(row.invoiceNumber);
+            const appliedAmount = Number(row.amount);
+            const appliedDiscount = Number(row.discountAmount || 0);
+            const method = String(row.method).toUpperCase();
+
+            if (isNaN(appliedAmount) || appliedAmount <= 0) throw new Error(`Invalid amount: ${row.amount}`);
+            if (!['CASH', 'POS', 'BANK_TRANSFER'].includes(method)) throw new Error(`Invalid method: ${method}`);
+
+            await prisma.$transaction(async (tx) => {
+                const liveInvoice = await tx.financeInvoice.findFirst({ where: { invoiceNumber, schoolId } });
+                if (!liveInvoice) throw new Error(`Invoice not found: ${invoiceNumber}`);
+
+                let amountToCurrentInvoice = 0;
+                let discountToCurrentInvoice = 0;
+                let overpaymentAmount = 0;
+
+                if (liveInvoice.balanceDue > 0) {
+                    if (appliedAmount + appliedDiscount <= liveInvoice.balanceDue) {
+                        amountToCurrentInvoice = appliedAmount;
+                        discountToCurrentInvoice = appliedDiscount;
+                    } else {
+                        if (appliedDiscount >= liveInvoice.balanceDue) {
+                            discountToCurrentInvoice = liveInvoice.balanceDue;
+                            amountToCurrentInvoice = 0;
+                            overpaymentAmount = appliedAmount + (appliedDiscount - liveInvoice.balanceDue);
+                        } else {
+                            discountToCurrentInvoice = appliedDiscount;
+                            amountToCurrentInvoice = liveInvoice.balanceDue - appliedDiscount;
+                            overpaymentAmount = appliedAmount - amountToCurrentInvoice;
+                        }
+                    }
+
+                    const newPaid = liveInvoice.amountPaid + amountToCurrentInvoice;
+                    const newDiscountTotal = liveInvoice.discountTotal + discountToCurrentInvoice;
+                    const newBalance = liveInvoice.balanceDue - (amountToCurrentInvoice + discountToCurrentInvoice);
+
+                    await tx.financeInvoice.update({
+                        where: { id: liveInvoice.id },
+                        data: {
+                            amountPaid: newPaid,
+                            discountTotal: newDiscountTotal,
+                            balanceDue: newBalance,
+                            status: newBalance <= 0 ? 'PAID' : 'PARTIALLY_PAID'
+                        }
+                    });
+                } else {
+                    overpaymentAmount = appliedAmount;
+                }
+
+                const txRecord = await tx.paymentTransaction.create({
+                    data: {
+                        schoolId,
+                        studentId: liveInvoice.studentId,
+                        reference: generateRef('MNL'),
+                        amount: appliedAmount,
+                        method: method,
+                        status: 'SUCCESSFUL',
+                        paidAt: new Date(),
+                        initiatedBy: req.user.userId
+                    }
+                });
+
+                if (amountToCurrentInvoice > 0) {
+                    await tx.paymentAllocation.create({
+                        data: { schoolId, paymentTransactionId: txRecord.id, invoiceId: liveInvoice.id, allocatedAmount: amountToCurrentInvoice }
+                    });
+                }
+
+                let newInvNum = null;
+                if (overpaymentAmount > 0) {
+                    newInvNum = `${invoicePrefix}${Date.now()}-${Math.floor(Math.random()*1000)}`;
+                    const newInvoice = await tx.financeInvoice.create({
+                        data: {
+                            schoolId,
+                            studentId: liveInvoice.studentId,
+                            title: 'Additional Payment',
+                            term: liveInvoice.term,
+                            academicYear: liveInvoice.academicYear,
+                            invoiceNumber: newInvNum,
+                            subTotal: overpaymentAmount,
+                            discountTotal: 0,
+                            totalAmount: overpaymentAmount,
+                            amountPaid: overpaymentAmount,
+                            balanceDue: 0,
+                            status: 'PAID',
+                            dueDate: new Date(),
+                            items: {
+                                create: [{ itemName: 'Additional Payment', label: 'Additional Payment', quantity: 1, unitPrice: overpaymentAmount, amount: overpaymentAmount, total: overpaymentAmount }]
+                            }
+                        }
+                    });
+                    await tx.paymentAllocation.create({
+                        data: { schoolId, paymentTransactionId: txRecord.id, invoiceId: newInvoice.id, allocatedAmount: overpaymentAmount }
+                    });
+                }
+
+                await tx.paymentReceipt.create({
+                    data: {
+                        schoolId,
+                        transactionId: txRecord.id,
+                        receiptNumber: `REC-${Date.now()}-${Math.floor(Math.random()*1000)}`,
+                        studentId: liveInvoice.studentId,
+                        amountPaid: appliedAmount,
+                        method: method,
+                        invoiceNumbers: [amountToCurrentInvoice > 0 ? liveInvoice.invoiceNumber : null, newInvNum].filter(Boolean)
+                    }
+                });
+            });
+            created.push({ row: rowNum, invoiceNumber });
+        } catch (err) {
+            failed.push({ row: rowNum, invoiceNumber: row.invoiceNumber, error: err.message });
+        }
+    }
+    res.status(StatusCodes.OK).json({ created, failed, summary: { total: rows.length, created: created.length, failed: failed.length } });
+};
+
 module.exports = {
     downloadStaffTemplate,
     downloadStudentTemplate,
@@ -520,4 +765,8 @@ module.exports = {
     bulkImportStaff,
     bulkImportStudents,
     bulkImportParents,
+    downloadBillingTemplate,
+    downloadPaymentTemplate,
+    bulkImportBilling,
+    bulkImportPayments,
 };

@@ -43,15 +43,50 @@ function generateReceiptNo(prefix = 'REC-') {
     return `${prefix}${ts}-${rand}`;
 }
 
+const flutterwaveClient = require('../utils/flutterwave');
+const monnifyClient = require('../utils/monnify');
+const paystackClient = require('../utils/paystack');
+
+async function getDecryptedFlwSecret(schoolId) {
+    const settings = await prisma.schoolPaymentSettings.findUnique({ where: { schoolId } });
+    if (settings?.flwSecretEnc) {
+        return decrypt(settings.flwSecretEnc);
+    }
+    if (process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY) {
+        return process.env.FLUTTERWAVE_SECRET_KEY || process.env.FLW_SECRET_KEY;
+    }
+    throw new CustomError.BadRequestError('Flutterwave Secret Key is not configured for this school');
+}
+
+async function getDecryptedMonnifyConfig(schoolId) {
+    const settings = await prisma.schoolPaymentSettings.findUnique({ where: { schoolId } });
+    const apiKey = settings?.monnifyApiKey || process.env.MONNIFY_API_KEY;
+    const contractCode = settings?.monnifyContractCode || process.env.MONNIFY_CONTRACT_CODE;
+    const env = settings?.monnifyEnv || (process.env.MONNIFY_ENV === 'LIVE' ? 'LIVE' : 'TEST');
+    let secretKey = null;
+
+    if (settings?.monnifySecretEnc) {
+        secretKey = decrypt(settings.monnifySecretEnc);
+    } else if (process.env.MONNIFY_SECRET_KEY) {
+        secretKey = process.env.MONNIFY_SECRET_KEY;
+    }
+
+    if (!apiKey || !secretKey || !contractCode) {
+        throw new CustomError.BadRequestError('Monnify credentials (API Key, Secret Key, Contract Code) are not fully configured');
+    }
+
+    return { apiKey, secretKey, contractCode, env };
+}
+
 async function getDecryptedPaystackSecret(schoolId) {
     const settings = await prisma.schoolPaymentSettings.findUnique({ where: { schoolId } });
-    if (!settings || !settings.paystackSecretEnc) {
-        throw new CustomError.BadRequestError('Paystack is not configured for this school');
+    if (settings?.paystackSecretEnc) {
+        return decrypt(settings.paystackSecretEnc);
     }
-    if (!settings.paystackEnabled) {
-        throw new CustomError.BadRequestError('Paystack is disabled for this school');
+    if (process.env.PAYSTACK_SECRET_KEY) {
+        return process.env.PAYSTACK_SECRET_KEY;
     }
-    return decrypt(settings.paystackSecretEnc);
+    throw new CustomError.BadRequestError('Paystack is not configured for this school');
 }
 
 async function getStudentEmail(studentId) {
@@ -96,7 +131,8 @@ async function applyPaymentToInvoices(tx, {
             schoolId,
             studentId,
             isDeleted: false,
-            status: { in: ['PUBLISHED', 'PARTIAL'] }
+            balanceDue: { gt: 0 },
+            status: { notIn: ['PAID', 'VOID', 'CANCELLED', 'FAILED'] }
         },
         orderBy: { createdAt: 'asc' }
     });
@@ -106,7 +142,7 @@ async function applyPaymentToInvoices(tx, {
         const toApply = Math.min(remaining, inv.balanceDue);
         const newPaid = inv.amountPaid + toApply;
         const newBalance = inv.balanceDue - toApply;
-        const newStatus = newBalance <= 0 ? 'PAID' : 'PARTIAL';
+        const newStatus = newBalance <= 0 ? 'PAID' : 'PARTIALLY_PAID';
 
         await tx.financeInvoice.update({
             where: { id: inv.id },
@@ -190,11 +226,60 @@ async function createReceipt(tx, {
             });
         }
 
-        let desc = 'Automated fee collection';
+        let studentLabel = '';
+        if (studentId) {
+            try {
+                const student = await tx.studentProfile.findUnique({
+                    where: { id: studentId },
+                    include: {
+                        user: { select: { name: true } },
+                        classArm: { select: { name: true } },
+                        classLevel: { select: { name: true } }
+                    }
+                });
+                if (student) {
+                    const studentName = student.user?.name || `${student.firstName || ''} ${student.lastName || ''}`.trim() || 'Student';
+                    const className = student.classArm?.name || student.classLevel?.name || '';
+                    studentLabel = className ? `${studentName} (${className})` : studentName;
+                }
+            } catch (err) {
+                console.error('[createReceipt] Failed to resolve student info for ledger:', err);
+            }
+        }
+
+        let desc = 'Automated Fee Collection';
         if (invoiceNumbers && invoiceNumbers.length > 0) {
-            desc = `Invoice payment: ${invoiceNumbers.join(', ')}`;
+            try {
+                const invoices = await tx.financeInvoice.findMany({
+                    where: {
+                        schoolId,
+                        invoiceNumber: { in: invoiceNumbers }
+                    },
+                    include: {
+                        items: { select: { label: true } }
+                    }
+                });
+
+                const uniqueItemLabels = Array.from(
+                    new Set(invoices.flatMap(inv => (inv.items || []).map(i => i.label?.trim())).filter(Boolean))
+                );
+
+                const itemsStr = uniqueItemLabels.length > 0
+                    ? (uniqueItemLabels.length > 3 ? `${uniqueItemLabels.slice(0, 3).join(', ')} +${uniqueItemLabels.length - 3} more` : uniqueItemLabels.join(', '))
+                    : 'School Fees';
+
+                if (studentLabel) {
+                    desc = `${itemsStr} — ${studentLabel} [${invoiceNumbers.join(', ')}]`;
+                } else {
+                    desc = `${itemsStr} [${invoiceNumbers.join(', ')}]`;
+                }
+            } catch (err) {
+                desc = studentLabel ? `Invoice payment: ${invoiceNumbers.join(', ')} — ${studentLabel}` : `Invoice payment: ${invoiceNumbers.join(', ')}`;
+            }
         } else {
-            desc = `Online wallet top-up / unallocated payment`;
+            desc = studentLabel
+                ? `Online Wallet Top-up / Fee Deposit — ${studentLabel}`
+                : `Online Wallet Top-up / Unallocated Payment`;
         }
 
         await tx.incomeRecord.create({
@@ -213,6 +298,90 @@ async function createReceipt(tx, {
     return receipt;
 }
 
+async function autoApplyStudentWalletToInvoice({ schoolId, branchId, studentId, invoice, userId, financeSettings, schoolSettings }) {
+    if (!invoice || invoice.balanceDue <= 0) return invoice;
+    try {
+        const wallet = await prisma.studentWallet.findUnique({ where: { studentId } });
+        if (!wallet || wallet.balance <= 0) return invoice;
+
+        const applied = Math.min(wallet.balance, invoice.balanceDue);
+        if (applied <= 0) return invoice;
+
+        return await prisma.$transaction(async (tx) => {
+            const liveWallet = await tx.studentWallet.findUnique({ where: { studentId } });
+            if (!liveWallet || liveWallet.balance <= 0) return invoice;
+            const actualApplied = Math.min(liveWallet.balance, invoice.balanceDue);
+            if (actualApplied <= 0) return invoice;
+
+            const updatedWallet = await tx.studentWallet.update({
+                where: { studentId },
+                data: { balance: { decrement: actualApplied } }
+            });
+
+            const ref = generateRef('WAL');
+            await tx.studentWalletTransaction.create({
+                data: {
+                    walletId: liveWallet.id,
+                    schoolId,
+                    type: 'INVOICE_APPLICATION',
+                    amount: actualApplied,
+                    balanceBefore: updatedWallet.balance + actualApplied,
+                    balanceAfter: updatedWallet.balance,
+                    reference: ref,
+                    description: `Auto-applied on invoice generation ${invoice.invoiceNumber}`
+                }
+            });
+
+            const newPaid = (invoice.amountPaid || 0) + actualApplied;
+            const newBalance = invoice.balanceDue - actualApplied;
+            const updatedInvoice = await tx.financeInvoice.update({
+                where: { id: invoice.id },
+                data: {
+                    amountPaid: newPaid,
+                    balanceDue: newBalance,
+                    walletDeduction: { increment: actualApplied },
+                    status: newBalance <= 0 ? 'PAID' : 'PARTIALLY_PAID'
+                }
+            });
+
+            const txRecord = await tx.paymentTransaction.create({
+                data: {
+                    schoolId,
+                    studentId,
+                    reference: ref,
+                    amount: actualApplied,
+                    method: 'WALLET',
+                    status: 'SUCCESSFUL',
+                    paidAt: new Date(),
+                    initiatedBy: userId || null
+                }
+            });
+
+            await tx.paymentAllocation.create({
+                data: { schoolId, paymentTransactionId: txRecord.id, invoiceId: invoice.id, allocatedAmount: actualApplied }
+            });
+
+            await createReceipt(tx, {
+                schoolId,
+                branchId: branchId || null,
+                studentId,
+                paymentTransactionId: txRecord.id,
+                amountPaid: actualApplied,
+                method: 'WALLET',
+                invoiceNumbers: [invoice.invoiceNumber],
+                walletBalanceAfter: updatedWallet.balance,
+                financeSettings,
+                schoolSettings
+            });
+
+            return updatedInvoice;
+        }, { maxWait: 10000, timeout: 30000 });
+    } catch (err) {
+        console.error('[autoApplyStudentWalletToInvoice] Wallet auto-apply failed:', err);
+        return invoice;
+    }
+}
+
 // ─── PAYMENT SETTINGS ───────────────────────────────────────────────────────
 
 const getPaymentSettings = async (req, res) => {
@@ -221,63 +390,242 @@ const getPaymentSettings = async (req, res) => {
     if (!settings) {
         settings = await prisma.schoolPaymentSettings.create({ data: { schoolId } });
     }
-    // GAP 1 — never expose encrypted secrets
-    const { 
-        paystackSecretEnc, paystackWebhookSecret: _wh, 
-        remitaSecretEnc, remitaWebhookSecret: _rwh, 
-        ...safe 
-    } = settings;
-    res.status(StatusCodes.OK).json({ settings: safe });
+    
+    // Return safe configuration without exposing raw encrypted secrets
+    res.status(StatusCodes.OK).json({
+        settings: {
+            id: settings.id,
+            schoolId: settings.schoolId,
+            activeGateway: settings.activeGateway || 'FLUTTERWAVE',
+            
+            // Flutterwave
+            flutterwavePublicKey: settings.flwPublicKey || '',
+            flwPublicKey: settings.flwPublicKey || '',
+            flutterwaveMode: settings.flwEnv || 'TEST',
+            flwEnv: settings.flwEnv || 'TEST',
+            flutterwaveEnabled: settings.flwEnabled || false,
+            flwEnabled: settings.flwEnabled || false,
+            hasFlwSecret: !!settings.flwSecretEnc,
+            hasFlwWebhookSecret: !!settings.flwWebhookSecret,
+
+            // Paystack
+            paystackPublicKey: settings.paystackPublicKey || '',
+            paystackMode: settings.paystackEnv || 'TEST',
+            paystackEnv: settings.paystackEnv || 'TEST',
+            paystackEnabled: settings.paystackEnabled || false,
+            hasPaystackSecret: !!settings.paystackSecretEnc,
+            hasPaystackWebhookSecret: !!settings.paystackWebhookSecret,
+
+            // Monnify
+            monnifyApiKey: settings.monnifyApiKey || '',
+            monnifyContractCode: settings.monnifyContractCode || '',
+            monnifyMode: settings.monnifyEnv || 'TEST',
+            monnifyEnv: settings.monnifyEnv || 'TEST',
+            monnifyEnabled: settings.monnifyEnabled || false,
+            hasMonnifySecret: !!settings.monnifySecretEnc,
+            hasMonnifyWebhookSecret: !!settings.monnifyWebhookSecret,
+
+            // Remita
+            remitaPublicKey: settings.remitaPublicKey || '',
+            remitaMerchantId: settings.remitaMerchantId || '',
+            remitaEnabled: settings.remitaEnabled || false,
+            hasRemitaSecret: !!settings.remitaSecretEnc,
+
+            // General & Rules
+            merchantDisplayName: settings.merchantDisplayName || '',
+            bankTransferEnabled: settings.bankTransferEnabled ?? true,
+            transferEvidenceRequired: settings.transferEvidenceRequired ?? true,
+            allowPartialPayment: settings.allowPartialPayment ?? true,
+            allowOverpayment: settings.allowOverpayment ?? false,
+            autoApplyWallet: settings.autoApplyWallet ?? false,
+            allowWalletCheckout: settings.allowWalletCheckout ?? true,
+            allowFamilyWalletSharing: settings.allowFamilyWalletSharing ?? true,
+            createdAt: settings.createdAt,
+            updatedAt: settings.updatedAt
+        }
+    });
 };
 
 const updatePaymentSettings = async (req, res) => {
     const { schoolId } = req.user;
+    const body = req.body || {};
+
+    const activeGateway = body.activeGateway;
+
+    // Flutterwave aliases
+    const flwPublic = body.flutterwavePublicKey !== undefined ? body.flutterwavePublicKey : body.flwPublicKey;
+    const flwSecret = body.flutterwaveSecretKey || body.flwSecret;
+    const flwWebhook = body.flwWebhookSecret !== undefined ? body.flwWebhookSecret : body.flutterwaveWebhookSecret;
+    const flwEnv = body.flutterwaveMode !== undefined ? body.flutterwaveMode : body.flwEnv;
+    const flwEnabled = body.flutterwaveEnabled !== undefined ? body.flutterwaveEnabled : body.flwEnabled;
+
+    // Paystack aliases
+    const paystackPublic = body.paystackPublicKey;
+    const paystackSecret = body.paystackSecret || body.paystackSecretKey;
+    const paystackWebhook = body.paystackWebhookSecret;
+    const paystackEnv = body.paystackMode !== undefined ? body.paystackMode : body.paystackEnv;
+    const paystackEnabled = body.paystackEnabled;
+
+    // Monnify aliases
+    const monnifyApi = body.monnifyApiKey || body.monnifyPublicKey;
+    const monnifySecret = body.monnifySecretKey || body.monnifySecret;
+    const monnifyContract = body.monnifyContractCode;
+    const monnifyWebhook = body.monnifyWebhookSecret;
+    const monnifyEnv = body.monnifyMode !== undefined ? body.monnifyMode : body.monnifyEnv;
+    const monnifyEnabled = body.monnifyEnabled;
+
+    // Remita
+    const remitaPublic = body.remitaPublicKey;
+    const remitaSecret = body.remitaSecret || body.remitaSecretKey;
+    const remitaWebhook = body.remitaWebhookSecret;
+    const remitaMerchant = body.remitaMerchantId;
+    const remitaEnabled = body.remitaEnabled;
+
+    // General
     const {
-        paystackPublicKey, paystackSecret, paystackWebhookSecret, paystackEnv,
-        paystackEnabled, merchantDisplayName,
-        remitaPublicKey, remitaSecret, remitaMerchantId, remitaWebhookSecret, remitaEnabled,
-        bankTransferEnabled, transferEvidenceRequired,
-        allowPartialPayment, allowOverpayment, autoApplyWallet
-    } = req.body;
+        merchantDisplayName, bankTransferEnabled, transferEvidenceRequired,
+        allowPartialPayment, allowOverpayment, autoApplyWallet,
+        allowWalletCheckout, allowFamilyWalletSharing
+    } = body;
 
     const data = {
-        ...(paystackPublicKey !== undefined && { paystackPublicKey }),
+        ...(activeGateway !== undefined && { activeGateway }),
+
+        // Flutterwave
+        ...(flwPublic !== undefined && { flwPublicKey: flwPublic }),
+        ...(flwSecret && { flwSecretEnc: encrypt(flwSecret) }),
+        ...(flwWebhook !== undefined && { flwWebhookSecret: flwWebhook }),
+        ...(flwEnv !== undefined && { flwEnv }),
+        ...(flwEnabled !== undefined && { flwEnabled }),
+
+        // Paystack
+        ...(paystackPublic !== undefined && { paystackPublicKey: paystackPublic }),
         ...(paystackSecret && { paystackSecretEnc: encrypt(paystackSecret) }),
-        ...(paystackWebhookSecret && { paystackWebhookSecret: encrypt(paystackWebhookSecret) }),
+        ...(paystackWebhook !== undefined && { paystackWebhookSecret: encrypt(paystackWebhook) }),
         ...(paystackEnv !== undefined && { paystackEnv }),
         ...(paystackEnabled !== undefined && { paystackEnabled }),
-        ...(remitaPublicKey !== undefined && { remitaPublicKey }),
+
+        // Monnify
+        ...(monnifyApi !== undefined && { monnifyApiKey: monnifyApi }),
+        ...(monnifySecret && { monnifySecretEnc: encrypt(monnifySecret) }),
+        ...(monnifyContract !== undefined && { monnifyContractCode: monnifyContract }),
+        ...(monnifyWebhook !== undefined && { monnifyWebhookSecret: monnifyWebhook }),
+        ...(monnifyEnv !== undefined && { monnifyEnv }),
+        ...(monnifyEnabled !== undefined && { monnifyEnabled }),
+
+        // Remita
+        ...(remitaPublic !== undefined && { remitaPublicKey: remitaPublic }),
         ...(remitaSecret && { remitaSecretEnc: encrypt(remitaSecret) }),
-        ...(remitaWebhookSecret && { remitaWebhookSecret: remitaWebhookSecret }),
-        ...(remitaMerchantId !== undefined && { remitaMerchantId }),
+        ...(remitaWebhook !== undefined && { remitaWebhookSecret: remitaWebhook }),
+        ...(remitaMerchant !== undefined && { remitaMerchantId: remitaMerchant }),
         ...(remitaEnabled !== undefined && { remitaEnabled }),
+
+        // General
         ...(merchantDisplayName !== undefined && { merchantDisplayName }),
         ...(bankTransferEnabled !== undefined && { bankTransferEnabled }),
         ...(transferEvidenceRequired !== undefined && { transferEvidenceRequired }),
         ...(allowPartialPayment !== undefined && { allowPartialPayment }),
         ...(allowOverpayment !== undefined && { allowOverpayment }),
         ...(autoApplyWallet !== undefined && { autoApplyWallet }),
+        ...(allowWalletCheckout !== undefined && { allowWalletCheckout }),
+        ...(allowFamilyWalletSharing !== undefined && { allowFamilyWalletSharing }),
     };
 
-    const settings = await prisma.schoolPaymentSettings.upsert({
+    await prisma.schoolPaymentSettings.upsert({
         where: { schoolId },
         update: data,
         create: { schoolId, ...data }
     });
 
-    const {
-        paystackSecretEnc, paystackWebhookSecret: _wh,
-        remitaSecretEnc, remitaWebhookSecret: _rwh,
-        ...safe
-    } = settings;
-    res.status(StatusCodes.OK).json({ settings: safe, msg: 'Payment settings updated' });
+    // Keep FinanceSettings payment rule flags in sync for total system consistency
+    const syncData = {};
+    if (allowPartialPayment !== undefined) syncData.allowPartialPayment = allowPartialPayment;
+    if (allowOverpayment !== undefined) syncData.allowOverpayment = allowOverpayment;
+    if (autoApplyWallet !== undefined) syncData.autoApplyWallet = autoApplyWallet;
+
+    if (Object.keys(syncData).length > 0) {
+        await prisma.financeSettings.upsert({
+            where: { schoolId },
+            update: syncData,
+            create: { schoolId, ...syncData }
+        }).catch(err => console.error('Error syncing financeSettings:', err));
+    }
+
+    res.status(StatusCodes.OK).json({ msg: 'Payment settings updated successfully' });
+};
+
+/**
+ * Test Connection endpoint for verifying provider credentials live
+ */
+const testGatewayConnection = async (req, res) => {
+    const { schoolId } = req.user;
+    const body = req.body || {};
+    const creds = body.credentials || {};
+
+    const gateway = body.gateway;
+    const secretKey = body.secretKey || creds.secretKey || creds.flutterwaveSecretKey || creds.paystackSecret || creds.monnifySecret;
+    const publicKey = body.publicKey || creds.publicKey || creds.flutterwavePublicKey || creds.paystackPublicKey;
+    const apiKey = body.apiKey || creds.apiKey || creds.monnifyApiKey;
+    const contractCode = body.contractCode || creds.contractCode || creds.monnifyContractCode;
+    const env = body.env || creds.env || creds.monnifyEnv || 'TEST';
+
+    if (!gateway) {
+        throw new CustomError.BadRequestError('Gateway parameter is required');
+    }
+
+    try {
+        let result = { valid: false, message: 'Unsupported gateway' };
+
+        if (gateway === 'FLUTTERWAVE') {
+            let key = secretKey;
+            let pubKey = publicKey;
+            if (!key) {
+                key = await getDecryptedFlwSecret(schoolId).catch(() => null);
+            }
+            if (!pubKey) {
+                const settings = await prisma.schoolPaymentSettings.findUnique({ where: { schoolId } });
+                pubKey = settings?.flwPublicKey || process.env.FLUTTERWAVE_PUBLIC_KEY;
+            }
+            if (!key) throw new CustomError.BadRequestError('No Flutterwave secret key provided or saved');
+            result = await flutterwaveClient.testCredentials(key, pubKey);
+        } else if (gateway === 'PAYSTACK') {
+            let key = secretKey;
+            if (!key) {
+                key = await getDecryptedPaystackSecret(schoolId).catch(() => null);
+            }
+            if (!key) throw new CustomError.BadRequestError('No Paystack secret key provided or saved');
+            result = await paystackClient.testCredentials(key);
+        } else if (gateway === 'MONNIFY') {
+            let mApiKey = apiKey;
+            let mSecretKey = secretKey;
+            let mEnv = env;
+
+            if (!mApiKey || !mSecretKey) {
+                const cfg = await getDecryptedMonnifyConfig(schoolId).catch(() => null);
+                if (cfg) {
+                    mApiKey = mApiKey || cfg.apiKey;
+                    mSecretKey = mSecretKey || cfg.secretKey;
+                    mEnv = mEnv || cfg.env;
+                }
+            }
+            if (!mApiKey || !mSecretKey) {
+                throw new CustomError.BadRequestError('Monnify API Key and Secret Key are required');
+            }
+            result = await monnifyClient.testCredentials({ apiKey: mApiKey, secretKey: mSecretKey, env: mEnv });
+        }
+
+        if (result.valid) {
+            return res.status(StatusCodes.OK).json({ success: true, message: result.message });
+        } else {
+            return res.status(StatusCodes.BAD_REQUEST).json({ success: false, message: result.message });
+        }
+    } catch (err) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ success: false, message: err.message || 'Connection test failed' });
+    }
 };
 
 const getActivePaymentMethods = async (req, res) => {
-    // Both Parent and Admin can call this
-    // The schoolId comes from the user if it's admin, or we map it from the student in Parent dashboard... Wait.
-    // req.user has schoolId attached to JWT for both Admins and Parents? 
-    // Let's assume req.user.schoolId exists.
+    // Both Parent, Student and Admin can call this
     const { schoolId } = req.user;
     if (!schoolId) return res.status(StatusCodes.BAD_REQUEST).json({ msg: 'No school bound' });
 
@@ -285,17 +633,52 @@ const getActivePaymentMethods = async (req, res) => {
     if (!settings) return res.status(StatusCodes.OK).json({ methods: [] });
 
     const methods = [];
-    if (settings.paystackEnabled && settings.paystackPublicKey) {
-        methods.push({ id: 'PAYSTACK', name: 'Paystack (Card/Transfer)' });
-    }
-    if (settings.remitaEnabled && settings.remitaPublicKey) {
-        methods.push({ id: 'REMITA', name: 'Remita' });
-    }
-    if (settings.bankTransferEnabled) {
-        methods.push({ id: 'BANK_TRANSFER', name: 'Direct Bank Transfer' });
+
+    if (settings.flwEnabled && (settings.flwPublicKey || settings.flwSecretEnc || process.env.FLUTTERWAVE_SECRET_KEY)) {
+        methods.push({ 
+            id: 'FLUTTERWAVE', 
+            name: 'Flutterwave (Card, USSD, Transfer)',
+            badge: 'Flutterwave',
+            isDefault: settings.activeGateway === 'FLUTTERWAVE'
+        });
     }
 
-    res.status(StatusCodes.OK).json({ methods });
+    if (settings.paystackEnabled && (settings.paystackPublicKey || settings.paystackSecretEnc || process.env.PAYSTACK_SECRET_KEY)) {
+        methods.push({ 
+            id: 'PAYSTACK', 
+            name: 'Paystack (Card, Transfer, Bank)',
+            badge: 'Paystack',
+            isDefault: settings.activeGateway === 'PAYSTACK'
+        });
+    }
+
+    if (settings.monnifyEnabled && (settings.monnifyApiKey || settings.monnifySecretEnc || process.env.MONNIFY_API_KEY)) {
+        methods.push({ 
+            id: 'MONNIFY', 
+            name: 'Monnify (Card & Direct Account)',
+            badge: 'Monnify',
+            isDefault: settings.activeGateway === 'MONNIFY'
+        });
+    }
+
+    if (settings.bankTransferEnabled) {
+        methods.push({ 
+            id: 'BANK_TRANSFER', 
+            name: 'Direct Bank Transfer',
+            badge: 'Bank Transfer',
+            isDefault: settings.activeGateway === 'BANK_TRANSFER'
+        });
+    }
+
+    res.status(StatusCodes.OK).json({ 
+        activeGateway: settings.activeGateway || 'FLUTTERWAVE',
+        methods,
+        allowPartialPayment: settings.allowPartialPayment ?? true,
+        allowOverpayment: settings.allowOverpayment ?? false,
+        autoApplyWallet: settings.autoApplyWallet ?? false,
+        allowWalletCheckout: settings.allowWalletCheckout ?? true,
+        allowFamilyWalletSharing: settings.allowFamilyWalletSharing ?? true,
+    });
 };
 
 // ─── BANK ACCOUNTS ───────────────────────────────────────────────────────────
@@ -370,33 +753,243 @@ const deleteBankAccount = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Bank account removed' });
 };
 
-// ─── PAYSTACK PAYMENT INIT ──────────────────────────────────────────────────
+// ─── UNIFIED ONLINE PAYMENT ENGINE ──────────────────────────────────────────
 
-const fs = require('fs');
-const initializePaystackPayment = async (req, res) => {
-  try {
-    const { studentId, amount, invoiceId, email } = req.body;
+const settleSuccessfulPaymentTransaction = async ({ reference, gatewayRef, gatewayResponse, paymentMethod = 'ONLINE' }) => {
+    const txRecord = await prisma.paymentTransaction.findUnique({ where: { reference } });
+    if (!txRecord) {
+        return { success: false, reason: 'Transaction not found for reference' };
+    }
+    if (txRecord.status === 'SUCCESSFUL') {
+        return { success: true, alreadyProcessed: true };
+    }
+
+    const [financeSettings, schoolSettings, paymentSettings] = await Promise.all([
+        prisma.financeSettings.findUnique({ where: { schoolId: txRecord.schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId: txRecord.schoolId } }),
+        prisma.schoolPaymentSettings.findUnique({ where: { schoolId: txRecord.schoolId } })
+    ]);
+
+    const allowOverpayment = paymentSettings?.allowOverpayment ?? false;
+    let receipt = null;
+    let invoiceNumbers = [];
+    let walletBalanceAfter = null;
+
+    await prisma.$transaction(async (tx) => {
+        await tx.paymentTransaction.update({
+            where: { id: txRecord.id },
+            data: {
+                status: 'SUCCESSFUL',
+                paidAt: new Date(),
+                method: paymentMethod || txRecord.method,
+                gatewayRef: gatewayRef ? String(gatewayRef) : undefined,
+                gatewayResponse: gatewayResponse || undefined
+            }
+        });
+
+        if (txRecord.note === 'WALLET_DEPOSIT') {
+            let wallet = await tx.studentWallet.findUnique({ where: { studentId: txRecord.studentId } });
+            if (!wallet) {
+                const student = await tx.studentProfile.findUnique({ where: { id: txRecord.studentId } });
+                wallet = await tx.studentWallet.create({
+                    data: { schoolId: txRecord.schoolId, studentId: txRecord.studentId, branchId: student?.branchId }
+                });
+            }
+            const updatedWallet = await tx.studentWallet.update({
+                where: { studentId: txRecord.studentId },
+                data: { balance: { increment: txRecord.amount } }
+            });
+            await tx.studentWalletTransaction.create({
+                data: {
+                    walletId: wallet.id,
+                    schoolId: txRecord.schoolId,
+                    type: 'DEPOSIT',
+                    amount: txRecord.amount,
+                    balanceBefore: updatedWallet.balance - txRecord.amount,
+                    balanceAfter: updatedWallet.balance,
+                    reference: txRecord.reference,
+                    description: `${paymentMethod} Online Top-up`
+                }
+            });
+            walletBalanceAfter = updatedWallet.balance;
+            invoiceNumbers = [];
+        } else {
+            const result = await applyPaymentToInvoices(tx, {
+                schoolId: txRecord.schoolId,
+                studentId: txRecord.studentId,
+                amount: txRecord.amount,
+                paymentTransactionId: txRecord.id,
+                allowOverpayment
+            });
+
+            invoiceNumbers = result.invoiceNumbers;
+            walletBalanceAfter = result.walletBalanceAfter;
+        }
+
+        receipt = await createReceipt(tx, {
+            schoolId: txRecord.schoolId,
+            branchId: txRecord.branchId,
+            studentId: txRecord.studentId,
+            paymentTransactionId: txRecord.id,
+            amountPaid: txRecord.amount,
+            method: paymentMethod || txRecord.method,
+            invoiceNumbers,
+            walletBalanceAfter,
+            financeSettings,
+            schoolSettings
+        });
+    }, { timeout: 30000, maxWait: 10000 });
+
+    const recipientEmail = await getStudentEmail(txRecord.studentId);
+    if (recipientEmail && receipt) {
+        sendReceiptEmail(recipientEmail, {
+            studentName: 'Student',
+            receiptNumber: receipt.receiptNumber,
+            amountPaid: txRecord.amount,
+            method: paymentMethod || txRecord.method,
+            paymentDate: new Date(),
+            schoolName: schoolSettings?.schoolName || 'School',
+            currency: financeSettings?.currencySymbol || '₦'
+        }).catch(err => console.error('[Receipt Email Error]:', err.message));
+    }
+
+    return { success: true, receipt, txRecord };
+};
+
+const initializeOnlinePayment = async (req, res) => {
+    const { studentId, amount, invoiceId, email, gateway } = req.body;
     const { schoolId, activeBranchId } = req.user;
 
-    // GAP 3 FIX — minimum amount guard
     if (!studentId || !amount || Number(amount) < MIN_PAYMENT_AMOUNT) {
         throw new CustomError.BadRequestError(`studentId and amount ≥ ₦${MIN_PAYMENT_AMOUNT} required`);
     }
 
-    // GAP 4 — verify student belongs to this school (also important for Paystack init)
     const student = await prisma.studentProfile.findUnique({
         where: { id: studentId },
-        select: { schoolId: true }
+        include: {
+            user: { select: { name: true, email: true } },
+            parent: { include: { user: { select: { name: true, email: true } } } }
+        }
     });
     if (!student || student.schoolId !== schoolId) {
         throw new CustomError.NotFoundError('Student not found');
     }
 
-    const secretKey = await getDecryptedPaystackSecret(schoolId);
-    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
+    const [settings, financeSettings, schoolSettings] = await Promise.all([
+        prisma.schoolPaymentSettings.findUnique({ where: { schoolId } }),
+        prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } })
+    ]);
 
+    const selectedGateway = (gateway || settings?.activeGateway || 'FLUTTERWAVE').toUpperCase();
+    const currency = financeSettings?.currencySymbol === '$' ? 'USD' : 'NGN';
+    const schoolName = settings?.merchantDisplayName || schoolSettings?.schoolName || 'Skooly School';
+
+    let payerEmail = email || student.parent?.user?.email || student.user?.email || 'parent@skooly.app';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) payerEmail = 'parent@skooly.app';
+    const customerName = student.parent?.user?.name || student.user?.name || 'Parent';
+
+    const clientBaseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+
+    if (selectedGateway === 'FLUTTERWAVE') {
+        const reference = generateRef('FLW');
+        const transaction = await prisma.paymentTransaction.create({
+            data: {
+                schoolId,
+                branchId: activeBranchId || null,
+                studentId,
+                reference,
+                amount: Number(amount),
+                method: 'FLUTTERWAVE',
+                status: 'PENDING',
+                initiatedBy: req.user.userId,
+                note: invoiceId ? `Invoice: ${invoiceId}` : null
+            }
+        });
+
+        const secretKey = await getDecryptedFlwSecret(schoolId);
+        const flwRes = await flutterwaveClient.initializePayment({
+            secretKey,
+            publicKey: settings?.flwPublicKey,
+            amount: Number(amount),
+            currency,
+            txRef: reference,
+            redirectUrl: `${clientBaseUrl}/dashboard/finance/payments?status=success&ref=${reference}&gateway=FLUTTERWAVE`,
+            email: payerEmail,
+            name: customerName,
+            customer: {
+                email: payerEmail,
+                name: customerName
+            },
+            customizations: {
+                title: `${schoolName} Fee Payment`,
+                description: invoiceId ? `Payment for Invoice ${invoiceId}` : `Payment for ${student.user?.name || 'Student'}`
+            },
+            meta: {
+                schoolId,
+                branchId: activeBranchId || null,
+                studentId,
+                invoiceId: invoiceId || null,
+                transactionId: transaction.id
+            }
+        });
+
+        return res.status(StatusCodes.OK).json({
+            gateway: 'FLUTTERWAVE',
+            authorizationUrl: flwRes.link,
+            checkoutUrl: flwRes.link,
+            reference,
+            transactionId: transaction.id
+        });
+    }
+
+    if (selectedGateway === 'MONNIFY') {
+        const reference = generateRef('MNF');
+        const transaction = await prisma.paymentTransaction.create({
+            data: {
+                schoolId,
+                branchId: activeBranchId || null,
+                studentId,
+                reference,
+                amount: Number(amount),
+                method: 'MONNIFY',
+                status: 'PENDING',
+                initiatedBy: req.user.userId,
+                note: invoiceId ? `Invoice: ${invoiceId}` : null
+            }
+        });
+
+        const monnifyConfig = await getDecryptedMonnifyConfig(schoolId);
+        const mnfRes = await monnifyClient.initializePayment({
+            ...monnifyConfig,
+            amount: Number(amount),
+            customerName,
+            customerEmail: payerEmail,
+            paymentReference: reference,
+            paymentDescription: invoiceId ? `Payment for Invoice ${invoiceId}` : `Payment for ${student.user?.name || 'Student'}`,
+            currencyCode: currency,
+            redirectUrl: `${clientBaseUrl}/dashboard/finance/payments?status=success&ref=${reference}&gateway=MONNIFY`,
+            metadata: {
+                schoolId,
+                branchId: activeBranchId || null,
+                studentId,
+                invoiceId: invoiceId || null,
+                transactionId: transaction.id
+            }
+        });
+
+        return res.status(StatusCodes.OK).json({
+            gateway: 'MONNIFY',
+            authorizationUrl: mnfRes.checkoutUrl,
+            checkoutUrl: mnfRes.checkoutUrl,
+            transactionReference: mnfRes.transactionReference,
+            reference,
+            transactionId: transaction.id
+        });
+    }
+
+    // Default to PAYSTACK
     const reference = generateRef('PSK');
-
     const transaction = await prisma.paymentTransaction.create({
         data: {
             schoolId,
@@ -411,73 +1004,169 @@ const initializePaystackPayment = async (req, res) => {
         }
     });
 
-    let payerEmail = email || (await getStudentEmail(studentId)) || 'parent@skooly.app';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) {
-        payerEmail = 'parent@skooly.app';
-    }
-
-    const payload = {
+    const secretKey = await getDecryptedPaystackSecret(schoolId);
+    const pskRes = await paystackClient.initializePayment({
+        secretKey,
         email: payerEmail,
-        amount: Math.round(Number(amount) * 100), // kobo
+        amount: Number(amount),
         reference,
-        currency: financeSettings?.currencySymbol === '$' ? 'USD' : 'NGN',
+        currency,
+        callbackUrl: `${clientBaseUrl}/dashboard/finance/payments?status=success&ref=${reference}&gateway=PAYSTACK`,
         metadata: {
             schoolId,
             branchId: activeBranchId || null,
             studentId,
             invoiceId: invoiceId || null,
-            transactionId: transaction.id,
-            custom_fields: [
-                { display_name: 'Student ID', variable_name: 'student_id', value: studentId },
-                { display_name: 'School', variable_name: 'school_id', value: schoolId }
-            ]
-        },
-        callback_url: `${process.env.CLIENT_URL}/dashboard/finance/payments?status=success&ref=${reference}`
-    };
+            transactionId: transaction.id
+        }
+    });
 
-    let response;
-    try {
-        response = await axios.post('https://api.paystack.co/transaction/initialize', payload, {
-            headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' }
-        });
-    } catch (apiError) {
-        throw new CustomError.BadRequestError(
-            apiError.response?.data?.message || 'Paystack initialization failed (API Error)'
-        );
-    }
-
-    if (!response.data.status) {
-        throw new CustomError.BadRequestError('Paystack initialization failed');
-    }
-
-    res.status(StatusCodes.OK).json({
-        authorizationUrl: response.data.data.authorization_url,
-        accessCode: response.data.data.access_code,
+    return res.status(StatusCodes.OK).json({
+        gateway: 'PAYSTACK',
+        authorizationUrl: pskRes.authorizationUrl,
+        checkoutUrl: pskRes.authorizationUrl,
+        accessCode: pskRes.accessCode,
         reference,
         transactionId: transaction.id
     });
-  } catch (err) {
-      fs.writeFileSync('C:\\Users\\Jereh Lomak\\Desktop\\my-projects\\skooly\\backend\\err-dump.js', String(err.stack || err));
-      throw err;
-  }
 };
 
-// ─── PHASE 8: PAYSTACK WALLET DEPOSIT INIT ─────────────────────────────────
-const initializePaystackWalletDeposit = async (req, res) => {
-    const { studentId, amount, email } = req.body;
+const initializePaystackPayment = async (req, res) => {
+    return initializeOnlinePayment(req, res);
+};
+
+const initializeWalletDeposit = async (req, res) => {
+    const { studentId, amount, email, gateway } = req.body;
     const { schoolId, activeBranchId } = req.user;
 
     if (!studentId || !amount || Number(amount) < MIN_PAYMENT_AMOUNT) {
         throw new CustomError.BadRequestError(`studentId and amount ≥ ₦${MIN_PAYMENT_AMOUNT} required`);
     }
 
-    const student = await prisma.studentProfile.findUnique({ where: { id: studentId }, select: { schoolId: true } });
-    if (!student || student.schoolId !== schoolId) throw new CustomError.NotFoundError('Student not found');
+    const student = await prisma.studentProfile.findUnique({
+        where: { id: studentId },
+        include: {
+            user: { select: { name: true, email: true } },
+            parent: { include: { user: { select: { name: true, email: true } } } }
+        }
+    });
+    if (!student || student.schoolId !== schoolId) {
+        throw new CustomError.NotFoundError('Student not found');
+    }
 
-    const secretKey = await getDecryptedPaystackSecret(schoolId);
-    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
-    const reference = generateRef('WDP');
+    const [settings, financeSettings, schoolSettings] = await Promise.all([
+        prisma.schoolPaymentSettings.findUnique({ where: { schoolId } }),
+        prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } })
+    ]);
 
+    const selectedGateway = (gateway || settings?.activeGateway || 'FLUTTERWAVE').toUpperCase();
+    const currency = financeSettings?.currencySymbol === '$' ? 'USD' : 'NGN';
+    const schoolName = settings?.merchantDisplayName || schoolSettings?.schoolName || 'Skooly School';
+
+    let payerEmail = email || student.parent?.user?.email || student.user?.email || 'parent@skooly.app';
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) payerEmail = 'parent@skooly.app';
+    const customerName = student.parent?.user?.name || student.user?.name || 'Parent';
+
+    const clientBaseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+
+    if (selectedGateway === 'FLUTTERWAVE') {
+        const reference = generateRef('WDP-FLW');
+        const transaction = await prisma.paymentTransaction.create({
+            data: {
+                schoolId,
+                branchId: activeBranchId || null,
+                studentId,
+                reference,
+                amount: Number(amount),
+                method: 'FLUTTERWAVE',
+                status: 'PENDING',
+                initiatedBy: req.user.userId,
+                note: 'WALLET_DEPOSIT'
+            }
+        });
+
+        const secretKey = await getDecryptedFlwSecret(schoolId);
+        const flwRes = await flutterwaveClient.initializePayment({
+            secretKey,
+            publicKey: settings?.flwPublicKey,
+            amount: Number(amount),
+            currency,
+            txRef: reference,
+            redirectUrl: `${clientBaseUrl}/parent/payment-success?ref=${reference}&type=wallet&gateway=FLUTTERWAVE`,
+            email: payerEmail,
+            name: customerName,
+            customer: {
+                email: payerEmail,
+                name: customerName
+            },
+            customizations: {
+                title: `${schoolName} Wallet Top-up`,
+                description: `Wallet Top-up for ${student.user?.name || 'Student'}`
+            },
+            meta: {
+                schoolId,
+                studentId,
+                transactionId: transaction.id,
+                type: 'WALLET_DEPOSIT'
+            }
+        });
+
+        return res.status(StatusCodes.OK).json({
+            gateway: 'FLUTTERWAVE',
+            authorizationUrl: flwRes.link,
+            checkoutUrl: flwRes.link,
+            reference,
+            transactionId: transaction.id
+        });
+    }
+
+    if (selectedGateway === 'MONNIFY') {
+        const reference = generateRef('WDP-MNF');
+        const transaction = await prisma.paymentTransaction.create({
+            data: {
+                schoolId,
+                branchId: activeBranchId || null,
+                studentId,
+                reference,
+                amount: Number(amount),
+                method: 'MONNIFY',
+                status: 'PENDING',
+                initiatedBy: req.user.userId,
+                note: 'WALLET_DEPOSIT'
+            }
+        });
+
+        const monnifyConfig = await getDecryptedMonnifyConfig(schoolId);
+        const mnfRes = await monnifyClient.initializePayment({
+            ...monnifyConfig,
+            amount: Number(amount),
+            customerName,
+            customerEmail: payerEmail,
+            paymentReference: reference,
+            paymentDescription: `Wallet Top-up for ${student.user?.name || 'Student'}`,
+            currencyCode: currency,
+            redirectUrl: `${clientBaseUrl}/parent/payment-success?ref=${reference}&type=wallet&gateway=MONNIFY`,
+            metadata: {
+                schoolId,
+                studentId,
+                transactionId: transaction.id,
+                type: 'WALLET_DEPOSIT'
+            }
+        });
+
+        return res.status(StatusCodes.OK).json({
+            gateway: 'MONNIFY',
+            authorizationUrl: mnfRes.checkoutUrl,
+            checkoutUrl: mnfRes.checkoutUrl,
+            transactionReference: mnfRes.transactionReference,
+            reference,
+            transactionId: transaction.id
+        });
+    }
+
+    // Default to PAYSTACK
+    const reference = generateRef('WDP-PSK');
     const transaction = await prisma.paymentTransaction.create({
         data: {
             schoolId,
@@ -492,48 +1181,44 @@ const initializePaystackWalletDeposit = async (req, res) => {
         }
     });
 
-    let payerEmail = email || (await getStudentEmail(studentId)) || 'parent@skooly.app';
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(payerEmail)) payerEmail = 'parent@skooly.app';
-
-    const payload = {
+    const secretKey = await getDecryptedPaystackSecret(schoolId);
+    const pskRes = await paystackClient.initializePayment({
+        secretKey,
         email: payerEmail,
-        amount: Math.round(Number(amount) * 100),
+        amount: Number(amount),
         reference,
-        currency: financeSettings?.currencySymbol === '$' ? 'USD' : 'NGN',
+        currency,
+        callbackUrl: `${clientBaseUrl}/parent/payment-success?ref=${reference}&type=wallet&gateway=PAYSTACK`,
         metadata: {
             schoolId,
             studentId,
             transactionId: transaction.id,
-            type: 'WALLET_DEPOSIT',
-            custom_fields: [
-                { display_name: 'Purpose', variable_name: 'purpose', value: 'Wallet Top-up' },
-                { display_name: 'Student ID', variable_name: 'student_id', value: studentId }
-            ]
-        },
-        callback_url: `${process.env.CLIENT_URL}/parent/payment-success?ref=${reference}&type=wallet`
-    };
-
-    const response = await axios.post('https://api.paystack.co/transaction/initialize', payload, {
-        headers: { Authorization: `Bearer ${secretKey}`, 'Content-Type': 'application/json' }
+            type: 'WALLET_DEPOSIT'
+        }
     });
 
-    if (!response.data.status) throw new CustomError.BadRequestError('Paystack wallet deposit initialization failed');
-
-    res.status(StatusCodes.OK).json({
-        authorizationUrl: response.data.data.authorization_url,
+    return res.status(StatusCodes.OK).json({
+        gateway: 'PAYSTACK',
+        authorizationUrl: pskRes.authorizationUrl,
+        checkoutUrl: pskRes.authorizationUrl,
+        accessCode: pskRes.accessCode,
         reference,
         transactionId: transaction.id
     });
 };
 
-// ─── PHASE 8: VERIFY PAYMENT (for PaymentSuccess page) ──────────────────────
+const initializePaystackWalletDeposit = async (req, res) => {
+    return initializeWalletDeposit(req, res);
+};
+
+// ─── VERIFY PAYMENT (for PaymentSuccess page) ──────────────────────────────
 const verifyPayment = async (req, res) => {
     const { ref } = req.query;
     const { schoolId } = req.user;
 
     if (!ref) throw new CustomError.BadRequestError('ref query param is required');
 
-    const tx = await prisma.paymentTransaction.findUnique({
+    let tx = await prisma.paymentTransaction.findUnique({
         where: { reference: ref },
         include: {
             receipt: true,
@@ -542,6 +1227,66 @@ const verifyPayment = async (req, res) => {
     });
 
     if (!tx || tx.schoolId !== schoolId) throw new CustomError.NotFoundError('Payment not found');
+
+    // If still pending, attempt live verification from provider
+    if (tx.status === 'PENDING') {
+        try {
+            if (tx.method === 'FLUTTERWAVE' || ref.startsWith('FLW') || ref.startsWith('WDP-FLW')) {
+                const secretKey = await getDecryptedFlwSecret(schoolId).catch(() => null);
+                if (secretKey) {
+                    const flwCheck = await flutterwaveClient.verifyTransactionByRef({ secretKey, txRef: ref });
+                    if (flwCheck?.data?.status === 'successful' && flwCheck.data.amount >= tx.amount) {
+                        await settleSuccessfulPaymentTransaction({
+                            reference: ref,
+                            gatewayRef: flwCheck.data.id,
+                            gatewayResponse: flwCheck.data,
+                            paymentMethod: 'FLUTTERWAVE'
+                        });
+                        tx = await prisma.paymentTransaction.findUnique({
+                            where: { reference: ref },
+                            include: { receipt: true, student: { include: { user: { select: { name: true } } } } }
+                        });
+                    }
+                }
+            } else if (tx.method === 'PAYSTACK' || ref.startsWith('PSK') || ref.startsWith('WDP-PSK') || ref.startsWith('PAY-')) {
+                const secretKey = await getDecryptedPaystackSecret(schoolId).catch(() => null);
+                if (secretKey) {
+                    const pskCheck = await paystackClient.verifyTransaction({ secretKey, reference: ref });
+                    if (pskCheck?.data?.status === 'success') {
+                        await settleSuccessfulPaymentTransaction({
+                            reference: ref,
+                            gatewayRef: pskCheck.data.id,
+                            gatewayResponse: pskCheck.data,
+                            paymentMethod: 'PAYSTACK'
+                        });
+                        tx = await prisma.paymentTransaction.findUnique({
+                            where: { reference: ref },
+                            include: { receipt: true, student: { include: { user: { select: { name: true } } } } }
+                        });
+                    }
+                }
+            } else if (tx.method === 'MONNIFY' || ref.startsWith('MNF') || ref.startsWith('WDP-MNF')) {
+                const cfg = await getDecryptedMonnifyConfig(schoolId).catch(() => null);
+                if (cfg) {
+                    const mnfCheck = await monnifyClient.verifyTransaction({ ...cfg, transactionReference: ref });
+                    if (mnfCheck?.responseBody?.paymentStatus === 'PAID') {
+                        await settleSuccessfulPaymentTransaction({
+                            reference: ref,
+                            gatewayRef: mnfCheck.responseBody.transactionReference,
+                            gatewayResponse: mnfCheck.responseBody,
+                            paymentMethod: 'MONNIFY'
+                        });
+                        tx = await prisma.paymentTransaction.findUnique({
+                            where: { reference: ref },
+                            include: { receipt: true, student: { include: { user: { select: { name: true } } } } }
+                        });
+                    }
+                }
+            }
+        } catch (verifyErr) {
+            console.warn('[Live Payment Verification Warning]:', verifyErr.message);
+        }
+    }
 
     res.status(StatusCodes.OK).json({
         status: tx.status,
@@ -716,7 +1461,7 @@ const handlePaystackWebhook = async (req, res) => {
                     financeSettings,
                     schoolSettings
                 });
-            });
+            }, { timeout: 30000, maxWait: 10000 });
 
             // GAP 8 FIX — now outside $transaction
             const recipientEmail = await getStudentEmail(txRecord.studentId);
@@ -817,7 +1562,7 @@ const submitTransfer = async (req, res) => {
         });
 
         return { transaction, submission };
-    });
+    }, { timeout: 30000, maxWait: 10000 });
 
     // GAP 8 FIX — email outside transaction
     const [financeSettings, schoolSettings] = await Promise.all([
@@ -846,7 +1591,7 @@ const submitTransfer = async (req, res) => {
 
 const reviewTransfer = async (req, res) => {
     const { id } = req.params;
-    const { action, reviewNote } = req.body;
+    const { action, reviewNote, verifiedAmount } = req.body;
     const { schoolId, userId } = req.user;
 
     if (!['APPROVE', 'REJECT', 'CLARIFICATION_NEEDED'].includes(action)) {
@@ -886,21 +1631,39 @@ const reviewTransfer = async (req, res) => {
         let invoiceNumbers = [];
         let walletBalanceAfter = null;
 
+        const finalAmount = (verifiedAmount !== undefined && verifiedAmount !== null && Number(verifiedAmount) > 0)
+            ? Number(verifiedAmount)
+            : Number(submission.amount);
+
         await prisma.$transaction(async (tx) => {
+            const updateSubData = {
+                status: 'APPROVED',
+                reviewedBy: userId,
+                reviewedAt: new Date(),
+                reviewNote
+            };
+            if (finalAmount !== Number(submission.amount)) {
+                updateSubData.amount = finalAmount;
+            }
+
             await tx.transferSubmission.update({
                 where: { id },
-                data: { status: 'APPROVED', reviewedBy: userId, reviewedAt: new Date(), reviewNote }
+                data: updateSubData
             });
 
             await tx.paymentTransaction.update({
                 where: { id: submission.paymentTransactionId },
-                data: { status: 'SUCCESSFUL', paidAt: new Date() }
+                data: {
+                    status: 'SUCCESSFUL',
+                    paidAt: new Date(),
+                    ...(finalAmount !== Number(submission.amount) && { amount: finalAmount })
+                }
             });
 
             const result = await applyPaymentToInvoices(tx, {
                 schoolId,
                 studentId: submission.studentId,
-                amount: submission.amount,
+                amount: finalAmount,
                 paymentTransactionId: submission.paymentTransactionId,
                 allowOverpayment
             });
@@ -913,27 +1676,27 @@ const reviewTransfer = async (req, res) => {
                 branchId: submission.branchId,
                 studentId: submission.studentId,
                 paymentTransactionId: submission.paymentTransactionId,
-                amountPaid: submission.amount,
+                amountPaid: finalAmount,
                 method: 'BANK_TRANSFER',
                 invoiceNumbers,
                 walletBalanceAfter,
                 financeSettings,
                 schoolSettings
             });
-        });
+        }, { timeout: 30000, maxWait: 10000 });
 
         // GAP 8 FIX — email outside transaction
         if (recipientEmail && receipt) {
             sendTransferApprovedEmail(recipientEmail, {
                 studentName: submission.senderName,
-                amount: submission.amount,
+                amount: finalAmount,
                 schoolName,
                 currencySymbol
             }).catch(e => console.error('[Finance Email] Approve email failed:', e.message));
             logNotification(schoolId, submission.studentId, 'TRANSFER_APPROVED', recipientEmail);
         }
 
-        return res.status(StatusCodes.OK).json({ msg: 'Transfer approved and receipt generated' });
+        return res.status(StatusCodes.OK).json({ msg: 'Transfer approved and receipt generated', receipt });
     }
 
     if (action === 'REJECT') {
@@ -1052,13 +1815,15 @@ const resendInvoice = async (req, res) => {
         currencySymbol
     });
 
-    // Mark as SENT if still OPEN/DRAFT
-    if (['OPEN', 'DRAFT'].includes(invoice.status)) {
-        await prisma.financeInvoice.update({
-            where: { id },
-            data: { status: 'SENT' }
-        });
-    }
+    // Mark as SENT
+    await prisma.financeInvoice.update({
+        where: { id },
+        data: { 
+            isSent: true,
+            lastSentAt: new Date(),
+            ...( ['OPEN', 'DRAFT'].includes(invoice.status) ? { status: 'SENT' } : {} )
+        }
+    });
 
     await logNotification(schoolId, invoice.studentId, 'INVOICE_RESENT', recipientEmail);
 
@@ -1066,6 +1831,28 @@ const resendInvoice = async (req, res) => {
         msg: `Invoice emailed to ${recipientEmail}`,
         sentTo: recipientEmail
     });
+};
+
+const markInvoicePrinted = async (req, res) => {
+    const { id } = req.params;
+    const { schoolId } = req.user;
+    
+    await prisma.financeInvoice.update({
+        where: { id },
+        data: { isPrinted: true, lastPrintedAt: new Date() }
+    });
+    res.status(StatusCodes.OK).json({ msg: 'Marked as printed' });
+};
+
+const markReceiptPrinted = async (req, res) => {
+    const { id } = req.params;
+    const { schoolId } = req.user;
+    
+    await prisma.financeReceipt.update({
+        where: { id },
+        data: { isPrinted: true, lastPrintedAt: new Date() }
+    });
+    res.status(StatusCodes.OK).json({ msg: 'Marked as printed' });
 };
 
 // ─── INVOICE GENERATION ──────────────────────────────────────────────────────
@@ -1082,8 +1869,9 @@ const generateInvoice = async (req, res) => {
     });
     if (!student || student.schoolId !== schoolId) throw new CustomError.NotFoundError('Student not found');
 
-    const [financeSettings, schoolSettings] = await Promise.all([
+    const [financeSettings, schoolPaymentSettings, schoolSettings] = await Promise.all([
         prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolPaymentSettings.findUnique({ where: { schoolId } }),
         prisma.schoolSettings.findFirst({ where: { schoolId } })
     ]);
 
@@ -1129,7 +1917,7 @@ const generateInvoice = async (req, res) => {
     const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
     const invoiceNumber = `${invoicePrefix}${Date.now()}`;
 
-    const invoice = await prisma.$transaction(async (tx) => {
+    let invoice = await prisma.$transaction(async (tx) => {
         return await tx.financeInvoice.create({
             data: {
                 schoolId,
@@ -1157,7 +1945,21 @@ const generateInvoice = async (req, res) => {
             },
             include: { items: true }
         });
-    });
+    }, { maxWait: 10000, timeout: 30000 });
+
+    // Option A: Auto-apply wallet if enabled
+    const autoApply = schoolPaymentSettings?.autoApplyWallet ?? financeSettings?.autoApplyWallet ?? false;
+    if (autoApply && invoice.balanceDue > 0) {
+        invoice = await autoApplyStudentWalletToInvoice({
+            schoolId,
+            branchId: activeBranchId || student.branchId || null,
+            studentId,
+            invoice,
+            userId: req.user.userId,
+            financeSettings,
+            schoolSettings
+        });
+    }
 
     // Send invoice email (non-blocking)
     const recipientEmail = await getStudentEmail(studentId);
@@ -1180,7 +1982,7 @@ const generateInvoice = async (req, res) => {
 
 const getInvoices = async (req, res) => {
     const { schoolId, activeBranchId } = req.user;
-    const { studentId, status, term, academicYear, page = 1, limit = 30 } = req.query;
+    const { studentId, status, term, academicYear, search, isSent, isPrinted, page = 1, limit = 30 } = req.query;
 
     const where = {
         schoolId,
@@ -1189,14 +1991,24 @@ const getInvoices = async (req, res) => {
         ...(studentId && { studentId }),
         ...(status && { status }),
         ...(term && { term }),
-        ...(academicYear && { academicYear })
+        ...(academicYear && { academicYear }),
+        ...(isSent !== undefined && isSent !== '' && { isSent: isSent === 'true' }),
+        ...(isPrinted !== undefined && isPrinted !== '' && { isPrinted: isPrinted === 'true' }),
+        ...(search && {
+            OR: [
+                { invoiceNumber: { contains: search, mode: 'insensitive' } },
+                { student: { user: { name: { contains: search, mode: 'insensitive' } } } },
+                { student: { admissionNo: { contains: search, mode: 'insensitive' } } }
+            ]
+        })
     };
 
     const [invoices, total] = await Promise.all([
         prisma.financeInvoice.findMany({
             where,
             include: {
-                student: { include: { user: { select: { name: true } } } },
+                school: { select: { name: true } },
+                student: { include: { user: { select: { name: true } }, classArm: { select: { name: true } } } },
                 items: true,
                 PaymentAllocation: { select: { allocatedAmount: true } }
             },
@@ -1230,11 +2042,14 @@ const getInvoice = async (req, res) => {
     res.status(StatusCodes.OK).json({ invoice });
 };
 
+const updateInvoice = async (req, res) => {
+    res.status(StatusCodes.OK).json({ msg: 'Not implemented' });
+};
 // ─── PAYMENT RECORDS (Reconciliation) ────────────────────────────────────────
 
 const getPaymentTransactions = async (req, res) => {
     const { schoolId, activeBranchId } = req.user;
-    const { studentId, method, status, from, to, page = 1, limit = 30 } = req.query;
+    const { studentId, method, status, from, to, isPrinted, isSent, page = 1, limit = 30 } = req.query;
 
     const where = {
         schoolId,
@@ -1242,6 +2057,8 @@ const getPaymentTransactions = async (req, res) => {
         ...(studentId && { studentId }),
         ...(method && { method }),
         ...(status && { status }),
+        ...(isPrinted !== undefined && isPrinted !== '' && { receipt: { isPrinted: isPrinted === 'true' } }),
+        ...(isSent !== undefined && isSent !== '' && { receipt: { isSent: isSent === 'true' } }),
         ...(from || to ? {
             createdAt: {
                 ...(from && { gte: new Date(from) }),
@@ -1255,7 +2072,7 @@ const getPaymentTransactions = async (req, res) => {
             where,
             include: {
                 student: { include: { user: { select: { name: true } } } },
-                receipt: { select: { receiptNumber: true } },
+                receipt: { select: { id: true, receiptNumber: true, isPrinted: true, isSent: true } },
                 transfer: { select: { status: true, senderName: true } }
             },
             orderBy: { createdAt: 'desc' },
@@ -1306,82 +2123,174 @@ const getReceipts = async (req, res) => {
     res.status(StatusCodes.OK).json({ receipts, total, page: Number(page) });
 };
 
-// ─── APPLY WALLET TO INVOICE ─────────────────────────────────────────────────
+// ─── APPLY WALLET TO INVOICE (OPTIONS B & C) ─────────────────────────────────
 
 const applyWalletToInvoice = async (req, res) => {
-    const { studentId, invoiceId, amount } = req.body;
-    const { schoolId } = req.user;
+    const { studentId, invoiceId, amount, sourceType = 'STUDENT', parentId } = req.body;
+    let schoolId = req.user?.schoolId;
 
-    if (!studentId || !invoiceId) {
-        throw new CustomError.BadRequestError('studentId and invoiceId are required');
+    if (!invoiceId) {
+        throw new CustomError.BadRequestError('invoiceId is required');
     }
 
-    // Pre-fetch for tenant check (actual amounts resolved inside TX)
-    const [wallet, invoice] = await Promise.all([
-        prisma.studentWallet.findUnique({ where: { studentId } }),
-        prisma.financeInvoice.findUnique({ where: { id: invoiceId } })
-    ]);
+    // Pre-fetch invoice with student and parent
+    const invoice = await prisma.financeInvoice.findUnique({
+        where: { id: invoiceId },
+        include: {
+            student: {
+                include: {
+                    user: { select: { name: true } },
+                    parent: { include: { user: { select: { name: true } } } }
+                }
+            }
+        }
+    });
 
-    if (!wallet || wallet.schoolId !== schoolId) throw new CustomError.NotFoundError('Wallet not found');
-    if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) throw new CustomError.NotFoundError('Invoice not found');
-    if (invoice.studentId !== studentId) throw new CustomError.BadRequestError('Invoice does not belong to this student');
+    if (!invoice || invoice.isDeleted) throw new CustomError.NotFoundError('Invoice not found');
+    if (!schoolId) schoolId = invoice.schoolId;
+    if (invoice.schoolId !== schoolId) throw new CustomError.UnauthorizedError('Unauthorized access to invoice');
     if (invoice.balanceDue <= 0) throw new CustomError.BadRequestError('Invoice is already fully paid');
+
+    const paymentSettings = await prisma.schoolPaymentSettings.findUnique({ where: { schoolId } });
+    const isParent = req.user?.role === 'PARENT';
+
+    // Check if wallet checkout is allowed
+    if (isParent && paymentSettings && paymentSettings.allowWalletCheckout === false) {
+        throw new CustomError.BadRequestError('Wallet checkout is disabled by school administration');
+    }
+
+    const effectiveStudentId = studentId || invoice.studentId;
+    const isSiblingAllocation = sourceType === 'STUDENT' && effectiveStudentId !== invoice.studentId;
+
+    // Sibling / Family sharing check
+    if (isSiblingAllocation || sourceType === 'FAMILY') {
+        if (paymentSettings && paymentSettings.allowFamilyWalletSharing === false) {
+            throw new CustomError.BadRequestError('Cross-student and family wallet allocation is disabled by school administration');
+        }
+    }
+
+    // Authorization verification for PARENT role
+    if (isParent) {
+        const parentUser = await prisma.parentProfile.findFirst({
+            where: { userId: req.user.userId },
+            include: { students: { select: { id: true } } }
+        });
+        if (!parentUser) throw new CustomError.UnauthorizedError('Parent profile not found');
+        const allowedStudentIds = parentUser.students.map(s => s.id);
+
+        if (!allowedStudentIds.includes(invoice.studentId)) {
+            throw new CustomError.UnauthorizedError('You are not authorized to pay this invoice');
+        }
+        if (sourceType === 'STUDENT' && !allowedStudentIds.includes(effectiveStudentId)) {
+            throw new CustomError.UnauthorizedError('You are not authorized to spend from this student wallet');
+        }
+    }
 
     const reference = generateRef('WAL');
     let applied = 0;
+    let updatedWalletBalance = 0;
+    let finalInvoiceState = null;
 
     await prisma.$transaction(async (tx) => {
-        // GAP 7 FIX — read live wallet balance INSIDE the transaction to avoid stale read
-        const liveWallet = await tx.studentWallet.findUnique({ where: { studentId } });
-        if (!liveWallet || liveWallet.balance <= 0) {
-            throw new CustomError.BadRequestError('Insufficient wallet balance');
+        const liveInvoice = await tx.financeInvoice.findUnique({
+            where: { id: invoiceId },
+            include: { student: { include: { user: true } } }
+        });
+        if (!liveInvoice || liveInvoice.balanceDue <= 0) {
+            throw new CustomError.BadRequestError('Invoice is already fully paid');
         }
 
-        const liveInvoice = await tx.financeInvoice.findUnique({ where: { id: invoiceId } });
-        if (!liveInvoice || liveInvoice.balanceDue <= 0) {
-            throw new CustomError.BadRequestError('Invoice already fully paid');
+        let liveBalance = 0;
+        let sourceWalletId = null;
+
+        if (sourceType === 'FAMILY') {
+            const liveFamWallet = await tx.familyWallet.findUnique({
+                where: { parentId: parentId || liveInvoice.student?.parentId }
+            });
+            if (!liveFamWallet || liveFamWallet.balance <= 0) {
+                throw new CustomError.BadRequestError('Insufficient family wallet balance');
+            }
+            liveBalance = liveFamWallet.balance;
+            sourceWalletId = liveFamWallet.id;
+        } else {
+            const liveWallet = await tx.studentWallet.findUnique({
+                where: { studentId: effectiveStudentId }
+            });
+            if (!liveWallet || liveWallet.balance <= 0) {
+                throw new CustomError.BadRequestError('Insufficient wallet balance');
+            }
+            liveBalance = liveWallet.balance;
+            sourceWalletId = liveWallet.id;
         }
 
         // Compute toApply inside TX with live data
         applied = Math.min(
-            liveWallet.balance,
+            liveBalance,
             liveInvoice.balanceDue,
             amount ? Number(amount) : liveInvoice.balanceDue
         );
         if (applied <= 0) throw new CustomError.BadRequestError('Nothing to apply');
 
-        const updatedWallet = await tx.studentWallet.update({
-            where: { studentId },
-            data: { balance: { decrement: applied } }
-        });
+        let walletBalanceBefore = liveBalance;
+        let walletBalanceAfter = liveBalance - applied;
 
-        // Safety net — should never happen with live read, but just in case
-        if (updatedWallet.balance < 0) {
-            throw new CustomError.BadRequestError('Insufficient wallet balance');
+        if (sourceType === 'FAMILY') {
+            const updatedFam = await tx.familyWallet.update({
+                where: { id: sourceWalletId },
+                data: { balance: { decrement: applied } }
+            });
+            if (updatedFam.balance < 0) throw new CustomError.BadRequestError('Insufficient family wallet balance');
+            updatedWalletBalance = updatedFam.balance;
+
+            await tx.familyWalletTransaction.create({
+                data: {
+                    familyWalletId: sourceWalletId,
+                    schoolId,
+                    type: 'INVOICE_APPLICATION',
+                    amount: applied,
+                    balanceBefore: walletBalanceBefore,
+                    balanceAfter: walletBalanceAfter,
+                    reference,
+                    description: `Applied ₦${applied.toLocaleString()} to invoice ${liveInvoice.invoiceNumber} (${liveInvoice.student?.user?.name || 'Student'})`
+                }
+            });
+        } else {
+            const updatedWallet = await tx.studentWallet.update({
+                where: { studentId: effectiveStudentId },
+                data: { balance: { decrement: applied } }
+            });
+            if (updatedWallet.balance < 0) throw new CustomError.BadRequestError('Insufficient wallet balance');
+            updatedWalletBalance = updatedWallet.balance;
+
+            const desc = isSiblingAllocation
+                ? `Applied ₦${applied.toLocaleString()} to sibling invoice ${liveInvoice.invoiceNumber} (${liveInvoice.student?.user?.name || 'Student'})`
+                : `Applied to invoice ${liveInvoice.invoiceNumber}`;
+
+            await tx.studentWalletTransaction.create({
+                data: {
+                    walletId: sourceWalletId,
+                    schoolId,
+                    type: 'INVOICE_APPLICATION',
+                    amount: applied,
+                    balanceBefore: walletBalanceBefore,
+                    balanceAfter: walletBalanceAfter,
+                    reference,
+                    description: desc
+                }
+            });
         }
-
-        await tx.studentWalletTransaction.create({
-            data: {
-                walletId: liveWallet.id,
-                schoolId,
-                type: 'INVOICE_APPLICATION',
-                amount: applied,
-                balanceBefore: updatedWallet.balance + applied,
-                balanceAfter: updatedWallet.balance,
-                reference,
-                description: `Applied to invoice ${liveInvoice.invoiceNumber}`
-            }
-        });
 
         const newPaid = liveInvoice.amountPaid + applied;
         const newBalance = liveInvoice.balanceDue - applied;
-        await tx.financeInvoice.update({
+        const newStatus = newBalance <= 0 ? 'PAID' : 'PARTIALLY_PAID';
+
+        finalInvoiceState = await tx.financeInvoice.update({
             where: { id: invoiceId },
             data: {
                 amountPaid: newPaid,
                 balanceDue: newBalance,
                 walletDeduction: { increment: applied },
-                status: newBalance <= 0 ? 'PAID' : 'PARTIAL'
+                status: newStatus
             }
         });
 
@@ -1389,13 +2298,13 @@ const applyWalletToInvoice = async (req, res) => {
         const txRecord = await tx.paymentTransaction.create({
             data: {
                 schoolId,
-                studentId,
+                studentId: liveInvoice.studentId,
                 reference,
                 amount: applied,
                 method: 'WALLET',
                 status: 'SUCCESSFUL',
                 paidAt: new Date(),
-                initiatedBy: req.user.userId
+                initiatedBy: req.user?.userId || null
             }
         });
 
@@ -1412,28 +2321,109 @@ const applyWalletToInvoice = async (req, res) => {
         await createReceipt(tx, {
             schoolId,
             branchId: null,
-            studentId,
+            studentId: liveInvoice.studentId,
             paymentTransactionId: txRecord.id,
             amountPaid: applied,
             method: 'WALLET',
             invoiceNumbers: [liveInvoice.invoiceNumber],
-            walletBalanceAfter: updatedWallet.balance,
+            walletBalanceAfter: updatedWalletBalance,
             financeSettings,
             schoolSettings
         });
+    }, { timeout: 30000, maxWait: 10000 });
+
+    res.status(StatusCodes.OK).json({
+        msg: `₦${applied.toLocaleString()} applied from wallet to invoice ${finalInvoiceState?.invoiceNumber || ''}`,
+        applied,
+        walletBalance: updatedWalletBalance,
+        invoice: {
+            id: invoiceId,
+            invoiceNumber: finalInvoiceState?.invoiceNumber,
+            amountPaid: finalInvoiceState?.amountPaid,
+            balanceDue: finalInvoiceState?.balanceDue,
+            status: finalInvoiceState?.status
+        }
+    });
+};
+
+const getInvoicesForWalletAllocation = async (req, res) => {
+    const { schoolId } = req.user;
+    const { studentId, parentId } = req.query;
+
+    if (!studentId && !parentId) {
+        throw new CustomError.BadRequestError('studentId or parentId is required');
+    }
+
+    let targetStudentIds = [];
+
+    if (studentId) {
+        const student = await prisma.studentProfile.findUnique({
+            where: { id: studentId },
+            include: { parent: { include: { students: { where: { isDeleted: false }, select: { id: true } } } } }
+        });
+        // Accept if student exists AND (schoolId matches OR student.schoolId is null — some records may have null)
+        if (!student) {
+            throw new CustomError.NotFoundError('Student not found');
+        }
+        if (student.schoolId && student.schoolId !== schoolId) {
+            throw new CustomError.NotFoundError('Student not found in this school');
+        }
+        // Include self and all siblings if parent exists
+        targetStudentIds = student.parent?.students?.map(s => s.id) || [studentId];
+        if (!targetStudentIds.includes(studentId)) targetStudentIds.push(studentId);
+    } else if (parentId) {
+        const parent = await prisma.parentProfile.findUnique({
+            where: { id: parentId },
+            include: { students: { where: { isDeleted: false }, select: { id: true } } }
+        });
+        if (!parent) {
+            throw new CustomError.NotFoundError('Parent not found');
+        }
+        if (parent.schoolId && parent.schoolId !== schoolId) {
+            throw new CustomError.NotFoundError('Parent not found in this school');
+        }
+        targetStudentIds = parent.students.map(s => s.id);
+    }
+
+    if (targetStudentIds.length === 0) {
+        return res.status(StatusCodes.OK).json({ invoices: [] });
+    }
+
+    const invoices = await prisma.financeInvoice.findMany({
+        where: {
+            schoolId,
+            studentId: { in: targetStudentIds },
+            isDeleted: false,
+            status: { in: ['OPEN', 'SENT', 'PARTIALLY_PAID', 'OVERDUE', 'PUBLISHED'] },
+            balanceDue: { gt: 0 }
+        },
+        include: {
+            student: {
+                select: {
+                    id: true,
+                    admissionNo: true,
+                    firstName: true,
+                    lastName: true,
+                    user: { select: { name: true } },
+                    classArm: { select: { name: true } },
+                    classLevel: { select: { name: true } }
+                }
+            }
+        },
+        orderBy: { createdAt: 'asc' }
     });
 
-    res.status(StatusCodes.OK).json({ msg: `₦${applied.toLocaleString()} applied from wallet to invoice` });
+    res.status(StatusCodes.OK).json({ invoices });
 };
 
 // ─── RECORD MANUAL PAYMENT (PHASE 6) ──────────────────────────────────────────
 
 const recordManualPayment = async (req, res) => {
     const { id: invoiceId } = req.params;
-    const { amount, method, discountAmount } = req.body;
+    const { amount: appliedAmount, method, discountAmount: appliedDiscount = 0 } = req.body;
     const { schoolId, activeBranchId } = req.user;
 
-    if (!amount || amount <= 0) throw new CustomError.BadRequestError('Amount must be greater than 0');
+    if (!appliedAmount || appliedAmount <= 0) throw new CustomError.BadRequestError('Amount must be greater than 0');
     if (!['CASH', 'POS', 'BANK_TRANSFER'].includes(method)) {
         throw new CustomError.BadRequestError('Invalid payment method');
     }
@@ -1446,45 +2436,52 @@ const recordManualPayment = async (req, res) => {
     if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) {
         throw new CustomError.NotFoundError('Invoice not found');
     }
-    if (invoice.balanceDue <= 0) {
-        throw new CustomError.BadRequestError('Invoice is already fully paid');
-    }
-
-    const appliedAmount = Number(amount);
-    const appliedDiscount = discountAmount ? Number(discountAmount) : 0;
-    
-    if (appliedAmount + appliedDiscount > invoice.balanceDue) {
-        throw new CustomError.BadRequestError('Payment and discount exceed balance due');
-    }
+    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
+    const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
 
     const reference = generateRef('MNL');
 
-    await prisma.$transaction(async (tx) => {
+    const generatedReceipt = await prisma.$transaction(async (tx) => {
         const liveInvoice = await tx.financeInvoice.findUnique({ where: { id: invoiceId } });
-        if (!liveInvoice || liveInvoice.balanceDue <= 0) {
-            throw new CustomError.BadRequestError('Invoice already fully paid');
-        }
 
-        if (appliedAmount + appliedDiscount > liveInvoice.balanceDue) {
-            throw new CustomError.BadRequestError('Payment and discount exceed balance due');
-        }
+        let amountToCurrentInvoice = 0;
+        let discountToCurrentInvoice = 0;
+        let overpaymentAmount = 0;
 
-        const newPaid = liveInvoice.amountPaid + appliedAmount;
-        const newDiscountTotal = liveInvoice.discountTotal + appliedDiscount;
-        const newBalance = liveInvoice.balanceDue - (appliedAmount + appliedDiscount);
-
-        // Update Invoice
-        await tx.financeInvoice.update({
-            where: { id: invoiceId },
-            data: {
-                amountPaid: newPaid,
-                discountTotal: newDiscountTotal,
-                balanceDue: newBalance,
-                status: newBalance <= 0 ? 'PAID' : 'PARTIAL'
+        if (liveInvoice.balanceDue > 0) {
+            if (appliedAmount + appliedDiscount <= liveInvoice.balanceDue) {
+                amountToCurrentInvoice = appliedAmount;
+                discountToCurrentInvoice = appliedDiscount;
+            } else {
+                if (appliedDiscount >= liveInvoice.balanceDue) {
+                    discountToCurrentInvoice = liveInvoice.balanceDue;
+                    amountToCurrentInvoice = 0;
+                    overpaymentAmount = appliedAmount + (appliedDiscount - liveInvoice.balanceDue);
+                } else {
+                    discountToCurrentInvoice = appliedDiscount;
+                    amountToCurrentInvoice = liveInvoice.balanceDue - appliedDiscount;
+                    overpaymentAmount = appliedAmount - amountToCurrentInvoice;
+                }
             }
-        });
 
-        // Audit trail: create PaymentTransaction + Allocation
+            const newPaid = liveInvoice.amountPaid + amountToCurrentInvoice;
+            const newDiscountTotal = liveInvoice.discountTotal + discountToCurrentInvoice;
+            const newBalance = liveInvoice.balanceDue - (amountToCurrentInvoice + discountToCurrentInvoice);
+
+            await tx.financeInvoice.update({
+                where: { id: invoiceId },
+                data: {
+                    amountPaid: newPaid,
+                    discountTotal: newDiscountTotal,
+                    balanceDue: newBalance,
+                    status: newBalance <= 0 ? 'PAID' : 'PARTIALLY_PAID'
+                }
+            });
+        } else {
+            overpaymentAmount = appliedAmount;
+        }
+
+        // Audit trail: create PaymentTransaction
         const txRecord = await tx.paymentTransaction.create({
             data: {
                 schoolId,
@@ -1499,36 +2496,81 @@ const recordManualPayment = async (req, res) => {
             }
         });
 
-        await tx.paymentAllocation.create({
-            data: {
-                schoolId,
-                paymentTransactionId: txRecord.id,
-                invoiceId,
-                allocatedAmount: appliedAmount
-            }
-        });
+        if (amountToCurrentInvoice > 0) {
+            await tx.paymentAllocation.create({
+                data: {
+                    schoolId,
+                    paymentTransactionId: txRecord.id,
+                    invoiceId: invoiceId,
+                    allocatedAmount: amountToCurrentInvoice
+                }
+            });
+        }
+
+        let newInvoiceNumber = null;
+        if (overpaymentAmount > 0) {
+            newInvoiceNumber = `${invoicePrefix}${Date.now()}`;
+            const newInvoice = await tx.financeInvoice.create({
+                data: {
+                    schoolId,
+                    branchId: activeBranchId || null,
+                    studentId: liveInvoice.studentId,
+                    term: liveInvoice.term,
+                    academicYear: liveInvoice.academicYear,
+                    invoiceNumber: newInvoiceNumber,
+                    subTotal: overpaymentAmount,
+                    discountTotal: 0,
+                    totalAmount: overpaymentAmount,
+                    amountPaid: overpaymentAmount,
+                    balanceDue: 0,
+                    status: 'PAID',
+                    dueDate: new Date(),
+                    items: {
+                        create: [{
+                            type: 'FEE',
+                            label: 'Additional Payment (Credit)',
+                            quantity: 1,
+                            unitPrice: overpaymentAmount,
+                            amount: overpaymentAmount
+                        }]
+                    }
+                }
+            });
+
+            await tx.paymentAllocation.create({
+                data: {
+                    schoolId,
+                    paymentTransactionId: txRecord.id,
+                    invoiceId: newInvoice.id,
+                    allocatedAmount: overpaymentAmount
+                }
+            });
+        }
 
         // Generate receipt
-        const [financeSettings, schoolSettings] = await Promise.all([
+        const [financeSettingsData, schoolSettingsData] = await Promise.all([
             tx.financeSettings.findUnique({ where: { schoolId } }),
             tx.schoolSettings.findFirst({ where: { schoolId } })
         ]);
 
-        await createReceipt(tx, {
+        return await createReceipt(tx, {
             schoolId,
             branchId: activeBranchId,
             studentId: liveInvoice.studentId,
             paymentTransactionId: txRecord.id,
             amountPaid: appliedAmount,
             method: method,
-            invoiceNumbers: [liveInvoice.invoiceNumber],
+            invoiceNumbers: [amountToCurrentInvoice > 0 ? liveInvoice.invoiceNumber : null, newInvoiceNumber].filter(Boolean),
             walletBalanceAfter: 0, // Manual payment doesn't affect wallet
-            financeSettings,
-            schoolSettings
+            financeSettings: financeSettingsData,
+            schoolSettings: schoolSettingsData
         });
-    });
+    }, { timeout: 20000, maxWait: 10000 });
 
-    res.status(StatusCodes.OK).json({ msg: `Payment of ₦${appliedAmount.toLocaleString()} recorded successfully` });
+    res.status(StatusCodes.OK).json({ 
+        msg: `Payment of ₦${appliedAmount.toLocaleString()} recorded successfully`,
+        receipt: generatedReceipt 
+    });
 };
 
 // ─── PHASE 3: CLASS BILLING SUMMARY ─────────────────────────────────────────
@@ -1672,6 +2714,12 @@ const getStudentBillingProfile = async (req, res) => {
     });
     if (!student || student.schoolId !== schoolId) throw new CustomError.NotFoundError('Student not found');
 
+    // Map human-readable term ("First Term") to Enum ("FIRST_TERM")
+    let feeTermScope = term;
+    if (term) {
+        feeTermScope = term.toUpperCase().replace(/\s+/g, '_');
+    }
+
     // Auto-load applicable fees: WHOLE_SCHOOL or fees matching student's class (classId)
     const fees = await prisma.feeDefinition.findMany({
         where: {
@@ -1680,7 +2728,7 @@ const getStudentBillingProfile = async (req, res) => {
                 { scope: 'WHOLE_SCHOOL' },
                 { scope: 'CLASS', classIds: { has: student.classId || '' } }
             ],
-            ...(term && { termScope: { in: ['ANNUAL', term] } })
+            ...(feeTermScope && { termScope: { in: ['ANNUAL', feeTermScope] } })
         },
         orderBy: [{ isCompulsory: 'desc' }, { name: 'asc' }]
     });
@@ -1720,8 +2768,9 @@ const bulkGenerateInvoices = async (req, res) => {
         throw new CustomError.BadRequestError('feeDefinitionIds array is required');
     }
 
-    const [financeSettings, schoolSettings, fees] = await Promise.all([
+    const [financeSettings, schoolPaymentSettings, schoolSettings, fees] = await Promise.all([
         prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolPaymentSettings.findUnique({ where: { schoolId } }),
         prisma.schoolSettings.findFirst({ where: { schoolId } }),
         prisma.feeDefinition.findMany({ where: { schoolId, isActive: true, isDeleted: false, id: { in: feeDefinitionIds } } })
     ]);
@@ -1730,6 +2779,16 @@ const bulkGenerateInvoices = async (req, res) => {
 
     const results = { created: [], skipped: [], errors: [] };
     const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
+    const autoApply = schoolPaymentSettings?.autoApplyWallet ?? financeSettings?.autoApplyWallet ?? false;
+    
+    // Honor term lock if configured and staff override is not allowed
+    const termLock = financeSettings?.financeModuleToggles?.termLock;
+    const effectiveTerm = (termLock?.locked && !termLock?.allowStaffOverride)
+        ? (termLock.activeTerm || term || schoolSettings?.currentTerm || null)
+        : (term || termLock?.activeTerm || schoolSettings?.currentTerm || null);
+    const effectiveYear = (termLock?.locked && !termLock?.allowStaffOverride)
+        ? (termLock.activeSession || academicYear || schoolSettings?.currentYear || null)
+        : (academicYear || termLock?.activeSession || schoolSettings?.currentYear || null);
 
     for (const studentId of studentIds) {
         try {
@@ -1742,9 +2801,9 @@ const bulkGenerateInvoices = async (req, res) => {
             }
 
             // Skip if invoice already exists for this term
-            if (term) {
+            if (effectiveTerm) {
                 const exists = await prisma.financeInvoice.findFirst({
-                    where: { schoolId, studentId, term, academicYear: academicYear || null, isDeleted: false }
+                    where: { schoolId, studentId, term: effectiveTerm, academicYear: effectiveYear || null, isDeleted: false }
                 });
                 if (exists) { results.skipped.push({ studentId, reason: 'Invoice already exists' }); continue; }
             }
@@ -1767,24 +2826,40 @@ const bulkGenerateInvoices = async (req, res) => {
             const totalAmount = Math.max(0, subTotal - discountAmount);
 
             const invoiceNumber = `${invoicePrefix}${Date.now()}-${studentId.slice(0, 4).toUpperCase()}`;
-            const invoice = await prisma.financeInvoice.create({
-                data: {
-                    schoolId, branchId: activeBranchId || student.branchId || null,
-                    studentId, term: term || schoolSettings?.currentTerm || null,
-                    academicYear: academicYear || schoolSettings?.currentYear || null,
-                    invoiceNumber, subTotal, discountTotal: discountAmount,
-                    totalAmount, balanceDue: totalAmount, status: 'OPEN',
-                    dueDate: dueDate ? new Date(dueDate) : null,
-                    items: {
-                        create: fees.map(f => ({
-                            type: f.type || 'FEE', referenceId: f.id,
-                            label: f.name, quantity: f.quantity || 1,
-                            unitPrice: f.amount, amount: f.amount * (f.quantity || 1)
-                        }))
+            
+            let invoice = await prisma.$transaction(async (tx) => {
+                return await tx.financeInvoice.create({
+                    data: {
+                        schoolId, branchId: activeBranchId || student.branchId || null,
+                        studentId, term: effectiveTerm,
+                        academicYear: effectiveYear,
+                        invoiceNumber, subTotal, discountTotal: discountAmount,
+                        totalAmount, balanceDue: totalAmount, status: 'OPEN',
+                        dueDate: dueDate ? new Date(dueDate) : null,
+                        items: {
+                            create: fees.map(f => ({
+                                type: f.type || 'FEE', referenceId: f.id,
+                                label: f.name, quantity: f.quantity || 1,
+                                unitPrice: f.amount, amount: f.amount * (f.quantity || 1)
+                            }))
+                        }
                     }
-                }
-            });
-            results.created.push({ studentId, invoiceId: invoice.id, invoiceNumber });
+                });
+            }, { maxWait: 10000, timeout: 30000 });
+
+            if (autoApply && invoice.balanceDue > 0) {
+                invoice = await autoApplyStudentWalletToInvoice({
+                    schoolId,
+                    branchId: activeBranchId || student.branchId || null,
+                    studentId,
+                    invoice,
+                    userId: req.user.userId,
+                    financeSettings,
+                    schoolSettings
+                });
+            }
+
+            results.created.push({ studentId, invoiceId: invoice.id, invoiceNumber, status: invoice.status, balanceDue: invoice.balanceDue });
         } catch (e) {
             results.errors.push({ studentId, reason: e.message });
         }
@@ -1986,6 +3061,191 @@ const sendFamilyInvoice = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: `Family statement sent to ${recipientEmail}` });
 };
 
+const generateAllInvoices = async (req, res) => {
+    res.status(StatusCodes.OK).json({ msg: 'Not implemented' });
+};
+
+const generateFamilyInvoice = async (req, res) => {
+    res.status(StatusCodes.OK).json({ msg: 'Not implemented' });
+};
+
+// ─── PHASE 9: BULK SEND & BROADSHEET ────────────────────────────────────────
+
+const bulkSendInvoices = async (req, res) => {
+    const { invoiceIds } = req.body;
+    const { schoolId } = req.user;
+
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+        throw new CustomError.BadRequestError('No invoices selected');
+    }
+
+    const invoices = await prisma.financeInvoice.findMany({
+        where: { id: { in: invoiceIds }, schoolId, isDeleted: false },
+        include: {
+            student: {
+                include: {
+                    user: { select: { name: true, email: true } },
+                    parent: { include: { user: { select: { email: true, name: true } } } }
+                }
+            },
+            items: true
+        }
+    });
+
+    const [financeSettings, schoolSettings] = await Promise.all([
+        prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } })
+    ]);
+
+    const currencySymbol = financeSettings?.currencySymbol || '₦';
+    const schoolName = schoolSettings?.schoolName || 'School';
+    const showItemizedBreakdown = financeSettings?.showItemizedBreakdown !== false;
+    
+    let sentCount = 0;
+    
+    // To process concurrently in batches
+    const BATCH_SIZE = 5;
+    for (let i = 0; i < invoices.length; i += BATCH_SIZE) {
+        const batch = invoices.slice(i, i + BATCH_SIZE);
+        await Promise.all(batch.map(async (invoice) => {
+            const parentEmail = invoice.student?.parent?.user?.email;
+            const studentEmail = invoice.student?.user?.email;
+            const recipientEmail = parentEmail || studentEmail;
+
+            if (recipientEmail) {
+                const studentName = invoice.student?.user?.name || 'Student';
+                
+                try {
+                    await sendInvoiceEmail(recipientEmail, {
+                        studentName,
+                        invoiceNumber: invoice.invoiceNumber,
+                        totalAmount: invoice.totalAmount,
+                        dueDate: invoice.dueDate,
+                        items: invoice.items,
+                        showItemizedBreakdown,
+                        schoolName,
+                        currencySymbol
+                    });
+                    
+                    await prisma.financeInvoice.update({
+                        where: { id: invoice.id },
+                        data: {
+                            isSent: true,
+                            lastSentAt: new Date(),
+                            ...( ['OPEN', 'DRAFT'].includes(invoice.status) ? { status: 'SENT' } : {} )
+                        }
+                    });
+                    
+                    await logNotification(schoolId, invoice.studentId, 'INVOICE_RESENT', recipientEmail);
+                    sentCount++;
+                } catch (err) {
+                    console.error(`Failed to send invoice ${invoice.id} to ${recipientEmail}`, err);
+                }
+            }
+        }));
+    }
+
+    res.status(StatusCodes.OK).json({ msg: `Successfully sent ${sentCount} invoices` });
+};
+
+const bulkMarkInvoicesPrinted = async (req, res) => {
+    const { invoiceIds } = req.body;
+    const { schoolId } = req.user;
+
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+        throw new CustomError.BadRequestError('No invoices selected');
+    }
+
+    await prisma.financeInvoice.updateMany({
+        where: { id: { in: invoiceIds }, schoolId, isDeleted: false },
+        data: { isPrinted: true, lastPrintedAt: new Date() }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: `Successfully marked ${invoiceIds.length} invoices as printed` });
+};
+
+const getBillingBroadsheet = async (req, res) => {
+    const { schoolId } = req.user;
+    const { classId, term, academicYear } = req.query;
+
+    const whereClass = classId ? { classId } : {};
+    
+    // 1. Fetch Students
+    const students = await prisma.studentProfile.findMany({
+        where: { schoolId, isDeleted: false, ...whereClass },
+        include: {
+            user: { select: { name: true } },
+            classArm: { select: { name: true } }
+        },
+        orderBy: { user: { name: 'asc' } }
+    });
+
+    if (!students.length) {
+        return res.status(StatusCodes.OK).json({ students: [], items: [] });
+    }
+
+    const studentIds = students.map(s => s.id);
+
+    // 2. Fetch Invoices and Items
+    const invoiceWhere = {
+        schoolId,
+        studentId: { in: studentIds },
+        isDeleted: false,
+        ...(term && { term }),
+        ...(academicYear && { academicYear })
+    };
+
+    const invoices = await prisma.financeInvoice.findMany({
+        where: invoiceWhere,
+        include: { items: true }
+    });
+
+    // 3. Extract unique fee items for the columns
+    const itemLabels = new Set();
+    invoices.forEach(inv => {
+        inv.items.forEach(item => {
+            itemLabels.add(item.label);
+        });
+    });
+    
+    const columns = Array.from(itemLabels).sort();
+
+    // 4. Map data per student
+    const studentDataMap = new Map();
+    students.forEach(s => {
+        studentDataMap.set(s.id, {
+            id: s.id,
+            name: s.user?.name || 'Unknown',
+            admissionNo: s.admissionNo,
+            className: s.classArm?.name || '',
+            expected: 0,
+            paid: 0,
+            balance: 0,
+            items: {}
+        });
+    });
+
+    invoices.forEach(inv => {
+        const row = studentDataMap.get(inv.studentId);
+        if (row) {
+            row.expected += inv.totalAmount;
+            row.paid += inv.amountPaid;
+            row.balance += inv.balanceDue;
+            
+            // Map individual items (this will aggregate if multiple invoices have the same item label)
+            inv.items.forEach(item => {
+                if (!row.items[item.label]) row.items[item.label] = 0;
+                row.items[item.label] += item.amount;
+            });
+        }
+    });
+
+    res.status(StatusCodes.OK).json({
+        students: Array.from(studentDataMap.values()),
+        columns
+    });
+};
+
 module.exports = {
     getPaymentSettings,
     updatePaymentSettings,
@@ -1999,12 +3259,16 @@ module.exports = {
     reviewTransfer,
     getTransferSubmissions,
     generateInvoice,
-    resendInvoice,
     getInvoices,
     getInvoice,
+    updateInvoice,
+    resendInvoice,
+    markInvoicePrinted,
+    markReceiptPrinted,
     getPaymentTransactions,
     getReceipts,
     applyWalletToInvoice,
+    getInvoicesForWalletAllocation,
     getActivePaymentMethods,
     recordManualPayment,
     // Phase 3
@@ -2012,12 +3276,23 @@ module.exports = {
     getClassStudents,
     getStudentBillingProfile,
     bulkGenerateInvoices,
+    generateAllInvoices,
     // Phase 4
     getFamilyBillingSummary,
     getFamilyBillingProfile,
+    generateFamilyInvoice,
     sendFamilyInvoice,
     // Phase 8
     initializePaystackWalletDeposit,
     verifyPayment,
+    // Multi-gateway engine
+    initializeOnlinePayment,
+    initializeWalletDeposit,
+    testGatewayConnection,
+    settleSuccessfulPaymentTransaction,
+    // Phase 9
+    bulkSendInvoices,
+    bulkMarkInvoicesPrinted,
+    getBillingBroadsheet,
 };
 

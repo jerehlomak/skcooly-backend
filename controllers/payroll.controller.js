@@ -167,6 +167,12 @@ const getStaffLoans = asyncHandler(async function(req, res) {
 
     const loans = await prisma.staffLoan.findMany({
         where: { staffId, schoolId: sid },
+        include: {
+            repayments: {
+                orderBy: { date: 'desc' },
+                include: { payrollRun: { select: { month: true, year: true, runDate: true } } }
+            }
+        },
         orderBy: { createdAt: 'desc' },
     });
 
@@ -174,8 +180,9 @@ const getStaffLoans = asyncHandler(async function(req, res) {
     const totalOutstanding = loans
         .filter(l => l.status === 'active')
         .reduce((s, l) => s + l.outstandingBalance, 0);
+    const totalRepaid = totalLoaned - totalOutstanding;
 
-    res.json({ success: true, loans, totalLoaned, totalOutstanding });
+    res.json({ success: true, loans, totalLoaned, totalOutstanding, totalRepaid });
 });
 
 /**
@@ -229,6 +236,55 @@ const updateStaffLoan = asyncHandler(async function(req, res) {
     res.json({ success: true, loan: updated });
 });
 
+/**
+ * POST /payroll/loans/repayment
+ * Body: { loanId, amount, date?, notes?, source? }
+ * Records manual repayment (cash, transfer, direct settlement)
+ */
+const recordLoanRepayment = asyncHandler(async function(req, res) {
+    const { loanId, amount, date, notes, source } = req.body;
+    const sid = schoolId(req);
+
+    if (!loanId || !amount || parseFloat(amount) <= 0) {
+        return res.status(400).json({ success: false, message: 'loanId and valid amount are required.' });
+    }
+
+    const loan = await prisma.staffLoan.findFirst({
+        where: { id: loanId, schoolId: sid },
+    });
+    if (!loan) return res.status(404).json({ success: false, message: 'Loan not found.' });
+
+    const payAmt = parseFloat(amount);
+    const newBalance = Math.max(0, loan.outstandingBalance - payAmt);
+    const newStatus = newBalance <= 0 ? 'cleared' : loan.status;
+
+    const result = await prisma.$transaction(async (tx) => {
+        const updatedLoan = await tx.staffLoan.update({
+            where: { id: loanId },
+            data: {
+                outstandingBalance: newBalance,
+                status: newStatus,
+            }
+        });
+
+        const repayment = await tx.staffLoanRepayment.create({
+            data: {
+                schoolId: sid,
+                loanId,
+                staffId: loan.staffId,
+                amount: payAmt,
+                date: date ? new Date(date) : new Date(),
+                source: source || 'MANUAL',
+                notes: notes || 'Direct loan repayment',
+            }
+        });
+
+        return { loan: updatedLoan, repayment };
+    });
+
+    res.status(201).json({ success: true, ...result, message: 'Loan repayment recorded successfully.' });
+});
+
 // ─── PENSION TRACKER ─────────────────────────────────────────────────────────
 
 /**
@@ -246,6 +302,121 @@ const getStaffPension = asyncHandler(async function(req, res) {
 
     const totalAccumulated = entries.reduce((sum, e) => sum + e.amount, 0);
     res.json({ success: true, entries, totalAccumulated });
+});
+
+/**
+ * POST /payroll/pension/adhoc
+ * Body: { staffId, amount, date?, notes? }
+ */
+const addAdhocPension = asyncHandler(async function(req, res) {
+    const { staffId, amount, date } = req.body;
+    const sid = schoolId(req);
+
+    if (!staffId || !amount || parseFloat(amount) <= 0) {
+        return res.status(400).json({ success: false, message: 'staffId and positive amount are required.' });
+    }
+
+    const entry = await prisma.pensionLedger.create({
+        data: {
+            schoolId: sid,
+            staffId,
+            amount: parseFloat(amount),
+            date: date ? new Date(date) : new Date(),
+        }
+    });
+
+    res.status(201).json({ success: true, entry, message: 'Pension contribution added successfully.' });
+});
+
+/**
+ * POST /payroll/pension/setting
+ * Body: { staffId, amount }
+ * Sets or updates ongoing monthly pension deduction in PayrollSetting
+ */
+const setOngoingPension = asyncHandler(async function(req, res) {
+    const { staffId, amount } = req.body;
+    const sid = schoolId(req);
+
+    if (!staffId || amount === undefined || parseFloat(amount) < 0) {
+        return res.status(400).json({ success: false, message: 'staffId and valid amount are required.' });
+    }
+
+    const parsedAmount = parseFloat(amount);
+
+    // Check if staff has existing pension deduction setting
+    const existing = await prisma.payrollSetting.findFirst({
+        where: {
+            staffId,
+            schoolId: sid,
+            type: 'deduction',
+            itemName: { contains: 'Pension', mode: 'insensitive' }
+        }
+    });
+
+    let setting;
+    if (parsedAmount === 0 && existing) {
+        await prisma.payrollSetting.delete({ where: { id: existing.id } });
+        return res.json({ success: true, message: 'Ongoing monthly pension removed.' });
+    } else if (existing) {
+        setting = await prisma.payrollSetting.update({
+            where: { id: existing.id },
+            data: { amount: parsedAmount }
+        });
+    } else {
+        setting = await prisma.payrollSetting.create({
+            data: {
+                schoolId: sid,
+                staffId,
+                type: 'deduction',
+                itemName: 'Pension Contribution',
+                amount: parsedAmount
+            }
+        });
+    }
+
+    res.json({ success: true, setting, message: 'Ongoing monthly pension configured successfully.' });
+});
+
+/**
+ * GET /payroll/pension/summary
+ * Aggregate school-wide pension statistics
+ */
+const getSchoolPensionSummary = asyncHandler(async function(req, res) {
+    const sid = schoolId(req);
+
+    const [entries, staffWithPension] = await Promise.all([
+        prisma.pensionLedger.findMany({
+            where: { schoolId: sid },
+            select: { amount: true, date: true, staffId: true }
+        }),
+        prisma.teacherProfile.findMany({
+            where: { schoolId: sid, isDeleted: false },
+            include: {
+                user: { select: { name: true } },
+                payrollSettings: {
+                    where: { type: 'deduction', itemName: { contains: 'Pension', mode: 'insensitive' } }
+                }
+            }
+        })
+    ]);
+
+    const totalAccumulated = entries.reduce((sum, e) => sum + e.amount, 0);
+    const uniqueContributors = new Set(entries.map(e => e.staffId)).size;
+    const currentYear = new Date().getFullYear();
+    const thisYearTotal = entries
+        .filter(e => new Date(e.date).getFullYear() === currentYear)
+        .reduce((sum, e) => sum + e.amount, 0);
+
+    res.json({
+        success: true,
+        summary: {
+            totalAccumulated,
+            uniqueContributors,
+            thisYearTotal,
+            staffConfiguredCount: staffWithPension.filter(s => s.payrollSettings.length > 0).length,
+            totalStaff: staffWithPension.length
+        }
+    });
 });
 
 // ─── PAYROLL RUN ──────────────────────────────────────────────────────────────
@@ -275,7 +446,7 @@ const createPayrollRun = asyncHandler(async function(req, res) {
         });
     }
 
-    // Fetch all active staff with their payroll settings
+    // Fetch all active staff with their payroll settings and active loans
     const allStaff = await prisma.teacherProfile.findMany({
         where: {
             schoolId: sid,
@@ -285,6 +456,9 @@ const createPayrollRun = asyncHandler(async function(req, res) {
         include: {
             user: { select: { name: true } },
             payrollSettings: true,
+            staffLoans: {
+                where: { status: 'active', outstandingBalance: { gt: 0 } }
+            }
         },
     });
 
@@ -299,9 +473,28 @@ const createPayrollRun = asyncHandler(async function(req, res) {
 
     const items = allStaff.map(s => {
         const earnings = s.payrollSettings.filter(p => p.type === 'earning');
-        const deductions = s.payrollSettings.filter(p => p.type === 'deduction');
-        const gross = earnings.reduce((sum, e) => sum + e.amount, 0);
-        const deductionTotal = deductions.reduce((sum, d) => sum + d.amount, 0);
+        const standardDeductions = s.payrollSettings.filter(p => p.type === 'deduction');
+        
+        let gross = earnings.reduce((sum, e) => sum + e.amount, 0);
+        let deductionTotal = standardDeductions.reduce((sum, d) => sum + d.amount, 0);
+        
+        const deductionsBreakdown = standardDeductions.map(d => ({ name: d.itemName, amount: d.amount }));
+
+        // Phase 2: Add auto-deductions for active loans
+        if (s.staffLoans && s.staffLoans.length > 0) {
+            s.staffLoans.forEach(loan => {
+                const deduct = Math.min(loan.repaymentPerMonth, loan.outstandingBalance);
+                if (deduct > 0) {
+                    deductionTotal += deduct;
+                    deductionsBreakdown.push({ 
+                        name: `Loan Repayment`, 
+                        amount: deduct,
+                        loanId: loan.id // track for confirmation
+                    });
+                }
+            });
+        }
+
         const net = Math.max(0, gross - deductionTotal);
 
         totalGross += gross;
@@ -311,7 +504,7 @@ const createPayrollRun = asyncHandler(async function(req, res) {
         return {
             staffId: s.id,
             gross,
-            deductionsBreakdown: deductions.map(d => ({ name: d.itemName, amount: d.amount })),
+            deductionsBreakdown,
             earningsBreakdown: earnings.map(e => ({ name: e.itemName, amount: e.amount })),
             net,
             status: 'pending',
@@ -434,7 +627,105 @@ const confirmPayrollRun = asyncHandler(async function(req, res) {
         return res.status(409).json({ success: false, message: 'This payroll run has already been confirmed.' });
     }
 
-    // ── Transaction ───────────────────────────────────────────────────────────
+    // ── Pre-fetch all active loans for staff in this run (OUTSIDE transaction to avoid N+1 timeout) ──
+    const staffIds = [...new Set(run.items.map(i => i.staffId))];
+    const activeLoans = await prisma.staffLoan.findMany({
+        where: {
+            staffId: { in: staffIds },
+            schoolId: sid,
+            status: 'active',
+            outstandingBalance: { gt: 0 },
+        },
+        orderBy: { dateCollected: 'asc' },
+    });
+
+    // Build in-memory lookup: staffId → [loans], loanId → loan
+    const loansByStaff = {};
+    const loansById = {};
+    for (const loan of activeLoans) {
+        if (!loansByStaff[loan.staffId]) loansByStaff[loan.staffId] = [];
+        loansByStaff[loan.staffId].push({ ...loan }); // clone for mutable balance tracking
+        loansById[loan.id] = loansByStaff[loan.staffId][loansByStaff[loan.staffId].length - 1];
+    }
+
+    // ── Pre-fetch or create expense category OUTSIDE transaction ────────────────
+    let category = await prisma.financeCategory.findFirst({
+        where: { schoolId: sid, name: 'Payroll Salaries', type: 'EXPENSE' },
+    });
+    if (!category) {
+        category = await prisma.financeCategory.create({
+            data: { schoolId: sid, name: 'Payroll Salaries', type: 'EXPENSE' },
+        });
+    }
+
+    // ── Helper: parse deductionsBreakdown regardless of storage format ──────────
+    function parseBreakdown(raw) {
+        if (Array.isArray(raw)) return raw;
+        if (typeof raw === 'string') { try { return JSON.parse(raw); } catch(e) { return []; } }
+        return [];
+    }
+
+    // ── Build all write operations in memory before the transaction ──────────────
+    const pensionEntries = [];
+    const loanUpdates = [];      // { loanId, newBalance, status }
+    const loanRepaymentEntries = [];
+
+    for (const item of run.items) {
+        const breakdown = parseBreakdown(item.deductionsBreakdown);
+
+        // Pension entries
+        for (const d of breakdown) {
+            if (d.name?.toLowerCase().includes('pension') && d.amount > 0) {
+                pensionEntries.push({
+                    schoolId: sid,
+                    staffId: item.staffId,
+                    amount: d.amount,
+                    date: new Date(),
+                    payrollRunId: id,
+                });
+            }
+        }
+
+        // Loan repayment entries
+        const loanItems = breakdown.filter(d => d.loanId || d.name?.toLowerCase().includes('loan'));
+        for (const l of loanItems) {
+            if (!l.amount || l.amount <= 0) continue;
+
+            // Resolve loan from pre-fetched map (no DB call inside transaction)
+            let loan = null;
+            if (l.loanId && loansById[l.loanId]) {
+                loan = loansById[l.loanId];
+            } else if (loansByStaff[item.staffId]?.length > 0) {
+                loan = loansByStaff[item.staffId][0]; // oldest active loan first
+            }
+
+            if (loan && loan.outstandingBalance > 0) {
+                const deductAmt = Math.min(l.amount, loan.outstandingBalance);
+                const newBalance = Math.max(0, loan.outstandingBalance - deductAmt);
+
+                // Update in-memory balance so subsequent deductions on same loan are accurate
+                loan.outstandingBalance = newBalance;
+
+                loanUpdates.push({
+                    loanId: loan.id,
+                    newBalance,
+                    newStatus: newBalance <= 0 ? 'cleared' : loan.status,
+                });
+                loanRepaymentEntries.push({
+                    schoolId: sid,
+                    loanId: loan.id,
+                    staffId: item.staffId,
+                    amount: deductAmt,
+                    date: new Date(),
+                    payrollRunId: id,
+                    source: 'PAYROLL',
+                    notes: `Payroll salary deduction — ${fmtMonthName(run.month)} ${run.year}`,
+                });
+            }
+        }
+    }
+
+    // ── Transaction: only writes, no reads — fast & safe within 30s timeout ─────
     const confirmed = await prisma.$transaction(async (tx) => {
         // 1. Mark all run items as paid
         await tx.payrollRunItem.updateMany({
@@ -442,43 +733,30 @@ const confirmPayrollRun = asyncHandler(async function(req, res) {
             data: { status: 'paid' },
         });
 
-        // 2. Create PensionLedger entries for pension deductions
-        const pensionEntries = [];
-        for (const item of run.items) {
-            const breakdown = Array.isArray(item.deductionsBreakdown) ? item.deductionsBreakdown : [];
-            const pensionItems = breakdown.filter(d =>
-                d.name?.toLowerCase().includes('pension')
-            );
-            for (const p of pensionItems) {
-                pensionEntries.push({
-                    schoolId: sid,
-                    staffId: item.staffId,
-                    amount: p.amount,
-                    date: new Date(),
-                    payrollRunId: id,
-                });
-            }
-        }
+        // 2. Pension ledger entries
         if (pensionEntries.length > 0) {
             await tx.pensionLedger.createMany({ data: pensionEntries });
         }
 
-        // 3. Find or create a "Payroll Salaries" Expense category
-        let category = await tx.financeCategory.findFirst({
-            where: { schoolId: sid, name: 'Payroll Salaries', type: 'EXPENSE' },
-        });
-        if (!category) {
-            category = await tx.financeCategory.create({
-                data: { schoolId: sid, name: 'Payroll Salaries', type: 'EXPENSE' },
+        // 3. Loan balance updates + repayment ledger
+        for (const u of loanUpdates) {
+            await tx.staffLoan.update({
+                where: { id: u.loanId },
+                data: { outstandingBalance: u.newBalance, status: u.newStatus },
             });
         }
+        if (loanRepaymentEntries.length > 0) {
+            await tx.staffLoanRepayment.createMany({ data: loanRepaymentEntries });
+        }
 
-        // 4. Create the auto ExpenseRecord
+        // 4. Auto expense record
+        const staffCount = run.items?.length || 0;
+        const staffCountLabel = staffCount > 0 ? ` (${staffCount} Staff Members - Net Total)` : ' (Net Total)';
         const expenseRecord = await tx.expenseRecord.create({
             data: {
                 schoolId: sid,
                 categoryId: category.id,
-                description: `Payroll — ${fmtMonthName(run.month)} ${run.year}`,
+                description: `Staff Salary Disbursement — ${fmtMonthName(run.month)} ${run.year}${staffCountLabel}`,
                 amount: run.totalNet,
                 date: new Date(),
                 source: 'AUTO',
@@ -497,7 +775,7 @@ const confirmPayrollRun = asyncHandler(async function(req, res) {
         });
 
         return updatedRun;
-    });
+    }, { timeout: 30000, maxWait: 10000 });
 
     res.json({
         success: true,
@@ -505,6 +783,7 @@ const confirmPayrollRun = asyncHandler(async function(req, res) {
         run: confirmed,
     });
 });
+
 
 /**
  * GET /payroll/run/:id/export
@@ -680,6 +959,146 @@ const getPayslip = asyncHandler(async function(req, res) {
     });
 });
 
+// ─── STAFF SELF-SERVICE (MY PAYROLL) ─────────────────────────────────────────
+
+/**
+ * GET /payroll/me
+ * Returns the logged-in staff member's complete payroll information:
+ * salary structure, all confirmed payslips, pension accumulation, and loan repayment ledger.
+ */
+const getTeacherPayrollMe = asyncHandler(async function(req, res) {
+    const userId = req.user?.userId || req.user?.id;
+    const sid = schoolId(req);
+
+    if (!userId) {
+        return res.status(401).json({ success: false, message: 'Authentication required.' });
+    }
+
+    const teacher = await prisma.teacherProfile.findFirst({
+        where: { userId, schoolId: sid },
+        include: { user: { select: { name: true, email: true } } }
+    });
+
+    if (!teacher) {
+        return res.status(404).json({ success: false, message: 'Teacher / Staff profile not found for this account.' });
+    }
+
+    // 1. Current Payroll Settings (Earnings & Deductions)
+    const settings = await prisma.payrollSetting.findMany({
+        where: { staffId: teacher.id, schoolId: sid },
+        orderBy: { type: 'asc' },
+    });
+    const earnings = settings.filter(s => s.type === 'earning');
+    const deductions = settings.filter(s => s.type === 'deduction');
+    const gross = earnings.reduce((sum, e) => sum + e.amount, 0);
+    const totalDeductions = deductions.reduce((sum, d) => sum + d.amount, 0);
+    const net = Math.max(0, gross - totalDeductions);
+
+    // 2. All Confirmed Payslips (PayrollRunItems)
+    const payslipItems = await prisma.payrollRunItem.findMany({
+        where: {
+            staffId: teacher.id,
+            payrollRun: {
+                schoolId: sid,
+                status: 'confirmed',
+            }
+        },
+        include: {
+            payrollRun: {
+                select: {
+                    id: true,
+                    month: true,
+                    year: true,
+                    runDate: true,
+                    status: true,
+                }
+            }
+        },
+        orderBy: {
+            payrollRun: {
+                runDate: 'desc'
+            }
+        }
+    });
+
+    const payslips = payslipItems.map(item => ({
+        id: item.id,
+        payrollRunId: item.payrollRunId,
+        month: item.payrollRun.month,
+        year: item.payrollRun.year,
+        periodLabel: `${fmtMonthName(item.payrollRun.month)} ${item.payrollRun.year}`,
+        runDate: item.payrollRun.runDate,
+        gross: item.gross,
+        earningsBreakdown: Array.isArray(item.earningsBreakdown) ? item.earningsBreakdown : [],
+        deductionsBreakdown: Array.isArray(item.deductionsBreakdown) ? item.deductionsBreakdown : [],
+        totalDeductions: item.gross - item.net,
+        net: item.net,
+        status: item.status,
+    }));
+
+    // 3. Pension Ledger
+    const pensionEntries = await prisma.pensionLedger.findMany({
+        where: { staffId: teacher.id, schoolId: sid },
+        orderBy: { date: 'desc' },
+        include: { payrollRun: { select: { month: true, year: true } } }
+    });
+    const totalPensionAccumulated = pensionEntries.reduce((sum, p) => sum + p.amount, 0);
+
+    // 4. Loans & Repayments
+    const loans = await prisma.staffLoan.findMany({
+        where: { staffId: teacher.id, schoolId: sid },
+        include: {
+            repayments: {
+                orderBy: { date: 'desc' },
+                include: { payrollRun: { select: { month: true, year: true } } }
+            }
+        },
+        orderBy: { createdAt: 'desc' }
+    });
+    const totalLoaned = loans.reduce((s, l) => s + l.loanAmount, 0);
+    const totalOutstandingLoan = loans.filter(l => l.status === 'active').reduce((s, l) => s + l.outstandingBalance, 0);
+
+    // School Settings for payslip headers
+    const schoolSettings = await prisma.schoolSettings.findFirst({ where: { schoolId: sid } });
+
+    res.json({
+        success: true,
+        teacher: {
+            id: teacher.id,
+            name: teacher.user?.name ?? 'Staff Member',
+            email: teacher.user?.email ?? '',
+            department: teacher.department ?? '',
+            employeeId: teacher.employeeId,
+            bankName: teacher.bankName ?? '',
+            accountNumber: teacher.accountNumber ?? '',
+            accountName: teacher.accountName ?? '',
+        },
+        school: {
+            name: schoolSettings?.schoolName ?? 'School',
+            phone: schoolSettings?.phone ?? '',
+            address: schoolSettings?.address ?? '',
+            logoUrl: schoolSettings?.logoUrl ?? '',
+        },
+        salaryStructure: {
+            earnings,
+            deductions,
+            gross,
+            totalDeductions,
+            net,
+        },
+        payslips,
+        pension: {
+            totalAccumulated: totalPensionAccumulated,
+            entries: pensionEntries,
+        },
+        loans: {
+            totalLoaned,
+            totalOutstanding: totalOutstandingLoan,
+            list: loans,
+        }
+    });
+});
+
 // ─── Exports ──────────────────────────────────────────────────────────────────
 
 module.exports = {
@@ -691,11 +1110,16 @@ module.exports = {
     getStaffLoans,
     createStaffLoan,
     updateStaffLoan,
+    recordLoanRepayment,
     getStaffPension,
+    addAdhocPension,
+    setOngoingPension,
+    getSchoolPensionSummary,
     createPayrollRun,
     getPayrollRuns,
     getPayrollRun,
     confirmPayrollRun,
     exportPayrollRun,
     getPayslip,
+    getTeacherPayrollMe,
 };

@@ -182,7 +182,7 @@ const submitApplication = async (req, res) => {
                 title: `New ${applicationType === 'EMPLOYMENT' ? 'Employment' : 'Admission'} Application`,
                 message: `${applicantName} has just submitted an application.`,
                 type: 'APPLICATION',
-                link: '/dashboard/admission/applications'
+                link: `/dashboard/admission/applications?applicationId=${newApp.id}`
             }
         });
 
@@ -519,7 +519,7 @@ const parentSubmitApplication = async (req, res) => {
             title: `New ${applicationType === 'EMPLOYMENT' ? 'Employment' : 'Admission'} Application`,
             message: `${applicantName} has just submitted an application.`,
             type: 'APPLICATION',
-            link: '/dashboard/admission/applications'
+            link: `/dashboard/admission/applications?applicationId=${application.id}`
         }
     });
 

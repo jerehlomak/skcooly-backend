@@ -151,7 +151,50 @@ const getDashboardStats = async (req, res) => {
                 assignmentsPending: 0
             }
 
-            return res.status(StatusCodes.OK).json({ profile: { ...teacher, school }, stats, schedule, recentStudents })
+            // Phase 2: Add Payroll, Loan and Pension Details for Staff Dashboard
+            const recentPayroll = await prisma.payrollRunItem.findFirst({
+                where: { 
+                    staffId: teacher.id,
+                    payrollRun: { status: 'confirmed' }
+                },
+                orderBy: { payrollRun: { runDate: 'desc' } },
+                include: { payrollRun: { select: { id: true, month: true, year: true, status: true, runDate: true } } }
+            });
+
+            const activeLoans = await prisma.staffLoan.findMany({
+                where: { staffId: teacher.id, status: 'active', outstandingBalance: { gt: 0 } },
+                select: { id: true, loanAmount: true, outstandingBalance: true, repaymentPerMonth: true, notes: true, dateCollected: true }
+            });
+
+            const pensionEntries = await prisma.pensionLedger.findMany({
+                where: { staffId: teacher.id }
+            });
+            const totalPension = pensionEntries.reduce((sum, p) => sum + p.amount, 0);
+
+            const settings = await prisma.payrollSetting.findMany({
+                where: { staffId: teacher.id },
+                orderBy: { type: 'asc' }
+            });
+            const earnings = settings.filter(s => s.type === 'earning');
+            const deductions = settings.filter(s => s.type === 'deduction');
+            const gross = earnings.reduce((sum, e) => sum + e.amount, 0);
+            const totalDeductions = deductions.reduce((sum, d) => sum + d.amount, 0);
+            const net = Math.max(0, gross - totalDeductions);
+
+            const payrollInfo = {
+                recentSlip: recentPayroll || null,
+                activeLoans,
+                totalPensionAccumulated: totalPension,
+                salaryStructure: {
+                    gross,
+                    totalDeductions,
+                    net,
+                    earnings,
+                    deductions
+                }
+            };
+
+            return res.status(StatusCodes.OK).json({ profile: { ...teacher, school }, stats, schedule, recentStudents, payroll: payrollInfo })
         }
 
         case 'PARENT': {
@@ -187,20 +230,26 @@ const getDashboardStats = async (req, res) => {
             let recentFees = [];
 
             if (studentIds.length > 0) {
-                const invoices = await prisma.feeInvoice.findMany({
-                    where: { schoolId: parent.schoolId, studentProfileId: { in: studentIds }, isDeleted: false },
+                const invoices = await prisma.financeInvoice.findMany({
+                    where: { schoolId: parent.schoolId, studentId: { in: studentIds }, isDeleted: false },
                     include: { student: { include: { user: { select: { name: true } } } } },
                     orderBy: { createdAt: 'desc' },
                     take: 5
                 });
-                outstandingAmount = invoices.reduce((sum, inv) => sum + (inv.totalAmount - inv.amountPaid), 0);
+                outstandingAmount = invoices.reduce((sum, inv) => sum + inv.balanceDue, 0);
                 recentFees = invoices.map(inv => ({
-                    desc: `${inv.term} ${inv.year} — ${inv.student.user.name}`,
+                    desc: `${inv.term || ''} ${inv.academicYear || ''} — ${inv.student.user.name}`,
                     date: inv.createdAt.toISOString().split('T')[0],
                     status: inv.status,
                     amount: `₦${inv.totalAmount.toLocaleString('en-NG')}`
                 }));
             }
+
+            const wallets = await prisma.studentWallet.findMany({
+                where: { studentId: { in: studentIds } }
+            });
+            const walletMap = {};
+            wallets.forEach(w => walletMap[w.studentId] = w.balance);
 
             // Shape children for the frontend (using `name` not `firstName/lastName`)
             const children = parent.students.map(s => ({
@@ -212,7 +261,8 @@ const getDashboardStats = async (req, res) => {
                 classLevel: s.classArm || { name: s.classLevel },
                 subjects: s.classArm?._count?.subjects || 0,
                 isActive: s.status === 'Active',
-                photo: null
+                photo: null,
+                walletBalance: walletMap[s.id] || 0
             }));
 
             const stats = {
@@ -222,7 +272,17 @@ const getDashboardStats = async (req, res) => {
                 notifications: 0
             }
 
-            return res.status(StatusCodes.OK).json({ profile: { ...parent, school }, stats, children, recentFees })
+            const financeSettings = await prisma.financeSettings.findUnique({
+                where: { schoolId: parent.schoolId }
+            });
+
+            return res.status(StatusCodes.OK).json({ 
+                profile: { ...parent, school }, 
+                stats, 
+                children, 
+                recentFees,
+                settings: financeSettings || {}
+            })
         }
 
         case 'ADMIN': {

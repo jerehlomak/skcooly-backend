@@ -3,10 +3,15 @@ const { StatusCodes } = require('http-status-codes');
 
 // ─── GET ALL TERMS ────────────────────────────────────────────────────────────
 const getAllTerms = async (req, res) => {
+    const { sessionId } = req.query;
+    const where = { schoolId: req.user.schoolId };
+    if (sessionId) {
+        where.sessionId = sessionId;
+    }
     const terms = await prisma.academicTerm.findMany({
-        where: { schoolId: req.user.schoolId },
+        where,
         include: { session: true },
-        orderBy: { createdAt: 'desc' }
+        orderBy: [{ startDate: 'asc' }, { createdAt: 'asc' }]
     });
     res.status(StatusCodes.OK).json({ terms, count: terms.length });
 };

@@ -375,18 +375,20 @@ const getMyInvoices = async (req, res) => {
             return res.status(StatusCodes.OK).json({ fees: [] });
         }
 
-        const invoices = await prisma.feeInvoice.findMany({
+        const invoices = await prisma.financeInvoice.findMany({
             where: {
                 schoolId: req.user.schoolId,
-                studentProfileId: { in: targetProfileIds }
+                studentId: { in: targetProfileIds },
+                isDeleted: false
             },
             include: {
                 items: true,
-                ledgerEntries: { orderBy: { createdAt: 'desc' } },
+                PaymentAllocation: { orderBy: { createdAt: 'desc' } },
                 student: {
                     select: {
                         admissionNo: true,
                         classLevel: true,
+                        classArm: { select: { name: true } },
                         user: { select: { name: true } }
                     }
                 }
@@ -396,21 +398,32 @@ const getMyInvoices = async (req, res) => {
 
         const formatted = invoices.map(invoice => ({
             id: invoice.id,
-            studentId: invoice.studentProfileId,
+            studentId: invoice.studentId,
             admNo: invoice.student.admissionNo,
             name: invoice.student.user.name,
-            classLevel: invoice.student.classLevel,
-            totalFee: invoice.totalAmount,
+            classLevel: invoice.student.classArm?.name || invoice.student.classLevel,
+            totalFee: invoice.totalAmount - invoice.discountTotal, // Adjusted so frontend balanceDue calculation works
             amountPaid: invoice.amountPaid,
+            balanceDue: invoice.balanceDue,
             status: invoice.status ? invoice.status.toLowerCase() : 'unpaid',
-            lastPayment: invoice.lastPaymentDate ? invoice.lastPaymentDate.toISOString().split('T')[0] : null,
+            lastPayment: invoice.PaymentAllocation && invoice.PaymentAllocation.length > 0 ? invoice.PaymentAllocation[0].createdAt.toISOString().split('T')[0] : null,
             term: invoice.term,
-            year: invoice.year,
+            year: invoice.academicYear,
             items: invoice.items,
-            ledgerEntries: invoice.ledgerEntries
+            ledgerEntries: invoice.PaymentAllocation?.map(pa => ({
+                id: pa.id,
+                type: 'PAYMENT',
+                category: 'FEE',
+                description: 'Payment Allocation',
+                amount: pa.amount,
+                date: pa.createdAt.toISOString()
+            })) || []
         }));
 
-        res.status(StatusCodes.OK).json({ fees: formatted });
+        const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId: req.user.schoolId } });
+        const showItemizedBreakdown = financeSettings?.showItemizedBreakdown !== false;
+
+        res.status(StatusCodes.OK).json({ fees: formatted, showItemizedBreakdown });
     } catch (error) {
         require('fs').writeFileSync('debug-error.txt', error.stack || error.message);
         console.error("CRITICAL ERROR IN getMyInvoices:", error);

@@ -29,7 +29,6 @@ const parentRouter = require('./routes/parent.route')
 const classRouter = require('./routes/class.route')
 const subjectRouter = require('./routes/subject.route')
 const schoolSettingsRouter = require('./routes/schoolSettings.route')
-const feeParticularRouter = require('./routes/feeParticular.route')
 const bankAccountRouter = require('./routes/bankAccount.route')
 const dashboardRouter = require('./routes/dashboard.route')
 const roleRouter = require('./routes/role.route')
@@ -63,6 +62,9 @@ const studentFinanceRouter = require('./routes/studentFinance.route') // Phase 6
 const legacyResultRouter = require('./routes/legacy-result.routes')
 const transcriptRouter = require('./routes/transcript.routes')
 const sectionRouter = require('./routes/section.route')
+const assetRouter = require('./routes/asset.route')         // Phase 12: Assets Management
+const inventoryRouter = require('./routes/inventory.route') // Phase 12: Inventory Management
+const posRouter = require('./routes/pos.route')             // Phase 12: Point of Sale (POS)
 
 
 // middleware 
@@ -127,7 +129,6 @@ app.use('/api/v1/parents', parentRouter)
 app.use('/api/v1/classes', classRouter)
 app.use('/api/v1/subjects', subjectRouter)
 app.use('/api/v1/school-settings', schoolSettingsRouter)
-app.use('/api/v1/fee-particulars', feeParticularRouter)
 app.use('/api/v1/bank-accounts', bankAccountRouter)
 app.use('/api/v1/dashboard', dashboardRouter)
 app.use('/api/v1/roles', roleRouter)
@@ -169,14 +170,20 @@ const recoveryRouter = require('./routes/recovery.route')
 
 app.use('/api/v1/bulk-import', bulkImportRouter) // Phase 3: Excel bulk import
 app.use('/api/v1/student-finance', studentFinanceRouter) // Phase 6: Student Wallets
+app.use('/api/v1/assets', assetRouter) // Phase 12: Fixed Assets Management
+app.use('/api/v1/inventory', inventoryRouter) // Phase 12: Inventory Management
+app.use('/api/v1/pos', posRouter) // Phase 12: Point of Sale (POS)
 const {
     getMyInvoices, getMyInvoice,
-    getBillingProfile, updateBillingProfile
+    getBillingProfile, updateBillingProfile,
+    initializeSchoolInvoicePayment
 } = require('./controllers/central.controller')
+const schoolBillingRouter = require('./routes/schoolBilling.route')
 const { authenticateUser, authorizePermissions } = require('./middleware/authentication')
 app.use('/api/v1/recovery', authenticateUser, recoveryRouter)
+app.use('/api/v1/school-billing', schoolBillingRouter)
 
-// School-facing invoice inbox (Phase 10)
+// School-facing invoice inbox (Phase 10 & 13)
 app.get('/api/v1/my-invoices', authenticateUser,
     authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'),
     getMyInvoices
@@ -184,6 +191,10 @@ app.get('/api/v1/my-invoices', authenticateUser,
 app.get('/api/v1/my-invoices/:id', authenticateUser,
     authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'),
     getMyInvoice
+)
+app.post('/api/v1/my-invoices/:id/pay', authenticateUser,
+    authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'),
+    initializeSchoolInvoicePayment
 )
 // School billing profile
 app.get('/api/v1/billing-profile', authenticateUser,
@@ -231,3 +242,4 @@ process.on('SIGTERM', async () => {
 // Trigger nodemon restart
 
 // Trigger restart
+
