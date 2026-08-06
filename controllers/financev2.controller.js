@@ -693,6 +693,19 @@ const fundWallet = async (req, res) => {
     }
 };
 
+// Merges the family-level ledger with every child's wallet ledger so a deposit made
+// for one child also shows up on the family's combined ledger, tagged with which
+// account (family or a specific child) it happened on.
+const mergeFamilyLedger = (familyWallet, individualWallets) => {
+    return [
+        ...familyWallet.transactions.map(t => ({ ...t, account: 'FAMILY', studentName: null, admissionNo: null })),
+        ...individualWallets.flatMap(iw => iw.transactions.map(t => ({
+            ...t, account: 'STUDENT', studentName: iw.studentName, admissionNo: iw.admissionNo
+        })))
+    ].sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())
+     .slice(0, 30);
+};
+
 const getFamilyWallet = async (req, res) => {
     const { parentId } = req.params;
     const { schoolId } = req.user;
@@ -755,7 +768,7 @@ const getFamilyWallet = async (req, res) => {
         parentName: parent.user?.name,
         familyWalletBalance: familyWallet.balance,
         totalFamilyBalance,
-        familyWallet,
+        familyWallet: { ...familyWallet, transactions: mergeFamilyLedger(familyWallet, individualWallets) },
         individualWallets
     });
 };
@@ -2273,7 +2286,7 @@ const getMyFamilyWallet = async (req, res) => {
         parentName: parent.user?.name,
         familyWalletBalance: familyWallet.balance,
         totalFamilyBalance,
-        familyWallet,
+        familyWallet: { ...familyWallet, transactions: mergeFamilyLedger(familyWallet, individualWallets) },
         individualWallets
     });
 };

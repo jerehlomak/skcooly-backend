@@ -1,6 +1,6 @@
 const express = require('express');
 const {
-    getMessages, sendMessage, updateInvoiceDocumentStatus, getParentMessages, replyToMessage, markParentMessagesRead
+    getMessages, sendMessage, bulkSendReminders, updateInvoiceDocumentStatus, getParentMessages, replyToMessage, markParentMessagesRead
 } = require('../controllers/financeMessaging.controller');
 
 const router = express.Router();
@@ -111,6 +111,7 @@ router.get('/reports/export/csv', authorizePermissions('ADMIN', 'SCHOOL_SUPER_AD
 
 // ─── MESSAGING & NOTIFICATIONS (Phase 8) ───
 router.route('/messages').get(authenticateUser, getMessages).post(authenticateUser, sendMessage);
+router.post('/reminders/bulk', authenticateUser, authorizePermissions('ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN', 'TEACHER', 'BRANCH_STAFF'), bulkSendReminders);
 router.route('/messages/parent').get(authenticateUser, getParentMessages).post(authenticateUser, replyToMessage);
 router.route('/messages/parent/mark-read').put(authenticateUser, markParentMessagesRead);
 router.route('/invoices/:id/document-status').patch(authenticateUser, updateInvoiceDocumentStatus);

@@ -2,6 +2,17 @@ const nodemailer = require('nodemailer');
 const { decrypt } = require('./encryption');
 const prisma = require('../db/prisma');
 
+// Pooled connections avoid paying a fresh TCP+TLS+SMTP-handshake cost on every single email,
+// and bounded timeouts stop a slow/unresponsive SMTP host from hanging a request indefinitely.
+const SMTP_PERF_OPTS = {
+    pool: true,
+    maxConnections: 3,
+    maxMessages: 100,
+    connectionTimeout: 10000,
+    greetingTimeout: 10000,
+    socketTimeout: 15000,
+};
+
 async function getTransporter(schoolId) {
     if (schoolId) {
         try {
@@ -18,6 +29,7 @@ async function getTransporter(schoolId) {
                         user: settings.smtpUser,
                         pass: decrypt(settings.smtpPass),
                     },
+                    ...SMTP_PERF_OPTS,
                 });
             }
         } catch (err) {
@@ -34,6 +46,7 @@ async function getTransporter(schoolId) {
             user: process.env.SMTP_USER,
             pass: process.env.SMTP_PASS,
         },
+        ...SMTP_PERF_OPTS,
     });
 }
 

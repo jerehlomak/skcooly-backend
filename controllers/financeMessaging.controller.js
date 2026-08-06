@@ -127,6 +127,48 @@ const sendMessage = async (req, res) => {
 };
 
 
+// Bulk-send a finance message (e.g. a fees reminder) to the parents of a set of students.
+// Deduplicates so a parent with multiple selected children only gets one message.
+const bulkSendReminders = async (req, res) => {
+    const { schoolId, userId } = req.user;
+    const { studentIds, subject, body } = req.body;
+
+    if (!Array.isArray(studentIds) || studentIds.length === 0) {
+        throw new CustomError.BadRequestError('studentIds array is required');
+    }
+    if (!body) throw new CustomError.BadRequestError('Message body is required');
+
+    const students = await prisma.studentProfile.findMany({
+        where: { id: { in: studentIds }, schoolId },
+        include: { parent: { select: { userId: true } } }
+    });
+
+    const parentUserIds = [...new Set(students.map(s => s.parent?.userId).filter(Boolean))];
+    if (parentUserIds.length === 0) {
+        throw new CustomError.BadRequestError('None of the selected students have a linked parent account');
+    }
+
+    await prisma.financeMessage.createMany({
+        data: parentUserIds.map(receiverId => ({
+            schoolId,
+            senderType: 'ADMIN',
+            senderId: userId,
+            receiverId,
+            subject: subject || 'Fee Reminder',
+            body
+        }))
+    });
+
+    sendNotification(
+        schoolId,
+        'Bulk Fee Reminder Sent',
+        `A fee reminder was sent to ${parentUserIds.length} parent(s).`,
+        '/dashboard/finance/messages'
+    );
+
+    res.status(StatusCodes.OK).json({ message: `Reminder sent to ${parentUserIds.length} parent${parentUserIds.length > 1 ? 's' : ''}` });
+};
+
 const updateInvoiceDocumentStatus = async (req, res) => {
     const { schoolId } = req.user;
     const { id } = req.params;
@@ -280,6 +322,7 @@ const markParentMessagesRead = async (req, res) => {
 module.exports = {
     getMessages,
     sendMessage,
+    bulkSendReminders,
     updateInvoiceDocumentStatus,
     getParentMessages,
     replyToMessage,
