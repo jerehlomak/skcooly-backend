@@ -19,6 +19,10 @@ const {
     getInvoices,
     getInvoice,
     updateInvoice,
+    cancelInvoice,
+    bulkCancelInvoices,
+    deleteInvoice,
+    bulkDeleteInvoices,
     resendInvoice,
     markInvoicePrinted,
     markReceiptPrinted,
@@ -112,6 +116,11 @@ router.put('/invoices/:id', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRA
 router.post('/invoices/:id/send', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),resendInvoice);
 router.post('/invoices/:id/print', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),markInvoicePrinted);
 router.post('/invoices/:id/pay', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),recordManualPayment);
+// Cancel/delete are destructive — admin-only, not open to teachers/branch staff.
+router.post('/invoices/bulk-cancel', authorizePermissions(...ADMIN_ROLES),bulkCancelInvoices);
+router.post('/invoices/bulk-delete', authorizePermissions(...ADMIN_ROLES),bulkDeleteInvoices);
+router.post('/invoices/:id/cancel', authorizePermissions(...ADMIN_ROLES),cancelInvoice);
+router.delete('/invoices/:id', authorizePermissions(...ADMIN_ROLES),deleteInvoice);
 
 // Payment transactions / reconciliation
 router.get('/transactions', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),getPaymentTransactions);

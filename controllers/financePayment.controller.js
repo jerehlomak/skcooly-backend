@@ -1858,7 +1858,7 @@ const markReceiptPrinted = async (req, res) => {
 // ─── INVOICE GENERATION ──────────────────────────────────────────────────────
 
 const generateInvoice = async (req, res) => {
-    const { studentId, term, academicYear, dueDate, feeDefinitionIds, expectedTotal, items: rawItems } = req.body;
+    const { studentId, term, academicYear, dueDate, feeDefinitionIds, expectedTotal, items: rawItems, customFees: rawCustomFees } = req.body;
     const { schoolId, activeBranchId } = req.user;
 
     if (!studentId) throw new CustomError.BadRequestError('studentId is required');
@@ -1921,10 +1921,21 @@ const generateInvoice = async (req, res) => {
     }
     const itemsSubTotal = itemLines.reduce((s, i) => s + i.amount, 0);
 
+    // Ad-hoc, one-off fees typed in on this invoice only (e.g. "Damaged Book — ₦2,000").
+    // Not backed by a FeeDefinition, so they're stored as CUSTOM invoice items.
+    const customFeeLines = Array.isArray(rawCustomFees)
+        ? rawCustomFees
+            .map(cf => ({ type: 'CUSTOM', referenceId: null, label: String(cf.name || 'Custom Fee').trim(), quantity: 1, unitPrice: Number(cf.amount) || 0, amount: Number(cf.amount) || 0 }))
+            .filter(cf => cf.label && cf.amount > 0)
+        : [];
+    const customFeesSubTotal = customFeeLines.reduce((s, i) => s + i.amount, 0);
+
     // ── Compute totals ────────────────────────────────────────────────────────
-    // Scholarships only ever discount fees, never physical items purchased on the same invoice.
+    // Scholarships discount fees + custom fees (mirrors the frontend's computeTotal), but
+    // never physical inventory items purchased on the same invoice.
     const feesSubTotal = fees.reduce((s, f) => s + f.amount * (f.quantity || 1), 0);
-    const subTotal = feesSubTotal + itemsSubTotal;
+    const discountableSubTotal = feesSubTotal + customFeesSubTotal;
+    const subTotal = discountableSubTotal + itemsSubTotal;
 
     // Apply active scholarships
     const scholarships = await prisma.scholarship.findMany({
@@ -1934,13 +1945,13 @@ const generateInvoice = async (req, res) => {
     let discountTotal = 0;
     for (const sc of scholarships) {
         if (sc.type === 'PERCENTAGE') {
-            discountTotal += feesSubTotal * (sc.value / 100);
+            discountTotal += discountableSubTotal * (sc.value / 100);
         } else if (sc.type === 'SCHOLARSHIP' || sc.type === 'FIXED_AMOUNT') {
             // Student pays sc.value — discount is the difference
-            discountTotal = Math.max(discountTotal, feesSubTotal - sc.value);
+            discountTotal = Math.max(discountTotal, discountableSubTotal - sc.value);
         }
     }
-    discountTotal = Math.min(discountTotal, feesSubTotal); // cap at fees portion only
+    discountTotal = Math.min(discountTotal, discountableSubTotal); // cap at the discountable portion only
     const totalAmount = Math.max(0, subTotal - discountTotal);
     console.log(`[generateInvoice] subTotal=${subTotal} scholarships=${scholarships.length} discountTotal=${discountTotal} totalAmount=${totalAmount}`);
 
@@ -1982,6 +1993,7 @@ const generateInvoice = async (req, res) => {
                             unitPrice: f.amount,
                             amount: f.amount * (f.quantity || 1)
                         })),
+                        ...customFeeLines,
                         ...itemLines
                     ]
                 }
@@ -2086,7 +2098,160 @@ const getInvoice = async (req, res) => {
 };
 
 const updateInvoice = async (req, res) => {
-    res.status(StatusCodes.OK).json({ msg: 'Not implemented' });
+    const { id } = req.params;
+    const { schoolId } = req.user;
+    const { dueDate, term, academicYear, items: rawItems } = req.body;
+
+    const invoice = await prisma.financeInvoice.findUnique({ where: { id } });
+    if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) {
+        throw new CustomError.NotFoundError('Invoice not found');
+    }
+    if (['PAID', 'VOID', 'CANCELLED'].includes(invoice.status)) {
+        throw new CustomError.BadRequestError(`Cannot edit a ${invoice.status.toLowerCase()} invoice`);
+    }
+
+    const data = {};
+    if (dueDate !== undefined) data.dueDate = dueDate ? new Date(dueDate) : null;
+    if (term !== undefined) data.term = term;
+    if (academicYear !== undefined) data.academicYear = academicYear;
+
+    // Line-item amounts can only be edited before any payment has been received —
+    // once money has been applied against the invoice, changing its total would desync
+    // balanceDue/receipts already issued against the old amount.
+    if (Array.isArray(rawItems)) {
+        if (invoice.amountPaid > 0) {
+            throw new CustomError.BadRequestError('Cannot edit line items after a payment has been recorded on this invoice. Cancel it and issue a new one instead.');
+        }
+        const cleanItems = rawItems
+            .map(i => ({
+                type: i.type || 'CUSTOM',
+                referenceId: i.referenceId || null,
+                label: String(i.label || 'Item').trim(),
+                quantity: Math.max(1, Number(i.quantity) || 1),
+                unitPrice: Number(i.unitPrice) || 0,
+            }))
+            .filter(i => i.label && i.unitPrice >= 0)
+            .map(i => ({ ...i, amount: i.unitPrice * i.quantity }));
+        if (cleanItems.length === 0) throw new CustomError.BadRequestError('Invoice must have at least one item');
+
+        const newSubTotal = cleanItems.reduce((s, i) => s + i.amount, 0);
+        const newTotal = Math.max(0, newSubTotal - (invoice.discountTotal || 0));
+
+        await prisma.$transaction(async (tx) => {
+            await tx.financeInvoiceItem.deleteMany({ where: { invoiceId: id } });
+            await tx.financeInvoice.update({
+                where: { id },
+                data: {
+                    ...data,
+                    subTotal: newSubTotal,
+                    totalAmount: newTotal,
+                    balanceDue: Math.max(0, newTotal - (invoice.walletDeduction || 0)),
+                    items: { create: cleanItems }
+                }
+            });
+        });
+    } else if (Object.keys(data).length > 0) {
+        await prisma.financeInvoice.update({ where: { id }, data });
+    }
+
+    const updated = await prisma.financeInvoice.findUnique({ where: { id }, include: { items: true } });
+    res.status(StatusCodes.OK).json({ invoice: updated, msg: 'Invoice updated' });
+};
+
+// Soft-cancel: keeps the invoice (and any payment history) for the audit trail, just marks
+// it CANCELLED and clears the outstanding balance so it stops counting toward collections due.
+const cancelInvoice = async (req, res) => {
+    const { id } = req.params;
+    const { schoolId } = req.user;
+
+    const invoice = await prisma.financeInvoice.findUnique({ where: { id } });
+    if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) {
+        throw new CustomError.NotFoundError('Invoice not found');
+    }
+    if (['CANCELLED', 'VOID'].includes(invoice.status)) {
+        throw new CustomError.BadRequestError('Invoice is already cancelled');
+    }
+
+    const updated = await prisma.financeInvoice.update({
+        where: { id },
+        data: { status: 'CANCELLED', balanceDue: 0 }
+    });
+
+    res.status(StatusCodes.OK).json({
+        invoice: updated,
+        msg: invoice.amountPaid > 0
+            ? `Invoice cancelled. Note: ₦${invoice.amountPaid.toLocaleString()} was already collected on this invoice — verify any refund/adjustment separately.`
+            : 'Invoice cancelled'
+    });
+};
+
+const bulkCancelInvoices = async (req, res) => {
+    const { invoiceIds } = req.body;
+    const { schoolId } = req.user;
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+        throw new CustomError.BadRequestError('invoiceIds array is required');
+    }
+
+    const invoices = await prisma.financeInvoice.findMany({
+        where: { id: { in: invoiceIds }, schoolId, isDeleted: false, status: { notIn: ['CANCELLED', 'VOID'] } },
+        select: { id: true }
+    });
+    if (invoices.length > 0) {
+        await prisma.financeInvoice.updateMany({
+            where: { id: { in: invoices.map(i => i.id) } },
+            data: { status: 'CANCELLED', balanceDue: 0 }
+        });
+    }
+    const skipped = invoiceIds.length - invoices.length;
+    res.status(StatusCodes.OK).json({
+        cancelledCount: invoices.length,
+        skippedCount: skipped,
+        msg: `${invoices.length} invoice(s) cancelled${skipped > 0 ? `, ${skipped} skipped (not found or already cancelled)` : ''}`
+    });
+};
+
+// Hard delete — only permitted while nothing has been paid against the invoice yet, so a real
+// payment/receipt trail can never be silently erased. Anything with money on it must be cancelled instead.
+const deleteInvoice = async (req, res) => {
+    const { id } = req.params;
+    const { schoolId } = req.user;
+
+    const invoice = await prisma.financeInvoice.findUnique({ where: { id } });
+    if (!invoice || invoice.schoolId !== schoolId || invoice.isDeleted) {
+        throw new CustomError.NotFoundError('Invoice not found');
+    }
+    if (invoice.amountPaid > 0) {
+        throw new CustomError.BadRequestError('Cannot delete an invoice that has payments recorded against it. Cancel it instead to preserve the payment/audit trail.');
+    }
+
+    await prisma.financeInvoice.update({ where: { id }, data: { isDeleted: true, deletedAt: new Date() } });
+    res.status(StatusCodes.OK).json({ msg: 'Invoice deleted' });
+};
+
+const bulkDeleteInvoices = async (req, res) => {
+    const { invoiceIds } = req.body;
+    const { schoolId } = req.user;
+    if (!Array.isArray(invoiceIds) || invoiceIds.length === 0) {
+        throw new CustomError.BadRequestError('invoiceIds array is required');
+    }
+
+    const invoices = await prisma.financeInvoice.findMany({
+        where: { id: { in: invoiceIds }, schoolId, isDeleted: false },
+        select: { id: true, amountPaid: true }
+    });
+    const deletable = invoices.filter(i => i.amountPaid === 0);
+    const blocked = invoices.length - deletable.length;
+    if (deletable.length > 0) {
+        await prisma.financeInvoice.updateMany({
+            where: { id: { in: deletable.map(i => i.id) } },
+            data: { isDeleted: true, deletedAt: new Date() }
+        });
+    }
+    res.status(StatusCodes.OK).json({
+        deletedCount: deletable.length,
+        blockedCount: blocked,
+        msg: `${deletable.length} invoice(s) deleted${blocked > 0 ? `, ${blocked} skipped because they already have payments recorded (cancel those instead)` : ''}`
+    });
 };
 // ─── PAYMENT RECORDS (Reconciliation) ────────────────────────────────────────
 
@@ -3432,6 +3597,10 @@ module.exports = {
     getInvoices,
     getInvoice,
     updateInvoice,
+    cancelInvoice,
+    bulkCancelInvoices,
+    deleteInvoice,
+    bulkDeleteInvoices,
     resendInvoice,
     markInvoicePrinted,
     markReceiptPrinted,

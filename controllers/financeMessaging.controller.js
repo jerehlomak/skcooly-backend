@@ -42,7 +42,28 @@ const getMessages = async (req, res) => {
         }
     });
 
-    res.status(StatusCodes.OK).json({ messages });
+    // The invoice relation is optional (bulk reminders and messages started outside an
+    // invoice context don't have one), so it can't be relied on to name the parent/student —
+    // resolve senderId/receiverId (both are User ids) against ParentProfile directly instead.
+    const contactUserIds = [...new Set(messages.map(m => (m.senderType === 'PARENT' ? m.senderId : m.receiverId)).filter(Boolean))];
+    const parents = contactUserIds.length > 0 ? await prisma.parentProfile.findMany({
+        where: { userId: { in: contactUserIds } },
+        include: {
+            user: { select: { id: true, name: true } },
+            students: { where: { isDeleted: false }, include: { user: { select: { name: true } } } }
+        }
+    }) : [];
+    const contactByUserId = new Map(parents.map(p => [p.userId, {
+        name: p.fatherName || p.motherName || p.user?.name || 'Parent',
+        studentName: p.students.map(s => s.user?.name).filter(Boolean).join(', ') || 'Unknown Student'
+    }]));
+
+    const messagesWithContact = messages.map(m => {
+        const contactUserId = m.senderType === 'PARENT' ? m.senderId : m.receiverId;
+        return { ...m, contact: contactByUserId.get(contactUserId) || null };
+    });
+
+    res.status(StatusCodes.OK).json({ messages: messagesWithContact });
 };
 
 const sendMessage = async (req, res) => {
