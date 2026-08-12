@@ -2008,8 +2008,11 @@ const shareResultEndpoint = async (req, res) => {
         throw new CustomError.BadRequestError('Missing required fields for sharing');
     }
 
-    // Example URL for the parent to download
-    const reportCardUrl = `http://localhost:3000/report-card/pdf?studentProfileId=${studentProfileId}&term=${term}&academicYear=${academicYear}`;
+    // NOTE: /report-card/pdf is not a route that exists in the client app (see App.tsx) —
+    // this link 404s today regardless of domain. Likely intended to point at /parent/results
+    // instead, but leaving the path as-is here since only the hardcoded domain was in scope.
+    const clientBaseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+    const reportCardUrl = `${clientBaseUrl}/report-card/pdf?studentProfileId=${studentProfileId}&term=${term}&academicYear=${academicYear}`;
 
     const result = await shareResult(req.user.schoolId, studentProfileId, term, academicYear, channel, recipient, reportCardUrl);
     

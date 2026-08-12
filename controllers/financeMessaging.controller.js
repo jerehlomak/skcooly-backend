@@ -84,7 +84,8 @@ const sendMessage = async (req, res) => {
     // Replace {PAYMENT_LINK} placeholder with the invoice-specific parent portal URL
     let messageBody = body;
     if (invoiceId && messageBody.includes('{PAYMENT_LINK}')) {
-        const paymentLink = `https://skooly.app/parent/fees?invoice=${invoiceId}`;
+        const clientBaseUrl = process.env.CLIENT_URL || 'http://localhost:5173';
+        const paymentLink = `${clientBaseUrl}/parent/fees?invoice=${invoiceId}`;
         messageBody = messageBody.replace(/\{PAYMENT_LINK\}/g, paymentLink);
     }
 
