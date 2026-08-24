@@ -68,7 +68,7 @@ const validateApplicationPin = async (req, res) => {
 
         const settings = await prisma.schoolSettings.findFirst({
             where: { schoolId: pin.schoolId },
-            select: { admissionLetterTemplate: true, employmentLetterTemplate: true, logoUrl: true }
+            select: { admissionLetterTemplate: true, employmentLetterTemplate: true, admissionFormConfig: true, employmentFormConfig: true, logoUrl: true }
         });
 
         const schoolInfo = { ...pin.school };
@@ -80,7 +80,8 @@ const validateApplicationPin = async (req, res) => {
             message: 'Application found.',
             school: schoolInfo,
             application: pin.application,
-            letterTemplate: applicationType === 'ADMISSION_APPLICATION' ? settings?.admissionLetterTemplate : settings?.employmentLetterTemplate
+            letterTemplate: applicationType === 'ADMISSION_APPLICATION' ? settings?.admissionLetterTemplate : settings?.employmentLetterTemplate,
+            formConfig: applicationType === 'ADMISSION_APPLICATION' ? settings?.admissionFormConfig : settings?.employmentFormConfig
         });
     } else {
         throw new CustomError.BadRequestError('Invalid action type.');

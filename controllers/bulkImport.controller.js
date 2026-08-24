@@ -14,12 +14,12 @@ const generateRandomPassword = () => { return '12345'; };
 // ─── DOWNLOAD STAFF TEMPLATE ─────────────────────────────────────────────────
 const downloadStaffTemplate = (req, res) => {
     const headers = [
-        'firstName', 'lastName', 'email', 'phone',
+        'staffName', 'email', 'phone',
         'staffType', 'employeeId', 'department', 'gender',
         'dateOfBirth', 'qualification', 'salary', 'address'
     ];
     const example = [
-        'Abubakar', 'Musa', 'amusa@school.com', '+2348012345678',
+        'Abubakar Musa', 'amusa@school.com', '+2348012345678',
         'TEACHER', '', 'Mathematics', 'Male',
         '1990-05-15', 'B.Ed', '80000', '12 Main Street, Kano'
     ];
@@ -98,14 +98,24 @@ const bulkImportStaff = async (req, res) => {
         const rowNum = i + 2; // Excel row (1-indexed + header)
 
         try {
-            const firstName = String(row.firstName || '').trim();
-            const lastName = String(row.lastName || '').trim();
-            const email = String(row.email || '').trim().toLowerCase();
-            const gender = String(row.gender || 'Male').trim();
+            const staffName = String(row.staffName || row.name || '').trim();
+            const firstName = String(row.firstName || staffName.split(' ')[0] || '').trim();
+            const lastName = String(row.lastName || staffName.split(' ').slice(1).join(' ') || '').trim();
+            let email = String(row.email || '').trim().toLowerCase();
+            const gender = String(row.gender || 'Not Specified').trim();
 
-            if (!firstName || !lastName || !email || !gender) {
-                failed.push({ row: rowNum, reason: 'Missing required fields: firstName, lastName, email, gender' });
+            if (!staffName && (!firstName || !lastName)) {
+                failed.push({ row: rowNum, reason: 'Missing required field: staffName' });
                 continue;
+            }
+
+            const fullName = staffName || `${firstName} ${lastName}`;
+
+            // Auto-generate email if missing
+            if (!email) {
+                const safeName = (fullName.toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]/g, '.').replace(/\.{2,}/g, '.').replace(/^\.+|\.+$/g, '') || 'staff');
+                const randomSeq = Math.floor(1000 + Math.random() * 9000).toString();
+                email = `${safeName}.${randomSeq}.${schoolTag}@skooly.staff`;
             }
 
             // Check for email uniqueness
@@ -128,7 +138,7 @@ const bulkImportStaff = async (req, res) => {
 
             const newStaff = await prisma.user.create({
                 data: {
-                    name: `${firstName} ${lastName}`,
+                    name: fullName,
                     email,
                     password: hashedPassword,
                     role: (row.staffType === 'ADMIN') ? 'ADMIN' : 'TEACHER',
@@ -310,12 +320,10 @@ const bulkImportStudents = async (req, res) => {
 // ─── DOWNLOAD PARENT TEMPLATE ──────────────────────────────────────────────────
 const downloadParentTemplate = (req, res) => {
     const headers = [
-        'studentAdmissionNo', 'parentId', 'fatherName', 'motherName',
-        'phone', 'email', 'occupation', 'address'
+        'parentName', 'studentAdmissionNo', 'phone', 'email', 'occupation', 'address'
     ];
     const example = [
-        'SKL-2024-0001', 'PAR-OLD-001', 'Bello Usman', 'Aisha Usman',
-        '+2348012345678', 'bello.usman@example.com', 'Engineer', '12 Main Street, Kano'
+        'Bello Usman', 'SKL-2024-0001', '+2348012345678', 'bello.usman@example.com', 'Engineer', '12 Main Street, Kano'
     ];
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.aoa_to_sheet([headers, example]);
@@ -364,26 +372,28 @@ const bulkImportParents = async (req, res) => {
             const providedParentId = String(row.parentId || '').trim();
             const phone = String(row.phone || '').trim();
             let email = String(row.email || '').trim().toLowerCase();
+            let parentName = String(row.parentName || row.fatherName || row.motherName || '').trim();
 
-            if (!studentAdmissionNo || !phone) {
-                failed.push({ row: rowNum, reason: 'Missing required fields: studentAdmissionNo, phone' });
+            if (!parentName) {
+                failed.push({ row: rowNum, reason: 'Missing required field: parentName' });
                 continue;
             }
 
-            // Find the student
-            const student = await prisma.studentProfile.findFirst({
-                where: { admissionNo: studentAdmissionNo, schoolId },
-                include: { user: true }
-            });
+            // Find the student if admission number is provided
+            let student = null;
+            let linkingWarning = '';
+            if (studentAdmissionNo) {
+                student = await prisma.studentProfile.findFirst({
+                    where: { admissionNo: studentAdmissionNo, schoolId },
+                    include: { user: true }
+                });
 
-            if (!student) {
-                failed.push({ row: rowNum, reason: `Student with Admission No "${studentAdmissionNo}" not found` });
-                continue;
-            }
-
-            if (student.parentProfileId) {
-                failed.push({ row: rowNum, reason: `Student "${student.user.name}" already has a parent linked` });
-                continue;
+                if (!student) {
+                    linkingWarning = ` (Student ${studentAdmissionNo} not found, parent created but unlinked)`;
+                } else if (student.parentProfileId) {
+                    linkingWarning = ` (Student ${studentAdmissionNo} already has a parent, parent created but unlinked)`;
+                    student = null; // Do not link
+                }
             }
 
             // Search for existing parent by phone (or email)
@@ -391,35 +401,40 @@ const bulkImportParents = async (req, res) => {
 
             if (providedParentId && newParentsCache[providedParentId]) {
                 existingParent = newParentsCache[providedParentId];
-            } else if (newParentsCache[phone]) {
+            } else if (phone && newParentsCache[phone]) {
                 existingParent = newParentsCache[phone];
             } else if (email && newParentsCache[email]) {
                 existingParent = newParentsCache[email];
             } else {
                 // Query database
-                const searchConditions = [{ phone: phone }];
+                const searchConditions = [];
+                if (phone) searchConditions.push({ phone: phone });
                 if (email) searchConditions.push({ user: { email: email } });
                 if (providedParentId) searchConditions.push({ parentId: providedParentId });
                 
-                existingParent = await prisma.parentProfile.findFirst({
-                    where: { 
-                        schoolId,
-                        OR: searchConditions
-                    },
-                    include: { user: true }
-                });
+                if (searchConditions.length > 0) {
+                    existingParent = await prisma.parentProfile.findFirst({
+                        where: { 
+                            schoolId,
+                            OR: searchConditions
+                        },
+                        include: { user: true }
+                    });
+                }
             }
 
             if (existingParent) {
                 // Link to existing parent
-                await prisma.studentProfile.update({
-                    where: { id: student.id },
-                    data: { parentProfileId: existingParent.id }
-                });
+                if (student) {
+                    await prisma.studentProfile.update({
+                        where: { id: student.id },
+                        data: { parentProfileId: existingParent.id }
+                    });
+                }
                 
                 created.push({ 
-                    name: existingParent.user.name || existingParent.fatherName || 'Parent', 
-                    admissionNo: studentAdmissionNo, 
+                    name: existingParent.user.name || existingParent.fatherName || parentName, 
+                    admissionNo: (student ? student.admissionNo : 'N/A') + linkingWarning, 
                     email: existingParent.user.email, 
                     generatedPassword: 'N/A (Linked)', 
                     row: rowNum 
@@ -428,9 +443,6 @@ const bulkImportParents = async (req, res) => {
             }
 
             // If we reach here, we need to create a new ParentProfile and User
-            let parentName = String(row.fatherName || row.motherName || 'Parent').trim();
-            if (!parentName) parentName = 'Parent';
-            
             const parentId = providedParentId || `PAR-${crypto.randomUUID().slice(0, 8).toUpperCase()}-${Date.now().toString().slice(-4)}`;
 
             // Auto-generate email if missing
@@ -474,11 +486,13 @@ const bulkImportParents = async (req, res) => {
                 }
             });
 
-            // Link the student to the new parent profile
-            await prisma.studentProfile.update({
-                where: { id: student.id },
-                data: { parentProfileId: newParentUser.parentProfile.id }
-            });
+            // Link the student to the new parent profile if student was provided
+            if (student) {
+                await prisma.studentProfile.update({
+                    where: { id: student.id },
+                    data: { parentProfileId: newParentUser.parentProfile.id }
+                });
+            }
             
             // Cache it in case there's a sibling down the list
             const profileToCache = {
@@ -489,12 +503,12 @@ const bulkImportParents = async (req, res) => {
                 }
             };
             if (providedParentId) newParentsCache[providedParentId] = profileToCache;
-            newParentsCache[phone] = profileToCache;
+            if (phone) newParentsCache[phone] = profileToCache;
             if (email) newParentsCache[email] = profileToCache;
 
             created.push({ 
                 name: parentName, 
-                admissionNo: studentAdmissionNo, 
+                admissionNo: (student ? student.admissionNo : 'N/A') + linkingWarning, 
                 email, 
                 generatedPassword, 
                 row: rowNum 
