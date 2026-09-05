@@ -253,7 +253,7 @@ const updateStudent = async (req, res) => {
     const { id } = req.params // This is the User.id
     let {
         name, classLevel, classId, gender, phone, status,
-        admissionDate, dateOfBirth, orphan, religion, bloodGroup, genotype,
+        admissionDate, dateOfBirth, orphan, religion, club, bloodGroup, genotype,
         address, previousSchool, parentProfileId, sessionId, subjectCategoryId
     } = req.body
 
