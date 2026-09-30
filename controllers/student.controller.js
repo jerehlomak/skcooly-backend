@@ -513,3 +513,4 @@ const promoteStudents = async (req, res) => {
 };
 
 module.exports = { addStudent, getAllStudents, getStudent, updateStudent, deleteStudent, promoteStudents, checkAdmissionNo, transferStudent }
+

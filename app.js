@@ -108,7 +108,7 @@ app.use(express.static('./public'))
 app.use(expressFileupload({
     limits: { fileSize: 20 * 1024 * 1024 }, // 20MB per file
     abortOnLimit: true,
-    responseOnLimit: 'File size limit exceeded (max 20MB)',
+    responseOnLimit: '{"msg": "File size limit exceeded (max 20MB)"}',
     useTempFiles: false,
 }))
 
@@ -242,4 +242,5 @@ process.on('SIGTERM', async () => {
 // Trigger nodemon restart
 
 // Trigger restart
+
 

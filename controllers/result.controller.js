@@ -995,6 +995,7 @@ const generateReportCardPDF = async (req, res) => {
     else if (requestedType === 'TRANSCRIPT') dbTemplateType = 'TRANSCRIPT';
 
     if (sectionName) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (!activeTemplate) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, isDefault: true, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     if (!activeTemplate) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     const templateId = activeTemplate?.name || 'template1';
     const config = activeTemplate?.config || {};
@@ -1872,6 +1873,25 @@ const assignTemplateSection = async (req, res) => {
     res.status(StatusCodes.OK).json({ msg: 'Template updated', template });
 };
 
+const updateTemplateDefault = async (req, res) => {
+    const { id } = req.params;
+    const { isDefault } = req.body;
+    
+    if (isDefault) {
+        await prisma.resultTemplate.updateMany({
+            where: { schoolId: req.user.schoolId, id: { not: id } },
+            data: { isDefault: false }
+        });
+    }
+
+    const template = await prisma.resultTemplate.update({
+        where: { id, schoolId: req.user.schoolId },
+        data: { isDefault }
+    });
+
+    res.status(StatusCodes.OK).json({ msg: 'Template default status updated', template });
+};
+
 const getResultTemplate = async (req, res) => {
     const { classId } = req.query;
     let targetSection = null;
@@ -1881,6 +1901,7 @@ const getResultTemplate = async (req, res) => {
     }
     let template = null;
     if (targetSection) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: targetSection }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, isDefault: true }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     res.status(StatusCodes.OK).json({ template });
 };
@@ -2223,6 +2244,7 @@ module.exports = {
     getAllTemplates,
     createResultTemplate,
     updateResultTemplate,
+    updateTemplateDefault,
     deleteResultTemplate,
     getResultTemplate,
     assignTemplateSection,

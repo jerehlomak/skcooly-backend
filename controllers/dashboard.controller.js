@@ -60,7 +60,9 @@ const getDashboardStats = async (req, res) => {
                 }
             });
 
-            const assignedClassIds = [...new Set(classSubjectsAssigned.map(cs => cs.classId))];
+            const classSubjectClassIds = classSubjectsAssigned.map(cs => cs.classId);
+            const formClassIds = teacher.formClasses ? teacher.formClasses.map(c => c.id) : [];
+            const assignedClassIds = [...new Set([...classSubjectClassIds, ...formClassIds])];
             const assignedClassObjs = await prisma.class.findMany({
                 where: { id: { in: assignedClassIds } }
             });
@@ -80,16 +82,27 @@ const getDashboardStats = async (req, res) => {
                 ? subjectNames.length
                 : [...new Set(existingSlots.map(s => s.subject))].length;
 
-            // Total Students: count by classId (specific arm) for assigned classes
+            // Total Students: count by classId (specific arm) for assigned classes and timetable entries
             let totalStudents = 0;
-            if (assignedClassIds.length > 0) {
+            const validAssignedClasses = assignedClassIds.filter(Boolean);
+            const validTimetableClasses = timetableClassNames.filter(Boolean);
+
+            if (validAssignedClasses.length > 0 || validTimetableClasses.length > 0) {
+                const orConditions = [];
+                if (validAssignedClasses.length > 0) {
+                    orConditions.push({ classId: { in: validAssignedClasses } });
+                }
+                if (validTimetableClasses.length > 0) {
+                    orConditions.push({ classLevel: { in: validTimetableClasses } });
+                }
+
                 totalStudents = await prisma.studentProfile.count({
-                    where: { classId: { in: assignedClassIds }, status: 'Active', isDeleted: false }
-                });
-            } else if (timetableClassNames.length > 0) {
-                // Fallback: match by classLevel string if no classId-based assignments yet
-                totalStudents = await prisma.studentProfile.count({
-                    where: { classLevel: { in: timetableClassNames }, status: 'Active', isDeleted: false }
+                    where: {
+                        OR: orConditions,
+                        status: 'Active',
+                        isDeleted: false,
+                        schoolId: teacher.schoolId // Ensure they belong to the teacher's school
+                    }
                 });
             }
 

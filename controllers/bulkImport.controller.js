@@ -528,11 +528,44 @@ const bulkImportParents = async (req, res) => {
 };
 
 // ─── DOWNLOAD BILLING TEMPLATE ────────────────────────────────────────────────
-const downloadBillingTemplate = (req, res) => {
-    const headers = ['admissionNo', 'term', 'academicYear', 'title', 'amount'];
-    const example = ['ADM-2023-001', 'FIRST_TERM', '2023/2024', 'Tuition Fee', '50000'];
+const downloadBillingTemplate = async (req, res) => {
+    const schoolId = req.user.schoolId;
+
+    const students = await prisma.studentProfile.findMany({
+        where: { schoolId, isDeleted: false, status: 'Active' },
+        include: {
+            user: { select: { name: true } },
+            classArm: { select: { name: true } }
+        },
+        orderBy: [
+            { classArm: { name: 'asc' } },
+            { user: { name: 'asc' } }
+        ]
+    });
+
+    const headers = ['studentName', 'className', 'admissionNo', 'term', 'academicYear', 'title', 'amount'];
+    const rows = [headers];
+    
+    // Add pre-filled student rows
+    students.forEach(s => {
+        rows.push([
+            s.user?.name || '',
+            s.classArm?.name || '',
+            s.admissionNo || '',
+            '', // term
+            '', // academicYear
+            '', // title
+            ''  // amount
+        ]);
+    });
+
+    // If no students found, provide an example row
+    if (students.length === 0) {
+        rows.push(['John Doe', 'JSS 1', 'ADM-2023-001', 'FIRST_TERM', '2023/2024', 'Tuition Fee', '50000']);
+    }
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = headers.map(() => ({ wch: 20 }));
     XLSX.utils.book_append_sheet(wb, ws, 'Billing Import');
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
@@ -542,11 +575,46 @@ const downloadBillingTemplate = (req, res) => {
 };
 
 // ─── DOWNLOAD PAYMENT TEMPLATE ────────────────────────────────────────────────
-const downloadPaymentTemplate = (req, res) => {
-    const headers = ['invoiceNumber', 'amount', 'method', 'discountAmount'];
-    const example = ['INV-1234567890', '50000', 'BANK_TRANSFER', '0'];
+const downloadPaymentTemplate = async (req, res) => {
+    const schoolId = req.user.schoolId;
+
+    const invoices = await prisma.financeInvoice.findMany({
+        where: { schoolId, status: { in: ['OPEN', 'PARTIAL'] }, isDeleted: false },
+        include: {
+            student: {
+                include: {
+                    user: { select: { name: true } },
+                    classArm: { select: { name: true } }
+                }
+            }
+        },
+        orderBy: [
+            { student: { classArm: { name: 'asc' } } },
+            { student: { user: { name: 'asc' } } }
+        ]
+    });
+
+    const headers = ['studentName', 'className', 'invoiceNumber', 'balanceDue', 'amount', 'method', 'discountAmount'];
+    const rows = [headers];
+
+    invoices.forEach(inv => {
+        rows.push([
+            inv.student?.user?.name || '',
+            inv.student?.classArm?.name || '',
+            inv.invoiceNumber,
+            inv.balanceDue,
+            '', // amount
+            'BANK_TRANSFER', // default method
+            '0' // default discount
+        ]);
+    });
+
+    if (invoices.length === 0) {
+        rows.push(['John Doe', 'JSS 1', 'INV-1234567890', '50000', '50000', 'BANK_TRANSFER', '0']);
+    }
+
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet([headers, example]);
+    const ws = XLSX.utils.aoa_to_sheet(rows);
     ws['!cols'] = headers.map(() => ({ wch: 20 }));
     XLSX.utils.book_append_sheet(wb, ws, 'Payment Import');
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });

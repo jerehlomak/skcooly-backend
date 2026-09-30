@@ -27,6 +27,7 @@ const {
     getAllTemplates,
     createResultTemplate,
     updateResultTemplate,
+    updateTemplateDefault,
     deleteResultTemplate,
     getCommentRules,
     saveCommentRule,
@@ -57,6 +58,7 @@ router.get('/template', authenticateUser, getResultTemplate);
 router.post('/template', authenticateUser, authorizePermissions('ADMIN'), createResultTemplate);
 router.put('/template/:id', authenticateUser, authorizePermissions('ADMIN'), updateResultTemplate);
 router.patch('/template/:id/assign', authenticateUser, authorizePermissions('ADMIN'), assignTemplateSection);
+router.patch('/template/:id/default', authenticateUser, authorizePermissions('ADMIN'), updateTemplateDefault);
 router.delete('/template/:id', authenticateUser, authorizePermissions('ADMIN'), deleteResultTemplate);
 router.get('/class-report', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getClassReportCards);
 router.get('/admin-class', authenticateUser, authorizePermissions('ADMIN', 'TEACHER'), getAdminClassResults);

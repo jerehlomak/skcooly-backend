@@ -192,7 +192,8 @@ const submitApplication = async (req, res) => {
 
     res.status(StatusCodes.CREATED).json({
         message: 'Application submitted successfully!',
-        applicationId: application.id
+        applicationId: application.id,
+        application
     });
 };
 
@@ -332,7 +333,7 @@ const getSchoolApplications = async (req, res) => {
 // ─── DASHBOARD: Update Application Status ─────────────────────────────────
 const updateApplicationStatus = async (req, res) => {
     const { id } = req.params;
-    const { status, interviewDate, interviewTime, interviewLocation } = req.body;
+    const { status, interviewDate, interviewTime, interviewLocation, admissionNo } = req.body;
     const schoolId = req.user.schoolId;
 
     if (!['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
@@ -345,7 +346,8 @@ const updateApplicationStatus = async (req, res) => {
             status,
             interviewDate,
             interviewTime,
-            interviewLocation
+            interviewLocation,
+            admissionNo
         },
         include: { school: { select: { name: true } } }
     });

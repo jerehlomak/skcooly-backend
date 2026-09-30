@@ -2037,13 +2037,14 @@ const generateInvoice = async (req, res) => {
 
 const getInvoices = async (req, res) => {
     const { schoolId, activeBranchId } = req.user;
-    const { studentId, status, term, academicYear, search, isSent, isPrinted, page = 1, limit = 30 } = req.query;
+    const { studentId, classId, status, term, academicYear, search, isSent, isPrinted, page = 1, limit = 30 } = req.query;
 
     const where = {
         schoolId,
         isDeleted: false,
         ...(activeBranchId && { branchId: activeBranchId }),
         ...(studentId && { studentId }),
+        ...(classId && { student: { classId } }),
         ...(status && { status }),
         ...(term && { term }),
         ...(academicYear && { academicYear }),
@@ -2053,7 +2054,9 @@ const getInvoices = async (req, res) => {
             OR: [
                 { invoiceNumber: { contains: search, mode: 'insensitive' } },
                 { student: { user: { name: { contains: search, mode: 'insensitive' } } } },
-                { student: { admissionNo: { contains: search, mode: 'insensitive' } } }
+                { student: { admissionNo: { contains: search, mode: 'insensitive' } } },
+                { student: { classArm: { name: { contains: search, mode: 'insensitive' } } } },
+                { student: { parent: { user: { name: { contains: search, mode: 'insensitive' } } } } }
             ]
         })
     };
@@ -2982,10 +2985,11 @@ const getStudentBillingProfile = async (req, res) => {
     });
     if (!student || student.schoolId !== schoolId) throw new CustomError.NotFoundError('Student not found');
 
-    // Map human-readable term ("First Term") to Enum ("FIRST_TERM")
+    // Support both exact string matches (e.g., "Easter Term") and legacy enums (e.g., "FIRST_TERM")
     let feeTermScope = term;
+    let legacyFeeTermScope = null;
     if (term) {
-        feeTermScope = term.toUpperCase().replace(/\s+/g, '_');
+        legacyFeeTermScope = term.toUpperCase().replace(/\s+/g, '_');
     }
 
     // Auto-load applicable fees: WHOLE_SCHOOL or fees matching student's class (classId)
@@ -2996,7 +3000,7 @@ const getStudentBillingProfile = async (req, res) => {
                 { scope: 'WHOLE_SCHOOL' },
                 { scope: 'CLASS', classIds: { has: student.classId || '' } }
             ],
-            ...(feeTermScope && { termScope: { in: ['ANNUAL', feeTermScope] } })
+            ...(feeTermScope && { termScope: { in: ['ANNUAL', feeTermScope, legacyFeeTermScope].filter(Boolean) } })
         },
         orderBy: [{ isCompulsory: 'desc' }, { name: 'asc' }]
     });
@@ -3034,7 +3038,7 @@ const getStudentBillingProfile = async (req, res) => {
 // When feeDefinitionIds is omitted/empty, fees are auto-resolved per student the same way
 // getStudentBillingProfile does (WHOLE_SCHOOL fees + CLASS-scoped fees matching the student's class,
 // filtered by term scope), mirroring what the single-invoice flow defaults to.
-const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term, academicYear, dueDate, schoolId, activeBranchId, userId }) => {
+const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, customFees, term, academicYear, dueDate, schoolId, activeBranchId, userId }) => {
     const [financeSettings, schoolPaymentSettings, schoolSettings] = await Promise.all([
         prisma.financeSettings.findUnique({ where: { schoolId } }),
         prisma.schoolPaymentSettings.findUnique({ where: { schoolId } }),
@@ -3053,7 +3057,8 @@ const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term,
     const effectiveYear = (termLock?.locked && !termLock?.allowStaffOverride)
         ? (termLock.activeSession || academicYear || schoolSettings?.currentYear || null)
         : (academicYear || termLock?.activeSession || schoolSettings?.currentYear || null);
-    const feeTermScope = effectiveTerm ? effectiveTerm.toUpperCase().replace(/\s+/g, '_') : null;
+    const feeTermScope = effectiveTerm || null;
+    const legacyFeeTermScope = effectiveTerm ? effectiveTerm.toUpperCase().replace(/\s+/g, '_') : null;
 
     const explicitFees = (Array.isArray(feeDefinitionIds) && feeDefinitionIds.length > 0)
         ? await prisma.feeDefinition.findMany({ where: { schoolId, isActive: true, isDeleted: false, id: { in: feeDefinitionIds } } })
@@ -3064,6 +3069,13 @@ const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term,
     const autoFeesPool = explicitFees ? null : await prisma.feeDefinition.findMany({
         where: { schoolId, isActive: true, isDeleted: false, OR: [{ scope: 'WHOLE_SCHOOL' }, { scope: 'CLASS' }] }
     });
+
+    const customFeeLines = Array.isArray(customFees)
+        ? customFees
+            .map(cf => ({ type: 'CUSTOM', referenceId: null, label: String(cf.name || 'Custom Fee').trim(), quantity: 1, unitPrice: Number(cf.amount) || 0, amount: Number(cf.amount) || 0 }))
+            .filter(cf => cf.label && cf.amount > 0)
+        : [];
+    const customFeesSubTotal = customFeeLines.reduce((s, i) => s + i.amount, 0);
 
     for (const studentId of studentIds) {
         try {
@@ -3078,10 +3090,10 @@ const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term,
             const candidateFees = explicitFees || autoFeesPool.filter(f => {
                 const scopeMatch = f.scope === 'WHOLE_SCHOOL' || (f.scope === 'CLASS' && f.classIds.includes(student.classId || ''));
                 if (!scopeMatch) return false;
-                if (feeTermScope && !(f.termScope === 'ANNUAL' || f.termScope === feeTermScope)) return false;
+                if (feeTermScope && !(f.termScope === 'ANNUAL' || f.termScope === feeTermScope || f.termScope === legacyFeeTermScope)) return false;
                 return true;
             });
-            if (candidateFees.length === 0) {
+            if (candidateFees.length === 0 && customFeeLines.length === 0) {
                 results.skipped.push({ studentId, reason: 'No applicable fees' });
                 continue;
             }
@@ -3090,7 +3102,7 @@ const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term,
             // (paid or not — voided/cancelled invoices don't count and free the fee up again).
             const alreadyBilledIds = await getAlreadyBilledFeeIds(schoolId, studentId, effectiveTerm, effectiveYear);
             const fees = candidateFees.filter(f => !alreadyBilledIds.has(f.id));
-            if (fees.length === 0) {
+            if (fees.length === 0 && customFeeLines.length === 0) {
                 results.skipped.push({ studentId, reason: 'All applicable fees already invoiced for this term' });
                 continue;
             }
@@ -3099,13 +3111,14 @@ const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term,
             const scholarships = await prisma.scholarship.findMany({
                 where: { schoolId, studentId, isDeleted: false, status: 'ACTIVE' }
             });
-            let subTotal = fees.reduce((s, f) => s + f.amount * (f.quantity || 1), 0);
+            const standardSubTotal = fees.reduce((s, f) => s + f.amount * (f.quantity || 1), 0);
+            let subTotal = standardSubTotal + customFeesSubTotal;
             let discountAmount = 0;
             for (const sc of scholarships) {
                 if (sc.type === 'PERCENTAGE') {
                     discountAmount += subTotal * (sc.value / 100);
                 } else if (sc.type === 'SCHOLARSHIP' || sc.type === 'FIXED_AMOUNT') {
-                    // Student pays sc.value — discount is the difference
+                    // Student pays sc.value ?" discount is the difference
                     discountAmount = Math.max(discountAmount, subTotal - sc.value);
                 }
             }
@@ -3124,11 +3137,14 @@ const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term,
                         totalAmount, balanceDue: totalAmount, status: 'OPEN',
                         dueDate: dueDate ? new Date(dueDate) : null,
                         items: {
-                            create: fees.map(f => ({
-                                type: f.type || 'FEE', referenceId: f.id,
-                                label: f.name, quantity: f.quantity || 1,
-                                unitPrice: f.amount, amount: f.amount * (f.quantity || 1)
-                            }))
+                            create: [
+                                ...fees.map(f => ({
+                                    type: f.type || 'FEE', referenceId: f.id,
+                                    label: f.name, quantity: f.quantity || 1,
+                                    unitPrice: f.amount, amount: f.amount * (f.quantity || 1)
+                                })),
+                                ...customFeeLines
+                            ]
                         }
                     }
                 });
@@ -3156,14 +3172,14 @@ const generateInvoicesForStudents = async ({ studentIds, feeDefinitionIds, term,
 };
 
 const bulkGenerateInvoices = async (req, res) => {
-    const { studentIds, feeDefinitionIds, term, academicYear, dueDate } = req.body;
+    const { studentIds, feeDefinitionIds, customFees, term, academicYear, dueDate } = req.body;
     const { schoolId, activeBranchId } = req.user;
 
     if (!Array.isArray(studentIds) || studentIds.length === 0) {
         throw new CustomError.BadRequestError('studentIds array is required');
     }
 
-    const results = await generateInvoicesForStudents({ studentIds, feeDefinitionIds, term, academicYear, dueDate, schoolId, activeBranchId, userId: req.user.userId });
+    const results = await generateInvoicesForStudents({ studentIds, feeDefinitionIds, customFees, term, academicYear, dueDate, schoolId, activeBranchId, userId: req.user.userId });
     res.status(StatusCodes.CREATED).json({ results, msg: `${results.created.length} invoices generated` });
 };
 

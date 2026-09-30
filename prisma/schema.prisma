@@ -1374,6 +1374,7 @@ model ResultTemplate {
   schoolId          String
   name              String // e.g. "Template 1", "Original"
   isActive          Boolean  @default(false)
+  isDefault         Boolean  @default(false)
   resultType        String   @default("SCORE_BASED") // "SCORE_BASED", "COMMENT_BASED", "TRANSCRIPT"
   config            Json // Stores all the toggles, colors, etc.
   assignedSectionId String?
@@ -2105,12 +2106,7 @@ enum StudentTypeScope {
   BOTH
 }
 
-enum TermScope {
-  FIRST_TERM
-  SECOND_TERM
-  THIRD_TERM
-  ANNUAL
-}
+
 
 enum FeeScopeChoice {
   WHOLE_SCHOOL
@@ -2132,7 +2128,7 @@ model FeeDefinition {
   studentType      StudentTypeScope @default(BOTH)
   scope            FeeScopeChoice   @default(WHOLE_SCHOOL)
   classIds         String[] // specific class arm IDs when scope = CLASS
-  termScope        TermScope        @default(ANNUAL)
+  termScope        String           @default("ANNUAL")
   isCompulsory     Boolean          @default(true)
   showOnPortal     Boolean          @default(true)
   allowInstallment Boolean          @default(false)
@@ -2979,6 +2975,7 @@ model Application {
   applicantName  String
   applicantEmail String?
   applicantPhone String?
+  admissionNo    String? // Manually assigned upon approval
 
   passportUrl          String?
   birthCertificateUrl  String?

@@ -156,7 +156,15 @@ const getParent = async (req, res) => {
     if (!user || !user.parentProfile) {
         throw new CustomError.NotFoundError(`No parent found with id: ${id}`);
     }
-    res.status(StatusCodes.OK).json({ parent: user.parentProfile, user });
+    
+    // Hydrate fields for bulk-uploaded parents (fallback to user.name and parentProfile.phone)
+    const hydratedParent = {
+        ...user.parentProfile,
+        fatherName: user.parentProfile.fatherName || (!user.parentProfile.motherName ? user.name : null) || '',
+        fatherPhone: user.parentProfile.fatherPhone || (!user.parentProfile.motherPhone ? user.parentProfile.phone : null) || ''
+    };
+
+    res.status(StatusCodes.OK).json({ parent: hydratedParent, user });
 };
 
 // ─── UPDATE PARENT ────────────────────────────────────────────────────────────
