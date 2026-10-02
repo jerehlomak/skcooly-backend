@@ -54,6 +54,18 @@ model SchoolSettings {
   employmentLetterTemplate   Json?
   parentAdmissionRequiresPin Boolean @default(true)
 
+  // ID Card module (designs + settings for student & staff cards)
+  idCardConfig Json?
+
+  // Timetable alert/reminder rules (audiences, lead minutes, channels)
+  timetableAlertConfig Json?
+
+  // Lesson note & curriculum module settings
+  lessonNoteConfig Json?
+
+  // CBT module settings (admin-controlled policies, defaults and teacher permissions)
+  cbtConfig Json?
+
   // SMTP Settings
   smtpHost String?
   smtpPort Int?
@@ -93,6 +105,7 @@ model Section {
   name      String // e.g. "Primary", "Junior Secondary"
   shortCode String? // e.g. "PRI", "JSS"
   type      String? // e.g. "Primary", "Secondary"
+  headUserId String? // head of section (sees this section's timetables)
 
   isDeleted Boolean   @default(false)
   deletedAt DateTime?
@@ -790,6 +803,10 @@ model AttendanceRecord {
   status           AttendanceStatus @default(PRESENT)
   note             String?
   markedBy         String
+  signInTime       DateTime?
+  signOutTime      DateTime?
+  signInMethod     String? // CARD_SCAN | TEACHER_REGISTER | ADMIN_REGISTER
+  signOutMethod    String?
   createdAt        DateTime         @default(now())
   updatedAt        DateTime         @updatedAt
   student          StudentProfile   @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
@@ -1852,11 +1869,21 @@ model QuestionBank {
   schoolId      String
   subjectId     String
   teacherId     String?
-  questionText  String   @db.Text
-  type          String // e.g., "MULTIPLE_CHOICE", "TRUE_FALSE", "ESSAY"
-  options       Json? // Array of options
-  correctAnswer String?
+  ownerUserId   String?
+  ownerName     String?
+  classId       String? // optional class tag so banks can be filtered per class
+  questionText  String   @db.Text // sanitised HTML: text, images, SVG diagrams, formulas (<span data-math>)
+  type          String // MULTIPLE_CHOICE | TRUE_FALSE | FILL_BLANK | ESSAY
+  options       Json? // [{ key: "A", text: "<html>" }]
+  correctAnswer String?  @db.Text // option key, TRUE/FALSE, or accepted answers separated by |
   marks         Int      @default(1)
+  explanation   String?  @db.Text
+  topic         String?
+  difficulty    String   @default("MEDIUM") // EASY | MEDIUM | HARD
+  tags          String[] @default([])
+  source        String   @default("MANUAL") // MANUAL | AI | IMPORT
+  sizeBytes     Int      @default(0) // counts toward the school's storage allowance
+  isDeleted     Boolean  @default(false)
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
 
@@ -1864,30 +1891,42 @@ model QuestionBank {
   teacher       TeacherProfile? @relation(fields: [teacherId], references: [id])
   examQuestions ExamQuestion[]
 
-  @@index([schoolId])
+  @@index([schoolId, subjectId, isDeleted])
+  @@index([schoolId, ownerUserId, isDeleted])
 }
 
 model Exam {
-  id              String    @id @default(uuid())
-  schoolId        String
-  classId         String
-  subjectId       String
-  title           String
-  instructions    String?   @db.Text
-  durationMinutes Int       @default(60)
-  startTime       DateTime?
-  endTime         DateTime?
-  passingMarks    Int       @default(40)
-  status          String    @default("DRAFT") // DRAFT, PUBLISHED, CONCLUDED
-  createdAt       DateTime  @default(now())
-  updatedAt       DateTime  @updatedAt
+  id               String    @id @default(uuid())
+  schoolId         String
+  classId          String
+  subjectId        String
+  title            String
+  instructions     String?   @db.Text
+  durationMinutes  Int       @default(60)
+  startTime        DateTime?
+  endTime          DateTime?
+  passingMarks     Int       @default(40)
+  status           String    @default("DRAFT") // DRAFT, PUBLISHED, CONCLUDED
+  term             String?
+  sessionName      String?
+  ownerUserId      String?
+  ownerName        String?
+  shuffleQuestions Boolean   @default(false)
+  shuffleOptions   Boolean   @default(false)
+  resultRelease    String    @default("INHERIT") // INHERIT (school policy) | HIDDEN | RELEASED — admin only
+  settings         Json? // per-exam overrides within the admin's limits (warnAtMinutes, allowBackNav…)
+  isDeleted        Boolean   @default(false)
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  class         Class          @relation(fields: [classId], references: [id], onDelete: Cascade)
-  subject       Subject        @relation(fields: [subjectId], references: [id], onDelete: Cascade)
-  examQuestions ExamQuestion[]
-  cbtResults    CBTResult[]
+  class          Class               @relation(fields: [classId], references: [id], onDelete: Cascade)
+  subject        Subject             @relation(fields: [subjectId], references: [id], onDelete: Cascade)
+  examQuestions  ExamQuestion[]
+  cbtResults     CBTResult[]
+  accommodations ExamAccommodation[]
 
   @@index([schoolId, classId])
+  @@index([schoolId, sessionName, term])
 }
 
 model ExamQuestion {
@@ -1902,18 +1941,79 @@ model ExamQuestion {
   @@unique([examId, questionId])
 }
 
+// One row per student per exam: the live attempt AND the final result.
 model CBTResult {
-  id               String   @id @default(uuid())
+  id               String    @id @default(uuid())
   examId           String
   studentProfileId String
-  answers          Json? // Student's submitted answers
-  totalScore       Float    @default(0)
-  submittedAt      DateTime @default(now())
+  status           String    @default("SUBMITTED") // IN_PROGRESS | SUBMITTED | LOCKED
+  answers          Json? // { [questionId]: answer }
+  itemScores       Json? // { [questionId]: auto-marked score }
+  essayMarks       Json? // { [questionId]: { score, comment } } — set by the teacher
+  objectiveScore   Float     @default(0)
+  essayScore       Float     @default(0)
+  maxScore         Float     @default(0)
+  totalScore       Float     @default(0) // percentage 0-100
+  markingStatus    String    @default("COMPLETE") // COMPLETE | PENDING (essays waiting for a teacher)
+  startedAt        DateTime?
+  deadlineAt       DateTime? // server-authoritative end time (start + duration + extra time)
+  extraMinutes     Int       @default(0)
+  deviceId         String? // device the attempt is bound to
+  lockReason       String?
+  lastSeenAt       DateTime?
+  submitMethod     String? // MANUAL | TIMEOUT | ADMIN
+  syncedOffline    Boolean   @default(false)
+  clientFinishedAt DateTime?
+  submittedAt      DateTime?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
   exam    Exam           @relation(fields: [examId], references: [id], onDelete: Cascade)
   student StudentProfile @relation(fields: [studentProfileId], references: [id], onDelete: Cascade)
 
   @@unique([examId, studentProfileId])
+  @@index([studentProfileId, status])
+}
+
+// Per-student exceptions: extra time, or exempted from the exam altogether.
+model ExamAccommodation {
+  id               String   @id @default(uuid())
+  examId           String
+  studentProfileId String
+  extraMinutes     Int      @default(0)
+  exempted         Boolean  @default(false)
+  note             String?
+  createdBy        String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+
+  @@unique([examId, studentProfileId])
+}
+
+// Audit trail for exam security events (device conflicts, releases, resets…)
+model ExamEvent {
+  id               String   @id @default(uuid())
+  schoolId         String
+  examId           String
+  studentProfileId String
+  type             String // STARTED | DEVICE_CONFLICT | LOCKED | RELEASED | RESET | EXTRA_TIME | SUBMITTED | OFFLINE_SYNC
+  detail           String?
+  actorUserId      String?
+  createdAt        DateTime @default(now())
+
+  @@index([examId, studentProfileId])
+  @@index([schoolId, createdAt])
+}
+
+model CbtAiUsage {
+  id     String @id @default(uuid())
+  userId String
+  day    String // YYYY-MM-DD
+  count  Int    @default(0)
+
+  @@unique([userId, day])
 }
 
 model Assignment {
@@ -2688,8 +2788,16 @@ model StaffAttendance {
   checkInTime  DateTime?
   checkOutTime DateTime?
   status       StaffAttendanceStatus @default(ABSENT)
-  markedBy     String                @default("QR") // "QR" | "MANUAL" | "ADMIN_OVERRIDE"
+  markedBy     String                @default("QR") // "QR" | "MANUAL" | "ADMIN_OVERRIDE" | "WALL_QR" | "AUTO"
   note         String?
+  signInMethod  String? // CARD_SCAN | WALL_QR | ADMIN_REGISTER
+  signOutMethod String?
+  lateMinutes       Int    @default(0) // minutes after the resume time at sign-in
+  earlyLeaveMinutes Int    @default(0) // minutes before closing time at sign-out
+  inLat        Float?
+  inLng        Float?
+  outLat       Float?
+  outLng       Float?
   createdAt    DateTime              @default(now())
   updatedAt    DateTime              @updatedAt
 
@@ -2751,7 +2859,92 @@ model AttendanceSettings {
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
+  // staff working hours
+  staffResumeTime       String   @default("08:00")
+  staffLateAfterTime    String   @default("08:15")
+  staffClosingTime      String   @default("16:00")
+  staffSignInOpensTime  String   @default("05:30")
+  workDays              String[] @default(["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"])
+  holidays              String[] @default([]) // "YYYY-MM-DD" days the school is closed
+  minSessionMinutes     Int      @default(5)
+  autoMarkStaffAbsent   Boolean  @default(true)
+  // student sign-out
+  studentSignOutEnabled Boolean  @default(true)
+  studentClosingTime    String   @default("14:00")
+  // school location (geofence for self sign-in)
+  schoolLat             Float?
+  schoolLng             Float?
+  geoRadiusMeters       Int      @default(150)
+  maxGpsAccuracyMeters  Int      @default(150)
+  requireLocationForSelfScan Boolean @default(true)
+  // wall QR
+  wallQrEnabled         Boolean  @default(true)
+  wallQrVersion         Int      @default(1)
+  wallQrRotatedAt       DateTime @default(now())
+  wallQrAutoRotateDays  Int      @default(0)
+  // alerts and payroll
+  alertConfig           Json?
+  autoDeductInPayroll   Boolean  @default(false)
+  deductionPolicy       Json?
+
   school School @relation(fields: [schoolId], references: [id], onDelete: Cascade)
+}
+
+/// Every sign-in / sign-out / marking event, for the admin activity feed and audit.
+model AttendanceEvent {
+  id             String   @id @default(uuid())
+  schoolId       String
+  branchId       String?
+  userType       String // "staff" | "student"
+  userId         String // TeacherProfile.id or StudentProfile.id
+  userName       String
+  classId        String?
+  className      String?
+  action         String // SIGN_IN | SIGN_OUT | MARKED | REJECTED
+  method         String // CARD_SCAN | WALL_QR | TEACHER_REGISTER | ADMIN_REGISTER | AUTO
+  status         String? // resulting PRESENT | LATE | ABSENT …
+  lateMinutes    Int?
+  lat            Float?
+  lng            Float?
+  distanceMeters Int?
+  deviceInfo     String?
+  actorUserId    String?
+  actorName      String?
+  note           String?
+  occurredAt     DateTime @default(now())
+
+  @@index([schoolId, occurredAt])
+  @@index([schoolId, userType, userId, occurredAt])
+}
+
+/// Per-staff attendance arrangement: personal schedule and salary-deduction rules (overrides the school default).
+model StaffAttendancePolicy {
+  id               String   @id @default(uuid())
+  schoolId         String
+  staffId          String   @unique // TeacherProfile.id
+  exempt           Boolean  @default(false) // never marked late/absent, never deducted
+  useSchoolSchedule Boolean @default(true)
+  resumeTime       String?
+  lateAfterTime    String?
+  closingTime      String?
+  workDays         String[] @default([])
+  useSchoolDeduction Boolean @default(true)
+  deduction        Json? // same shape as AttendanceSettings.deductionPolicy
+  updatedAt        DateTime @updatedAt
+  createdAt        DateTime @default(now())
+
+  @@index([schoolId])
+}
+
+/// A user's own attendance alert preferences (teacher reminders, parent alerts).
+model AttendancePreference {
+  id        String   @id @default(uuid())
+  schoolId  String
+  userId    String   @unique
+  config    Json
+  updatedAt DateTime @updatedAt
+
+  @@index([schoolId])
 }
 
 enum StaffAttendanceStatus {
@@ -2759,6 +2952,7 @@ enum StaffAttendanceStatus {
   LATE
   HALF_DAY
   ABSENT
+  EXCUSED
 }
 
 // ─── LEDGER (INCOME & EXPENSES) ─────────────────────────────────────────────
@@ -2975,7 +3169,9 @@ model Application {
   applicantName  String
   applicantEmail String?
   applicantPhone String?
-  admissionNo    String? // Manually assigned upon approval
+  referenceNo    String? @unique // Issued automatically on submission — the only number an applicant gets at that stage
+  admissionNo    String? // Admission no. (or staff ID for employment) — assigned by admin after interview/approval
+  admittedClass  String? // Class admitted into (or position for employment) — assigned by admin; may differ from the class applied for
 
   passportUrl          String?
   birthCertificateUrl  String?
@@ -3214,3 +3410,163 @@ model PosSaleItem {
   @@index([inventoryItemId])
 }
 
+
+// ─── TIMETABLE MODULE (v2) ───────────────────────────────────────────────────
+
+/// Generation settings. Most specific scope wins: CLASS > SECTION > SCHOOL.
+model TimetableConfig {
+  id                         String   @id @default(uuid())
+  schoolId                   String
+  scope                      String // SCHOOL | SECTION | CLASS
+  scopeId                    String   @default("") // sectionId / classId, empty for SCHOOL
+  days                       String[] // e.g. ["Monday", ... "Saturday"]
+  startTime                  String   @default("08:00") // HH:mm (24h)
+  periodsPerDay              Int      @default(8)
+  periodDuration             Int      @default(40) // minutes
+  breaks                     Json     @default("[]") // [{ afterPeriod, minutes, label }]
+  subjectPlan                Json     @default("{}") // { [subjectId]: { weekly, double, triple } }
+  maxPeriodsPerSubjectPerDay Int      @default(2)
+  createdAt                  DateTime @default(now())
+  updatedAt                  DateTime @updatedAt
+
+  @@unique([schoolId, scope, scopeId])
+}
+
+/// A timetable document: the weekly class timetable of a term/session, or an exam / activity schedule.
+model Timetable {
+  id          String    @id @default(uuid())
+  schoolId    String
+  name        String
+  kind        String    @default("CLASS") // CLASS | EXAM | ACTIVITY
+  examType    String? // WAEC | NECO | COMMON_ENTRANCE | BECE | SCHOOL_EXAM | MOCK | OTHER
+  sessionName String?
+  term        String?
+  startDate   DateTime?
+  endDate     DateTime?
+  status      String    @default("DRAFT") // DRAFT | PUBLISHED | ARCHIVED
+  description String?
+  layouts     Json      @default("{}") // { [classId]: { days: string[], periods: [{ index, type, start, end, label }] } }
+  createdById String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+  isDeleted   Boolean   @default(false)
+  deletedAt   DateTime?
+
+  slots TimetableSlot[]
+
+  @@index([schoolId, kind, status, isDeleted])
+}
+
+model TimetableSlot {
+  id          String    @id @default(uuid())
+  schoolId    String
+  timetableId String
+  timetable   Timetable @relation(fields: [timetableId], references: [id], onDelete: Cascade)
+  classId     String
+  day         String? // weekly slots
+  date        DateTime? @db.Date // exam / activity slots
+  period      Int       @default(0) // 1-based lesson order (weekly)
+  slotType    String    @default("LESSON") // LESSON | EXAM | ACTIVITY
+  startTime   String // HH:mm
+  endTime     String // HH:mm
+  subjectId   String?
+  title       String // subject / paper / activity name
+  teacherId   String? // TeacherProfile.id (teacher or invigilator)
+  teacherName String?
+  room        String?
+  blockId     String? // groups double / triple periods
+  color       String?
+  note        String?
+  createdAt   DateTime  @default(now())
+  updatedAt   DateTime  @updatedAt
+
+  @@index([timetableId, classId])
+  @@index([schoolId, teacherId, day])
+  @@index([timetableId, date])
+}
+
+/// A reminder a user (or an admin on their behalf) set for a date/time.
+model TimetableReminder {
+  id             String    @id @default(uuid())
+  schoolId       String
+  userId         String // who gets reminded
+  createdById    String
+  createdByAdmin Boolean   @default(false)
+  title          String
+  note           String?
+  remindAt       DateTime
+  channels       String[] // NOTIFICATION | EMAIL | WHATSAPP
+  status         String    @default("PENDING") // PENDING | SENDING | SENT | FAILED | CANCELLED
+  sentAt         DateTime?
+  createdAt      DateTime  @default(now())
+
+  @@index([status, remindAt])
+  @@index([schoolId, userId])
+}
+
+/// De-duplication ledger so a period alert is sent once even with several server instances.
+model TimetableAlertLog {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  createdAt DateTime @default(now())
+}
+
+/// Per-user in-app notification (the existing Notification model is school-wide / admin-only).
+model UserNotification {
+  id        String   @id @default(uuid())
+  schoolId  String
+  userId    String
+  title     String
+  message   String
+  link      String?
+  type      String   @default("INFO")
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  @@index([userId, isRead, createdAt])
+}
+
+// ─── LESSON NOTE & CURRICULUM MODULE ─────────────────────────────────────────
+
+/// A lesson note / scheme of work / curriculum / any teaching document: AI-generated, typed by hand, or an uploaded PDF/Word file.
+model AcademicDocument {
+  id           String    @id @default(uuid())
+  schoolId     String
+  ownerUserId  String
+  ownerName    String?
+  docType      String // LESSON_NOTE | LESSON_PLAN | SCHEME_OF_WORK | CURRICULUM | CUSTOM
+  source       String // AI | MANUAL | UPLOAD
+  title        String
+  contentHtml  String?   @db.Text // editable body (AI / manual)
+  fileUrl      String? // uploaded original (Cloudinary, authenticated)
+  filePublicId String?
+  fileName     String?
+  mimeType     String?
+  sizeBytes    Int       @default(0) // counts toward the school's storage allowance
+  term         String?
+  week         Int?
+  sessionName  String?
+  classId      String?
+  className    String?
+  subjectId    String?
+  subjectName  String?
+  curriculum   String? // e.g. Nigerian (NERDC), British National Curriculum
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+  isDeleted    Boolean   @default(false)
+  deletedAt    DateTime?
+
+  @@index([schoolId, isDeleted, docType])
+  @@index([schoolId, ownerUserId, isDeleted])
+  @@index([schoolId, sessionName, term, week])
+}
+
+/// Per-user daily AI generation counter (enforces the school's daily limit).
+model AcademicAiUsage {
+  id     String @id @default(uuid())
+  userId String
+  day    String // YYYY-MM-DD
+  count  Int    @default(0)
+
+  @@unique([userId, day])
+}

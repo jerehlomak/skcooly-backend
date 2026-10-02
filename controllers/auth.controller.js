@@ -5,6 +5,8 @@ const { StatusCodes } = require('http-status-codes')
 const CustomError = require('../errors')
 const { createTokenUser, attachCookiesToResponse } = require('../utils')
 const { resolveUserAccess } = require('../services/permissions.service')
+const { mergeConfig: mergeCbtConfig } = require('../services/cbt-content.service')
+const { findBlockingAttempt, lockForSecondDevice } = require('../services/cbt-attempt.service')
 
 const register = async (req, res) => {
     const { email, name, password } = req.body
@@ -118,6 +120,23 @@ const login = async (req, res) => {
             msg: `Your portal has been restricted. Please contact the school administration.`,
             reason
         });
+    }
+
+    // CBT: a student who is mid-exam on one device can't be signed in from another
+    if (user.role === 'STUDENT' && user.studentProfile) {
+        const cbtCfg = mergeCbtConfig(schoolSettings?.cbtConfig)
+        if (cbtCfg.singleDeviceLock) {
+            const blocking = await findBlockingAttempt(user.studentProfile.id, req.body.deviceId || null)
+            if (blocking) {
+                await lockForSecondDevice(blocking, cbtCfg)
+                return res.status(423).json({
+                    examInProgress: true,
+                    msg: cbtCfg.lockOnSecondDevice
+                        ? 'This account is writing an exam on another device. You cannot sign in from here, and the exam has been locked until the school administrator releases it.'
+                        : 'This account is writing an exam on another device. You can sign in again once it is finished.',
+                })
+            }
+        }
     }
 
     const tokenUser = createTokenUser(user)

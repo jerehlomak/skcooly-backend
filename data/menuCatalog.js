@@ -43,7 +43,14 @@ module.exports = [
         ],
     },
     { title: 'Cards & PINs', path: '/dashboard/pins' },
-    { title: 'ID Card', path: '/dashboard/settings/id-card-setup' },
+    {
+        title: 'ID Card',
+        children: [
+            { title: 'Generate ID Cards', path: '/dashboard/id-card/generate' },
+            { title: 'Card Designer', path: '/dashboard/id-card/designer' },
+            { title: 'ID Card Settings', path: '/dashboard/id-card/settings' },
+        ],
+    },
     {
         title: 'Result Management',
         children: [
@@ -74,6 +81,7 @@ module.exports = [
         children: [
             { title: 'Curriculum & Scheme', path: '/dashboard/academics/curriculum' },
             { title: 'Lesson Notes', path: '/dashboard/academics/lesson-notes' },
+            { title: 'Lesson Note Settings', path: '/dashboard/academics/doc-settings' },
             { title: 'CBT Assessments', path: '/teacher/cbt' },
             { title: 'CBT Dashboard', path: '/dashboard/academics/cbt' },
             { title: 'CBT Policies', path: '/dashboard/settings/cbt-policies' },
@@ -85,7 +93,6 @@ module.exports = [
             { title: 'All Students', path: '/dashboard/students/all' },
             { title: 'Add New', path: '/dashboard/students/add' },
             { title: 'Bulk Import', path: '/dashboard/bulk-import' },
-            { title: 'Student ID Cards', path: '/dashboard/students/id-cards' },
             { title: 'Promote Students', path: '/dashboard/students/promote' },
         ],
     },
@@ -188,7 +195,14 @@ module.exports = [
             { title: 'Settings', path: '/dashboard/attendance/settings' },
         ],
     },
-    { title: 'Timetable', path: '/dashboard/timetable' },
+    {
+        title: 'Timetable',
+        children: [
+            { title: 'Timetables', path: '/dashboard/timetable' },
+            { title: 'Timetable Settings', path: '/dashboard/timetable/settings' },
+            { title: 'Reminders', path: '/dashboard/timetable/reminders' },
+        ],
+    },
     { title: 'Homework', path: '/dashboard/homework' },
     { title: 'Behaviour & Skills', path: '/dashboard/behaviour' },
     { title: 'Online Store & POS', path: '/dashboard/store' },

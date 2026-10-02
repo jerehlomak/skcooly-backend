@@ -139,4 +139,136 @@ const generateIDCardPDF = async (req, res) => {
     }
 };
 
-module.exports = { generateIDCardPDF };
+// ─── ID CARD MODULE (data for the card designer / generator / digital card) ───
+
+const jwt = require('jsonwebtoken');
+
+const ensureQrSecret = () => {
+    if (!process.env.QR_SECRET) throw new CustomError.InternalServerError('QR_SECRET is missing from configuration');
+};
+
+const signQrToken = (schoolId, userType, userId, branchId) =>
+    jwt.sign({ userId, userType, schoolId, branchId: branchId || null }, process.env.QR_SECRET, { expiresIn: '1y' });
+
+const loadHolders = async (schoolId, userType, classId) => {
+    if (userType === 'student') {
+        const rows = await prisma.studentProfile.findMany({
+            where: { schoolId, isDeleted: false, status: 'Active', ...(classId && { classId }) },
+            include: { user: { select: { name: true } }, classArm: { select: { id: true, name: true } } },
+            orderBy: [{ classLevel: 'asc' }, { user: { name: 'asc' } }],
+        });
+        return rows.map(s => ({
+            id: s.id,
+            userType: 'student',
+            name: s.user.name,
+            idNumber: s.publicId || s.admissionNo,
+            classId: s.classId,
+            className: s.classArm?.name || s.classLevel,
+            photo: s.profilePicture || null,
+            gender: s.gender,
+            bloodGroup: s.bloodGroup,
+            dateOfBirth: s.dateOfBirth,
+            phone: s.phone,
+            address: s.address,
+        }));
+    }
+    const rows = await prisma.teacherProfile.findMany({
+        where: { schoolId, isDeleted: false, status: 'Active' },
+        include: { user: { select: { name: true } } },
+        orderBy: { user: { name: 'asc' } },
+    });
+    return rows.map(t => ({
+        id: t.id,
+        userType: 'staff',
+        name: t.user.name,
+        idNumber: t.publicId || t.employeeId,
+        classId: null,
+        className: t.department || t.staffType || 'Staff',
+        photo: t.photoUrl || null,
+        gender: t.gender,
+        bloodGroup: null,
+        dateOfBirth: t.dateOfBirth,
+        phone: t.phone,
+        address: t.address,
+    }));
+};
+
+const attachQr = async (schoolId, userType, holders) => {
+    const qrs = await prisma.qRCode.findMany({
+        where: { schoolId, userType, isActive: true, userId: { in: holders.map(h => h.id) } },
+        orderBy: { createdAt: 'asc' },
+    });
+    const latest = new Map(qrs.map(q => [q.userId, q])); // later rows overwrite earlier → newest wins
+    return Promise.all(holders.map(async h => {
+        const qr = latest.get(h.id);
+        return {
+            ...h,
+            hasQr: !!qr,
+            issuedAt: qr?.createdAt || null,
+            qrDataUrl: qr ? await QRCode.toDataURL(qr.qrToken, { errorCorrectionLevel: 'L', margin: 0, width: 240 }) : null,
+        };
+    }));
+};
+
+// GET /id-cards/holders?userType=student|staff&classId=
+const getIdCardHolders = async (req, res) => {
+    const { userType, classId } = req.query;
+    if (!['student', 'staff'].includes(userType)) throw new CustomError.BadRequestError('userType must be student or staff');
+    const schoolId = req.user.schoolId;
+
+    const holders = await attachQr(schoolId, userType, await loadHolders(schoolId, userType, classId));
+    res.status(StatusCodes.OK).json({ holders, count: holders.length });
+};
+
+// POST /id-cards/generate { userType } — binds a QR token to every registered holder that lacks one
+const generateIdCards = async (req, res) => {
+    const { userType } = req.body;
+    if (!['student', 'staff'].includes(userType)) throw new CustomError.BadRequestError('userType must be student or staff');
+    ensureQrSecret();
+    const schoolId = req.user.schoolId;
+
+    const holders = await loadHolders(schoolId, userType);
+    const existing = await prisma.qRCode.findMany({
+        where: { schoolId, userType, isActive: true, userId: { in: holders.map(h => h.id) } },
+        select: { userId: true },
+    });
+    const have = new Set(existing.map(q => q.userId));
+    const missing = holders.filter(h => !have.has(h.id));
+
+    if (missing.length) {
+        await prisma.qRCode.createMany({
+            data: missing.map(h => ({
+                schoolId, branchId: req.user.branchId || null, userType, userId: h.id,
+                qrToken: signQrToken(schoolId, userType, h.id, req.user.branchId),
+            })),
+        });
+    }
+    res.status(StatusCodes.OK).json({ msg: `${holders.length} ${userType} ID cards ready`, total: holders.length, created: missing.length });
+};
+
+// GET /id-cards/me — the logged-in student/staff member's own (digital) card
+const getMyIdCard = async (req, res) => {
+    const schoolId = req.user.schoolId;
+    let userType, profileId;
+
+    if (req.user.role === 'STUDENT') {
+        const p = await prisma.studentProfile.findFirst({ where: { schoolId, isDeleted: false, userId: req.user.userId }, select: { id: true } });
+        userType = 'student'; profileId = p?.id;
+    } else {
+        const p = await prisma.teacherProfile.findFirst({ where: { schoolId, isDeleted: false, userId: req.user.userId }, select: { id: true } });
+        userType = 'staff'; profileId = p?.id;
+    }
+    if (!profileId) throw new CustomError.NotFoundError('No ID card profile found for your account');
+
+    let [holder] = await attachQr(schoolId, userType, (await loadHolders(schoolId, userType)).filter(h => h.id === profileId));
+    if (!holder.hasQr) {
+        ensureQrSecret();
+        await prisma.qRCode.create({
+            data: { schoolId, branchId: req.user.branchId || null, userType, userId: profileId, qrToken: signQrToken(schoolId, userType, profileId, req.user.branchId) },
+        });
+        [holder] = await attachQr(schoolId, userType, [holder]);
+    }
+    res.status(StatusCodes.OK).json({ holder });
+};
+
+module.exports = { generateIDCardPDF, getIdCardHolders, generateIdCards, getMyIdCard };

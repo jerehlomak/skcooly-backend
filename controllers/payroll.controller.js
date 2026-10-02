@@ -466,6 +466,18 @@ const createPayrollRun = asyncHandler(async function(req, res) {
         return res.status(400).json({ success: false, message: 'No active staff found for this school. Add staff members and configure their payroll settings first.' });
     }
 
+    // Attendance: lateness / absence deductions for the month, when the school has turned that on
+    let attendanceDeductions = {};
+    try {
+        const { getSettings } = require('../services/attendance-core.service');
+        if ((await getSettings(sid)).autoDeductInPayroll) {
+            const mm = String(parseInt(month)).padStart(2, '0');
+            const last = String(new Date(Date.UTC(parseInt(year), parseInt(month), 0)).getUTCDate()).padStart(2, '0');
+            const grossByStaff = Object.fromEntries(allStaff.map(s => [s.id, s.payrollSettings.filter(p => p.type === 'earning').reduce((n, p) => n + p.amount, 0)]));
+            attendanceDeductions = await require('../services/attendance-payroll.service').computeStaffDeductions({ schoolId: sid, from: `${year}-${mm}-01`, to: `${year}-${mm}-${last}`, grossByStaff });
+        }
+    } catch (e) { console.error('[payroll] attendance deductions skipped:', e.message); }
+
     // Compute totals
     let totalGross = 0;
     let totalDeductions = 0;
@@ -494,6 +506,10 @@ const createPayrollRun = asyncHandler(async function(req, res) {
                 }
             });
         }
+
+        (attendanceDeductions[s.id]?.lines || []).forEach(l => {
+            if (l.amount > 0) { deductionTotal += l.amount; deductionsBreakdown.push({ name: l.name, amount: l.amount, attendance: true }); }
+        });
 
         const net = Math.max(0, gross - deductionTotal);
 

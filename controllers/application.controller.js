@@ -5,6 +5,21 @@ const { uploadApplicationDocument } = require('../services/cloudinary-upload.ser
 const { sendApplicationApprovedEmail } = require('../services/application-email.service');
 const { generateUniquePins } = require('../utils/pinCodeGenerator');
 
+// Issued automatically on submission. This is the ONLY number an applicant receives at that stage —
+// admission / employee numbers are assigned by the admin after interview and approval.
+const generateReferenceNo = async (tx, applicationType) => {
+    const prefix = applicationType === 'EMPLOYMENT' ? 'EMP' : 'ADM';
+    const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+    for (let attempt = 0; attempt < 10; attempt++) {
+        let code = '';
+        for (let i = 0; i < 8; i++) code += alphabet[Math.floor(Math.random() * alphabet.length)];
+        const referenceNo = `REF-${prefix}-${code}`;
+        const existing = await tx.application.findUnique({ where: { referenceNo }, select: { id: true } });
+        if (!existing) return referenceNo;
+    }
+    throw new CustomError.BadRequestError('Could not generate a reference number. Please try again.');
+};
+
 // ─── PUBLIC: Validate PIN for Application ─────────────────────────────────
 const validateApplicationPin = async (req, res) => {
     const { pinCode, applicationType, action } = req.body; // action = 'APPLY' | 'CHECK_STATUS'
@@ -90,7 +105,9 @@ const validateApplicationPin = async (req, res) => {
 
 // ─── PUBLIC: Submit Application ───────────────────────────────────────────
 const submitApplication = async (req, res) => {
-    const { pinCode, applicationType, applicantName, applicantEmail, applicantPhone } = req.body;
+    const { pinCode, applicationType, applicantName: rawApplicantName, applicantEmail, applicantPhone } = req.body;
+    // Name fields are no longer forced compulsory on the form, so fall back gracefully
+    const applicantName = String(rawApplicantName || '').trim() || 'Applicant';
     let formData = req.body.formData;
 
     if (typeof formData === 'string') {
@@ -101,7 +118,7 @@ const submitApplication = async (req, res) => {
         }
     }
 
-    if (!pinCode || !applicationType || !applicantName) {
+    if (!pinCode || !applicationType) {
         throw new CustomError.BadRequestError('Missing required application fields.');
     }
 
@@ -172,6 +189,7 @@ const submitApplication = async (req, res) => {
                 passportUrl,
                 birthCertificateUrl,
                 otherCertificatesUrl,
+                referenceNo: await generateReferenceNo(tx, applicationType),
                 status: 'PENDING'
             }
         });
@@ -199,7 +217,9 @@ const submitApplication = async (req, res) => {
 
 // ─── ADMIN: Submit Application (Bypasses PIN requirement) ─────────────────────
 const adminSubmitApplication = async (req, res) => {
-    const { applicationType, applicantName, applicantEmail, applicantPhone } = req.body;
+    const { applicationType, applicantName: rawApplicantName, applicantEmail, applicantPhone } = req.body;
+    // Name fields are no longer forced compulsory on the form, so fall back gracefully
+    const applicantName = String(rawApplicantName || '').trim() || 'Applicant';
     let formData = req.body.formData;
 
     if (typeof formData === 'string') {
@@ -210,7 +230,7 @@ const adminSubmitApplication = async (req, res) => {
         }
     }
 
-    if (!applicationType || !applicantName) {
+    if (!applicationType) {
         throw new CustomError.BadRequestError('Missing required application fields.');
     }
 
@@ -276,6 +296,7 @@ const adminSubmitApplication = async (req, res) => {
                 passportUrl,
                 birthCertificateUrl,
                 otherCertificatesUrl,
+                referenceNo: await generateReferenceNo(tx, applicationType),
                 status: 'PENDING'
             }
         });
@@ -305,7 +326,9 @@ const getSchoolApplications = async (req, res) => {
         where.OR = [
             { applicantName: { contains: search, mode: 'insensitive' } },
             { applicantEmail: { contains: search, mode: 'insensitive' } },
-            { applicantPhone: { contains: search, mode: 'insensitive' } }
+            { applicantPhone: { contains: search, mode: 'insensitive' } },
+            { referenceNo: { contains: search, mode: 'insensitive' } },
+            { admissionNo: { contains: search, mode: 'insensitive' } }
         ];
     }
 
@@ -333,26 +356,44 @@ const getSchoolApplications = async (req, res) => {
 // ─── DASHBOARD: Update Application Status ─────────────────────────────────
 const updateApplicationStatus = async (req, res) => {
     const { id } = req.params;
-    const { status, interviewDate, interviewTime, interviewLocation, admissionNo } = req.body;
+    const { status, interviewDate, interviewTime, interviewLocation, admissionNo, admittedClass } = req.body;
     const schoolId = req.user.schoolId;
 
     if (!['PENDING', 'APPROVED', 'REJECTED'].includes(status)) {
         throw new CustomError.BadRequestError('Invalid status.');
     }
 
+    const existing = await prisma.application.findFirst({ where: { id, schoolId }, select: { id: true, status: true, applicationType: true } });
+    if (!existing) throw new CustomError.NotFoundError('Application not found.');
+
+    // The admission number / staff ID and the class / position are assigned here by the admin
+    // (never at submission). Blank values leave whatever was previously assigned untouched.
+    const cleanNo = typeof admissionNo === 'string' ? admissionNo.trim() : '';
+    const cleanClass = typeof admittedClass === 'string' ? admittedClass.trim() : '';
+
+    if (cleanNo) {
+        const [dupApp, dupStudent] = await Promise.all([
+            prisma.application.findFirst({ where: { schoolId, admissionNo: cleanNo, NOT: { id } }, select: { id: true } }),
+            existing.applicationType === 'EMPLOYMENT' ? null : prisma.studentProfile.findFirst({ where: { schoolId, admissionNo: cleanNo }, select: { id: true } })
+        ]);
+        if (dupApp || dupStudent) throw new CustomError.BadRequestError(`"${cleanNo}" is already assigned to someone else.`);
+    }
+
     const application = await prisma.application.update({
         where: { id, schoolId },
-        data: { 
+        data: {
             status,
             interviewDate,
             interviewTime,
             interviewLocation,
-            admissionNo
+            ...(cleanNo && { admissionNo: cleanNo }),
+            ...(cleanClass && { admittedClass: cleanClass })
         },
         include: { school: { select: { name: true } } }
     });
 
-    if (status === 'APPROVED' && application.applicantEmail) {
+    // Only email on the first approval, not when the admin later fills in the number / class
+    if (status === 'APPROVED' && existing.status !== 'APPROVED' && application.applicantEmail) {
         await sendApplicationApprovedEmail(application.applicantEmail, {
             applicantName: application.applicantName,
             schoolName: application.school.name,
@@ -425,7 +466,9 @@ const parentSubmitApplication = async (req, res) => {
         throw new CustomError.UnauthorizedError('Unauthorized access');
     }
 
-    const { applicationType, applicantName, applicantEmail, applicantPhone } = req.body;
+    const { applicationType, applicantName: rawApplicantName, applicantEmail, applicantPhone } = req.body;
+    // Name fields are no longer forced compulsory on the form, so fall back gracefully
+    const applicantName = String(rawApplicantName || '').trim() || 'Applicant';
     let formData = req.body.formData;
 
     if (typeof formData === 'string') {
@@ -436,7 +479,7 @@ const parentSubmitApplication = async (req, res) => {
         }
     }
 
-    if (!applicationType || !applicantName) {
+    if (!applicationType) {
         throw new CustomError.BadRequestError('Missing required application fields.');
     }
 
@@ -510,6 +553,7 @@ const parentSubmitApplication = async (req, res) => {
                 passportUrl,
                 birthCertificateUrl,
                 otherCertificatesUrl,
+                referenceNo: await generateReferenceNo(tx, applicationType),
                 status: 'PENDING'
             }
         });

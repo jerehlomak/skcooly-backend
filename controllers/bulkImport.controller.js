@@ -528,95 +528,150 @@ const bulkImportParents = async (req, res) => {
 };
 
 // ─── DOWNLOAD BILLING TEMPLATE ────────────────────────────────────────────────
+// One sheet per class, pre-filled with that class's students. Each fee item that applies
+// to the class (whole-school fees + fees registered for that class) is a column — the
+// user only fills in the amount per item.
+const BILLING_FIXED_COLS = ['studentName', 'admissionNo', 'className', 'term', 'academicYear'];
+
+const safeSheetName = (name, used) => {
+    const base = String(name || 'Class').replace(/[\\/?*[\]:]/g, '-').slice(0, 28) || 'Class';
+    let candidate = base;
+    let n = 2;
+    while (used.has(candidate.toLowerCase())) candidate = `${base.slice(0, 25)}-${n++}`;
+    used.add(candidate.toLowerCase());
+    return candidate;
+};
+
 const downloadBillingTemplate = async (req, res) => {
     const schoolId = req.user.schoolId;
 
-    const students = await prisma.studentProfile.findMany({
-        where: { schoolId, isDeleted: false, status: 'Active' },
-        include: {
-            user: { select: { name: true } },
-            classArm: { select: { name: true } }
-        },
-        orderBy: [
-            { classArm: { name: 'asc' } },
-            { user: { name: 'asc' } }
-        ]
-    });
+    const [students, fees, schoolSettings] = await Promise.all([
+        prisma.studentProfile.findMany({
+            where: { schoolId, isDeleted: false, status: 'Active' },
+            include: {
+                user: { select: { name: true } },
+                classArm: { select: { id: true, name: true, order: true } }
+            }
+        }),
+        prisma.feeDefinition.findMany({
+            where: { schoolId, isActive: true, isDeleted: false },
+            orderBy: [{ isCompulsory: 'desc' }, { name: 'asc' }]
+        }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } })
+    ]);
 
-    const headers = ['studentName', 'className', 'admissionNo', 'term', 'academicYear', 'title', 'amount'];
-    const rows = [headers];
-    
-    // Add pre-filled student rows
+    const currentTerm = schoolSettings?.currentTerm || '';
+    const currentYear = schoolSettings?.currentYear || '';
+
+    // Group students by class
+    const byClass = new Map();
     students.forEach(s => {
-        rows.push([
-            s.user?.name || '',
-            s.classArm?.name || '',
-            s.admissionNo || '',
-            '', // term
-            '', // academicYear
-            '', // title
-            ''  // amount
-        ]);
+        const key = s.classArm?.id || 'none';
+        if (!byClass.has(key)) byClass.set(key, { cls: s.classArm, students: [] });
+        byClass.get(key).students.push(s);
     });
-
-    // If no students found, provide an example row
-    if (students.length === 0) {
-        rows.push(['John Doe', 'JSS 1', 'ADM-2023-001', 'FIRST_TERM', '2023/2024', 'Tuition Fee', '50000']);
-    }
+    const groups = [...byClass.values()].sort((a, b) =>
+        (a.cls?.order ?? 9999) - (b.cls?.order ?? 9999) || (a.cls?.name || '').localeCompare(b.cls?.name || '')
+    );
 
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = headers.map(() => ({ wch: 20 }));
-    XLSX.utils.book_append_sheet(wb, ws, 'Billing Import');
+    const usedNames = new Set();
+
+    groups.forEach(({ cls, students: classStudents }) => {
+        const classFees = fees.filter(f => f.scope === 'WHOLE_SCHOOL' || (f.scope === 'CLASS' && cls && (f.classIds || []).includes(cls.id)));
+        // Disambiguate duplicate fee names so every column header is unique
+        const seen = new Map();
+        const feeHeaders = classFees.map(f => {
+            const count = (seen.get(f.name) || 0) + 1;
+            seen.set(f.name, count);
+            return count > 1 ? `${f.name} (${count})` : f.name;
+        });
+
+        const headers = [...BILLING_FIXED_COLS, ...feeHeaders];
+        const rows = [headers];
+        classStudents
+            .sort((a, b) => (a.user?.name || '').localeCompare(b.user?.name || ''))
+            .forEach(s => {
+                rows.push([
+                    s.user?.name || '', s.admissionNo || '', cls?.name || '',
+                    currentTerm, currentYear,
+                    ...feeHeaders.map(() => '')
+                ]);
+            });
+
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = headers.map((h, i) => ({ wch: i === 0 ? 28 : Math.max(14, String(h).length + 2) }));
+        XLSX.utils.book_append_sheet(wb, ws, safeSheetName(cls?.name || 'Unassigned', usedNames));
+    });
+
+    if (groups.length === 0) {
+        const ws = XLSX.utils.aoa_to_sheet([[...BILLING_FIXED_COLS, 'Tuition Fee'], ['John Doe', 'ADM-2023-001', 'JSS 1', currentTerm, currentYear, '50000']]);
+        XLSX.utils.book_append_sheet(wb, ws, 'Billing Import');
+    }
+
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Disposition', 'attachment; filename="billing_import_template.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
     res.send(buffer);
 };
 
+
 // ─── DOWNLOAD PAYMENT TEMPLATE ────────────────────────────────────────────────
 const downloadPaymentTemplate = async (req, res) => {
     const schoolId = req.user.schoolId;
 
     const invoices = await prisma.financeInvoice.findMany({
-        where: { schoolId, status: { in: ['OPEN', 'PARTIAL'] }, isDeleted: false },
+        where: { schoolId, status: { in: ['OPEN', 'SENT', 'PARTIALLY_PAID', 'OVERDUE'] }, balanceDue: { gt: 0 }, isDeleted: false },
         include: {
             student: {
                 include: {
                     user: { select: { name: true } },
-                    classArm: { select: { name: true } }
+                    classArm: { select: { id: true, name: true, order: true } }
                 }
             }
-        },
-        orderBy: [
-            { student: { classArm: { name: 'asc' } } },
-            { student: { user: { name: 'asc' } } }
-        ]
+        }
     });
 
     const headers = ['studentName', 'className', 'invoiceNumber', 'balanceDue', 'amount', 'method', 'discountAmount'];
-    const rows = [headers];
 
+    // One sheet per class, students alphabetical within each class
+    const byClass = new Map();
     invoices.forEach(inv => {
-        rows.push([
-            inv.student?.user?.name || '',
-            inv.student?.classArm?.name || '',
-            inv.invoiceNumber,
-            inv.balanceDue,
-            '', // amount
-            'BANK_TRANSFER', // default method
-            '0' // default discount
-        ]);
+        const cls = inv.student?.classArm;
+        const key = cls?.id || 'none';
+        if (!byClass.has(key)) byClass.set(key, { cls, invoices: [] });
+        byClass.get(key).invoices.push(inv);
     });
-
-    if (invoices.length === 0) {
-        rows.push(['John Doe', 'JSS 1', 'INV-1234567890', '50000', '50000', 'BANK_TRANSFER', '0']);
-    }
+    const groups = [...byClass.values()].sort((a, b) =>
+        (a.cls?.order ?? 9999) - (b.cls?.order ?? 9999) || (a.cls?.name || '').localeCompare(b.cls?.name || '')
+    );
 
     const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.aoa_to_sheet(rows);
-    ws['!cols'] = headers.map(() => ({ wch: 20 }));
-    XLSX.utils.book_append_sheet(wb, ws, 'Payment Import');
+    const usedNames = new Set();
+    groups.forEach(({ cls, invoices: classInvoices }) => {
+        const rows = [headers];
+        classInvoices
+            .sort((a, b) => (a.student?.user?.name || '').localeCompare(b.student?.user?.name || ''))
+            .forEach(inv => {
+                rows.push([
+                    inv.student?.user?.name || '',
+                    cls?.name || '',
+                    inv.invoiceNumber,
+                    inv.balanceDue,
+                    '', // amount — to be filled in
+                    'BANK_TRANSFER', // default method
+                    '0' // default discount
+                ]);
+            });
+        const ws = XLSX.utils.aoa_to_sheet(rows);
+        ws['!cols'] = headers.map((h, i) => ({ wch: i === 0 ? 28 : 20 }));
+        XLSX.utils.book_append_sheet(wb, ws, safeSheetName(cls?.name || 'Unassigned', usedNames));
+    });
+
+    if (groups.length === 0) {
+        const ws = XLSX.utils.aoa_to_sheet([headers, ['John Doe', 'JSS 1', 'INV-1234567890', '50000', '50000', 'BANK_TRANSFER', '0']]);
+        XLSX.utils.book_append_sheet(wb, ws, 'Payment Import');
+    }
     const buffer = XLSX.write(wb, { type: 'buffer', bookType: 'xlsx' });
     res.setHeader('Content-Disposition', 'attachment; filename="payment_import_template.xlsx"');
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet');
@@ -624,87 +679,112 @@ const downloadPaymentTemplate = async (req, res) => {
 };
 
 // ─── BULK IMPORT BILLING ────────────────────────────────────────────────────────
+// Reads every sheet. A student row produces ONE invoice with a line item per filled-in fee column.
+// Legacy long format (sheet with an `amount` column) is still accepted.
 const bulkImportBilling = async (req, res) => {
     if (!req.files || !req.files.file) throw new CustomError.BadRequestError('Please upload an Excel file (.xlsx)');
     const file = req.files.file;
     const wb = XLSX.read(file.data, { type: 'buffer' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
 
-    if (!rows.length) throw new CustomError.BadRequestError('Excel file is empty');
+    const sheets = wb.SheetNames
+        .map(name => ({ name, rows: XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' }) }))
+        .filter(s => s.rows.length);
+    if (!sheets.length) throw new CustomError.BadRequestError('Excel file is empty');
     const schoolId = req.user.schoolId;
 
-    const financeSettings = await prisma.financeSettings.findUnique({ where: { schoolId } });
+    const [financeSettings, schoolSettings, feeDefs] = await Promise.all([
+        prisma.financeSettings.findUnique({ where: { schoolId } }),
+        prisma.schoolSettings.findFirst({ where: { schoolId } }),
+        prisma.feeDefinition.findMany({ where: { schoolId, isDeleted: false } })
+    ]);
     const invoicePrefix = financeSettings?.invoicePrefix || 'INV-';
-    const isTermLocked = financeSettings?.financeModuleToggles?.termLock ?? false;
-    const activeTerm = financeSettings?.currentTerm;
-    const activeYear = financeSettings?.currentYear;
+    const termLock = financeSettings?.financeModuleToggles?.termLock;
+    const lockActive = !!(termLock?.locked && !termLock?.allowStaffOverride);
+    const activeTerm = lockActive ? (termLock.activeTerm || schoolSettings?.currentTerm) : schoolSettings?.currentTerm;
+    const activeYear = lockActive ? (termLock.activeSession || schoolSettings?.currentYear) : schoolSettings?.currentYear;
+    const feeByName = new Map(feeDefs.map(f => [f.name.trim().toLowerCase(), f]));
 
     const created = [];
     const failed = [];
+    let total = 0;
 
-    for (let i = 0; i < rows.length; i++) {
-        const row = rows[i];
-        const rowNum = i + 2;
-        try {
-            if (!row.admissionNo || !row.amount) {
-                throw new Error('Missing required fields: admissionNo, amount');
-            }
+    for (const sheet of sheets) {
+        const headerKeys = Object.keys(sheet.rows[0] || {});
+        const isLegacy = headerKeys.includes('amount');
+        const feeCols = headerKeys.filter(h => !BILLING_FIXED_COLS.includes(h) && h !== 'title' && h !== 'amount');
 
-            const targetTerm = isTermLocked && activeTerm ? activeTerm : (row.term || activeTerm || 'FIRST');
-            const targetYear = isTermLocked && activeYear ? activeYear : (row.academicYear || activeYear || new Date().getFullYear().toString());
+        for (let i = 0; i < sheet.rows.length; i++) {
+            const row = sheet.rows[i];
+            const rowNum = i + 2;
+            total++;
+            try {
+                if (!row.admissionNo) throw new Error('Missing admissionNo');
 
-            const student = await prisma.studentProfile.findFirst({ where: { admissionNo: String(row.admissionNo), schoolId } });
-            if (!student) throw new Error(`Student not found: ${row.admissionNo}`);
+                const targetTerm = lockActive ? activeTerm : (row.term || activeTerm || null);
+                const targetYear = lockActive ? activeYear : (row.academicYear || activeYear || null);
 
-            const amount = Number(row.amount);
-            if (isNaN(amount) || amount <= 0) throw new Error(`Invalid amount: ${row.amount}`);
+                const student = await prisma.studentProfile.findFirst({ where: { admissionNo: String(row.admissionNo), schoolId } });
+                if (!student) throw new Error(`Student not found: ${row.admissionNo}`);
 
-            const invoiceNumber = `${invoicePrefix}${Date.now()}-${Math.floor(Math.random()*1000)}`;
-            const title = row.title || 'Bulk Billing Invoice';
-
-            const newInvoice = await prisma.financeInvoice.create({
-                data: {
-                    schoolId,
-                    studentId: student.id,
-                    title,
-                    term: targetTerm,
-                    academicYear: targetYear,
-                    invoiceNumber,
-                    subTotal: amount,
-                    discountTotal: 0,
-                    totalAmount: amount,
-                    amountPaid: 0,
-                    balanceDue: amount,
-                    status: 'UNPAID',
-                    dueDate: new Date(),
-                    items: {
-                        create: [{
-                            itemName: title,
-                            label: title,
-                            quantity: 1,
-                            unitPrice: amount,
-                            amount: amount,
-                            total: amount
-                        }]
+                const lines = [];
+                if (isLegacy) {
+                    const amount = Number(row.amount);
+                    if (isNaN(amount) || amount <= 0) throw new Error(`Invalid amount: ${row.amount}`);
+                    lines.push({ type: 'CUSTOM', referenceId: null, label: String(row.title || 'Bulk Billing Invoice'), quantity: 1, unitPrice: amount, amount });
+                } else {
+                    for (const col of feeCols) {
+                        const raw = row[col];
+                        if (raw === '' || raw === null || raw === undefined) continue;
+                        const amount = Number(String(raw).replace(/,/g, ''));
+                        if (isNaN(amount)) throw new Error(`Invalid amount for "${col}": ${raw}`);
+                        if (amount <= 0) continue;
+                        const baseName = col.replace(/ \(\d+\)$/, '').trim();
+                        const def = feeByName.get(col.trim().toLowerCase()) || feeByName.get(baseName.toLowerCase());
+                        lines.push({ type: def?.type || 'FEE', referenceId: def?.id || null, label: baseName, quantity: 1, unitPrice: amount, amount });
                     }
+                    if (lines.length === 0) throw new Error('No amounts filled in for this student');
                 }
-            });
-            created.push({ row: rowNum, invoiceNumber: newInvoice.invoiceNumber });
-        } catch (err) {
-            failed.push({ row: rowNum, admissionNo: row.admissionNo, error: err.message });
+
+                const subTotal = lines.reduce((s, l) => s + l.amount, 0);
+                const invoiceNumber = `${invoicePrefix}${Date.now()}-${Math.floor(Math.random() * 100000)}`;
+
+                const newInvoice = await prisma.financeInvoice.create({
+                    data: {
+                        schoolId,
+                        studentId: student.id,
+                        term: targetTerm,
+                        academicYear: targetYear,
+                        invoiceNumber,
+                        subTotal,
+                        discountTotal: 0,
+                        totalAmount: subTotal,
+                        amountPaid: 0,
+                        balanceDue: subTotal,
+                        status: 'OPEN',
+                        dueDate: new Date(),
+                        items: { create: lines }
+                    }
+                });
+                created.push({ row: rowNum, invoiceNumber: newInvoice.invoiceNumber });
+            } catch (err) {
+                failed.push({ row: `${sheet.name} #${rowNum}`, admissionNo: row.admissionNo, error: err.message });
+            }
         }
     }
-    res.status(StatusCodes.OK).json({ created, failed, summary: { total: rows.length, created: created.length, failed: failed.length } });
+    res.status(StatusCodes.OK).json({ created, failed, summary: { total, created: created.length, failed: failed.length } });
 };
+
 
 // ─── BULK IMPORT PAYMENTS ───────────────────────────────────────────────────────
 const bulkImportPayments = async (req, res) => {
     if (!req.files || !req.files.file) throw new CustomError.BadRequestError('Please upload an Excel file (.xlsx)');
     const file = req.files.file;
     const wb = XLSX.read(file.data, { type: 'buffer' });
-    const ws = wb.Sheets[wb.SheetNames[0]];
-    const rows = XLSX.utils.sheet_to_json(ws, { defval: '' });
+    // Read every sheet (the template has one sheet per class); remember the sheet for error reporting
+    const rows = [];
+    wb.SheetNames.forEach(name => {
+        XLSX.utils.sheet_to_json(wb.Sheets[name], { defval: '' }).forEach((r, idx) => rows.push({ ...r, __sheet: name, __rowNum: idx + 2 }));
+    });
 
     if (!rows.length) throw new CustomError.BadRequestError('Excel file is empty');
     const schoolId = req.user.schoolId;
@@ -719,7 +799,9 @@ const bulkImportPayments = async (req, res) => {
 
     for (let i = 0; i < rows.length; i++) {
         const row = rows[i];
-        const rowNum = i + 2;
+        const rowNum = `${row.__sheet} #${row.__rowNum}`;
+        // Rows left blank in the pre-filled template are simply not being paid — skip them
+        if (!row.amount && row.amount !== 0) continue;
         try {
             if (!row.invoiceNumber || !row.amount || !row.method) {
                 throw new Error('Missing required fields: invoiceNumber, amount, method');
@@ -799,7 +881,6 @@ const bulkImportPayments = async (req, res) => {
                         data: {
                             schoolId,
                             studentId: liveInvoice.studentId,
-                            title: 'Additional Payment',
                             term: liveInvoice.term,
                             academicYear: liveInvoice.academicYear,
                             invoiceNumber: newInvNum,
@@ -811,7 +892,7 @@ const bulkImportPayments = async (req, res) => {
                             status: 'PAID',
                             dueDate: new Date(),
                             items: {
-                                create: [{ itemName: 'Additional Payment', label: 'Additional Payment', quantity: 1, unitPrice: overpaymentAmount, amount: overpaymentAmount, total: overpaymentAmount }]
+                                create: [{ type: 'CUSTOM', label: 'Additional Payment', quantity: 1, unitPrice: overpaymentAmount, amount: overpaymentAmount }]
                             }
                         }
                     });
@@ -820,10 +901,10 @@ const bulkImportPayments = async (req, res) => {
                     });
                 }
 
-                await tx.paymentReceipt.create({
+                await tx.financeReceipt.create({
                     data: {
                         schoolId,
-                        transactionId: txRecord.id,
+                        paymentTransactionId: txRecord.id,
                         receiptNumber: `REC-${Date.now()}-${Math.floor(Math.random()*1000)}`,
                         studentId: liveInvoice.studentId,
                         amountPaid: appliedAmount,

@@ -333,6 +333,8 @@ const getStudentReportCard = async (req, res) => {
 
     let template = null;
     if (sectionName) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
+    // The school's chosen default template applies to every class that has no section-specific template
+    if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, isDefault: true, resultType: dbTemplateType }, orderBy: [{ createdAt: 'desc' }] });
     if (!template) template = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
     if (template) templateConfig = template.config;
 

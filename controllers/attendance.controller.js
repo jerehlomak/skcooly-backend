@@ -641,115 +641,28 @@ const scanQR = async (req, res) => {
     if (!qrRecord || !qrRecord.isActive) throw new CustomError.BadRequestError('QR code is inactive or revoked');
     if (!user) throw new CustomError.NotFoundError(`${payload.userType} not found`);
 
-    // Determine LATE logic using timezone offset properly
-    const [th, tm] = settings.lateThresholdTime.split(':').map(Number);
-    const timeFormatter = new Intl.DateTimeFormat('en-US', { timeZone: settings.timezone, hour: 'numeric', minute: 'numeric', hour12: false });
-    const localTimeParts = timeFormatter.formatToParts(nowTime);
-    
-    // Fallback logic incase Intl parts aren't reliable immediately
-    const localHrStr = localTimeParts.find(p => p.type === 'hour')?.value || '0';
-    const localMinStr = localTimeParts.find(p => p.type === 'minute')?.value || '0';
-    
-    const localHr = parseInt(localHrStr, 10) === 24 ? 0 : parseInt(localHrStr, 10);
-    const localMin = parseInt(localMinStr, 10);
-    
-    const isLate = localHr > th || (localHr === th && localMin > tm);
-    const computedStatus = isLate ? 'LATE' : 'PRESENT';
-
-    if (payload.userType === 'student') {
-        if (!user.classId) throw new CustomError.BadRequestError('Student has no assigned class; cannot mark attendance');
-
-        try {
-            await prisma.$transaction(async (tx) => {
-                const existing = await tx.attendanceRecord.findUnique({
-                    where: { studentProfileId_date: { studentProfileId: user.id, date: todayDate } }
-                });
-
-                if (existing) {
-                    if (!settings.allowMultipleScan) {
-                        throw new Error('DUPLICATE_STUDENT');
-                    }
-                    await tx.attendanceRecord.update({
-                        where: { id: existing.id },
-                        data: { status: computedStatus, markedBy: 'QR Scanner' }
-                    });
-                } else {
-                    await tx.attendanceRecord.create({
-                        data: {
-                            schoolId: req.user.schoolId,
-                            studentProfileId: user.id,
-                            date: todayDate,
-                            classId: user.classId,
-                            status: computedStatus,
-                            markedBy: 'QR Scanner'
-                        }
-                    });
-                }
-            });
-
-            await logScan(req.user.schoolId, qrRecord.id, user.id, 'student', deviceInfo, 'SUCCESS', `Marked ${computedStatus}`);
-            return res.status(StatusCodes.OK).json({ msg: `Student marked ${computedStatus}`, userType: 'student' });
-        } catch (error) {
-            if (error.message === 'DUPLICATE_STUDENT' || error.code === 'P2002') {
-                await logScan(req.user.schoolId, qrRecord.id, user.id, 'student', deviceInfo, 'DUPLICATE', 'Already marked today');
-                return res.status(StatusCodes.OK).json({ msg: 'Student attendance already recorded for today', duplicate: true });
-            }
-            throw error;
+    // Card scan: first scan of the day signs in, the next (after the minimum gap) signs out — for students and staff alike
+    const core = require('../services/attendance-core.service');
+    const full = await core.getSettings(req.user.schoolId);
+    const actor = { userId: req.user.userId, name: req.user.name };
+    try {
+        let out;
+        if (payload.userType === 'student') {
+            const stu = await prisma.studentProfile.findUnique({ where: { id: user.id }, include: { user: { select: { name: true } }, parent: { include: { user: { select: { id: true, email: true, name: true } } } } } });
+            out = await core.studentSign({ settings: full, student: stu, method: 'CARD_SCAN', deviceInfo, actor });
+        } else if (payload.userType === 'staff') {
+            const stf = await prisma.teacherProfile.findUnique({ where: { id: user.id }, include: { user: { select: { name: true, email: true } } } });
+            out = await core.staffSign({ settings: full, staff: stf, method: 'CARD_SCAN', deviceInfo, actor });
+        } else throw new CustomError.BadRequestError('Unknown user type');
+        await logScan(req.user.schoolId, qrRecord.id, user.id, payload.userType, deviceInfo, 'SUCCESS', out.message);
+        return res.status(StatusCodes.OK).json({ msg: out.message, userType: payload.userType, action: out.action === 'SIGN_IN' ? 'check-in' : 'check-out', status: out.status });
+    } catch (error) {
+        if (error instanceof core.AttendanceError && ['DONE', 'TOO_SOON'].includes(error.code)) {
+            await logScan(req.user.schoolId, qrRecord.id, user.id, payload.userType, deviceInfo, 'DUPLICATE', error.message);
+            return res.status(StatusCodes.OK).json({ msg: error.message, duplicate: true });
         }
-
-    } else if (payload.userType === 'staff') {
-        try {
-            return await prisma.$transaction(async (tx) => {
-                const existing = await tx.staffAttendance.findUnique({
-                    where: { staffId_date: { staffId: user.id, date: todayDate } }
-                });
-
-                if (!existing) {
-                    await tx.staffAttendance.create({
-                        data: {
-                            schoolId: req.user.schoolId,
-                            branchId: user.branchId || null,
-                            staffId: user.id,
-                            date: todayDate,
-                            checkInTime: nowTime,
-                            status: computedStatus,
-                            markedBy: 'QR' // ensure markedBy matches String logic
-                        }
-                    });
-                    await logScan(req.user.schoolId, qrRecord.id, user.id, 'staff', deviceInfo, 'SUCCESS', 'Check-In');
-                    return res.status(StatusCodes.OK).json({ msg: 'Staff Check-In successful', userType: 'staff', action: 'check-in' });
-                } else if (!existing.checkOutTime) {
-                    // COOLDOWN LOGIC: Prevent instant double-scans checking you out in under 5 minutes
-                    const checkInLocal = existing.checkInTime ? new Date(existing.checkInTime).getTime() : 0;
-                    const diffMins = (nowTime.getTime() - checkInLocal) / 60000;
-                    if (diffMins < 5) {
-                        await logScan(req.user.schoolId, qrRecord.id, user.id, 'staff', deviceInfo, 'DUPLICATE', 'Checkout ignored due to 5-minute cooldown rule');
-                        throw new Error('STAFF_COOLDOWN');
-                    }
-
-                    await tx.staffAttendance.update({
-                        where: { id: existing.id },
-                        data: { checkOutTime: nowTime }
-                    });
-                    await logScan(req.user.schoolId, qrRecord.id, user.id, 'staff', deviceInfo, 'SUCCESS', 'Check-Out');
-                    return res.status(StatusCodes.OK).json({ msg: 'Staff Check-Out successful', userType: 'staff', action: 'check-out' });
-                } else {
-                    await logScan(req.user.schoolId, qrRecord.id, user.id, 'staff', deviceInfo, 'DUPLICATE', 'Already checked out');
-                    throw new Error('STAFF_DUPLICATE');
-                }
-            });
-        } catch (error) {
-            if (error.code === 'P2002' || error.message === 'STAFF_DUPLICATE') {
-                return res.status(StatusCodes.OK).json({ msg: 'Already completed attendance for today', duplicate: true });
-            }
-            if (error.message === 'STAFF_COOLDOWN') {
-                return res.status(StatusCodes.OK).json({ msg: 'Checkout ignored: Must wait at least 5 minutes after check-in', duplicate: true });
-            }
-            throw error;
-        }
+        throw error;
     }
-
-    throw new CustomError.BadRequestError('Unknown user type');
 };
 
 const logScan = async (schoolId, qrCodeId, userId, userType, deviceInfo, result, reason) => {

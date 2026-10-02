@@ -37,7 +37,7 @@ const updateSettings = async (req, res) => {
         schoolName, arabicName, tagline, motto, formTeacherTitle, phone, email, address, country, logoUrl, schoolType, currentTerm, currentYear, currency, currencySymbol, timezone, rulesContent,
         resultSubjectPosition, resultClassPosition, resultShowBorder, resultShowSignature, resultShowNextTermFees, resultAutomaticComments, parentResultAccessMode, pinLifespan, parentTranscriptAccess,
         issuedResultTypes, caResultMode, examResultMode, resultConfig,
-        admissionFormConfig, employmentFormConfig, admissionLetterTemplate, employmentLetterTemplate, parentAdmissionRequiresPin,
+        admissionFormConfig, employmentFormConfig, admissionLetterTemplate, employmentLetterTemplate, parentAdmissionRequiresPin, idCardConfig,
         smtpHost, smtpPort, smtpUser, smtpPass, smtpFrom
     } = req.body
 
@@ -82,6 +82,7 @@ const updateSettings = async (req, res) => {
                 ...(admissionLetterTemplate !== undefined && { admissionLetterTemplate }),
                 ...(employmentLetterTemplate !== undefined && { employmentLetterTemplate }),
                 ...(parentAdmissionRequiresPin !== undefined && { parentAdmissionRequiresPin }),
+                ...(idCardConfig !== undefined && { idCardConfig }),
                 ...(smtpHost !== undefined && { smtpHost }),
                 ...(smtpPort !== undefined && { smtpPort }),
                 ...(smtpUser !== undefined && { smtpUser }),

@@ -2037,7 +2037,20 @@ const generateInvoice = async (req, res) => {
 
 const getInvoices = async (req, res) => {
     const { schoolId, activeBranchId } = req.user;
-    const { studentId, classId, status, term, academicYear, search, isSent, isPrinted, page = 1, limit = 30 } = req.query;
+    const { studentId, classId, status, term, academicYear, search, isSent, isPrinted, sortBy = 'date', sortOrder = 'desc', page = 1, limit = 30 } = req.query;
+
+    const dir = sortOrder === 'asc' ? 'asc' : 'desc';
+    const orderByMap = {
+        date: { createdAt: dir },
+        student: { student: { user: { name: dir } } },
+        class: { student: { classArm: { name: dir } } },
+        family: { student: { parent: { user: { name: dir } } } },
+        total: { totalAmount: dir },
+        balance: { balanceDue: dir },
+        paid: { amountPaid: dir },
+        status: { status: dir }
+    };
+    const orderBy = orderByMap[sortBy] || orderByMap.date;
 
     const where = {
         schoolId,
@@ -2066,11 +2079,11 @@ const getInvoices = async (req, res) => {
             where,
             include: {
                 school: { select: { name: true } },
-                student: { include: { user: { select: { name: true } }, classArm: { select: { name: true } } } },
+                student: { include: { user: { select: { name: true } }, classArm: { select: { name: true } }, parent: { include: { user: { select: { name: true } } } } } },
                 items: true,
                 PaymentAllocation: { select: { allocatedAmount: true } }
             },
-            orderBy: { createdAt: 'desc' },
+            orderBy,
             skip: (Number(page) - 1) * Number(limit),
             take: Number(limit)
         }),
