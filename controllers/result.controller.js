@@ -1,7 +1,7 @@
 const prisma = require('../db/prisma');
 const { StatusCodes } = require('http-status-codes');
 const CustomError = require('../errors');
-const { generateResultPDF, generateDynamicPDF, generateDynamicPDFs } = require('../services/pdf.service');
+const { generateDynamicPDF, generateDynamicPDFs } = require('../services/pdf.service');
 const { uploadBufferToCloudinary } = require('../services/cloudinary-upload.service');
 const { shareResult } = require('../services/sharing.service');
 const jwt = require('jsonwebtoken');
@@ -104,6 +104,9 @@ const computeGrade = (totalScore, grades) => {
 // ─── PIN VALIDATION HELPER ──────────────────────────────────────────────────
 const verifyAndConsumePin = async (req, res, studentProfileId, term, academicYear, schoolSettingsRecord, consume = true) => {
     if (req.user.role !== 'PARENT' && req.user.role !== 'STUDENT') return true;
+    // The Puppeteer token for a parent PDF is only minted after this check already passed;
+    // don't consume the PIN a second time when the print page re-fetches the report card.
+    if (req.user.printVerified) return true;
     
     const accessMode = schoolSettingsRecord?.parentResultAccessMode;
     if (accessMode !== 'PIN') return true;
@@ -772,239 +775,23 @@ const generateReportCardPDF = async (req, res) => {
     const isPinValid = await verifyAndConsumePin(req, res, studentProfileId, term, academicYear, schoolSettingsRecord);
     if (!isPinValid) return;
 
-    let results = await prisma.studentResult.findMany({
-        where: { isDeleted: false,  studentProfileId, term, academicYear, schoolId: req.user.schoolId },
-        include: { subject: { select: { name: true, code: true, categoryId: true } } },
-        orderBy: { subject: { name: 'asc' } }
-    });
-
-    if (student.subjectCategoryId) {
-        results = results.filter(r => !r.subject.categoryId || r.subject.categoryId === student.subjectCategoryId);
-    }
-
-    let studentCategory = results[0]?.category || null;
-    const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
-    
-    if (studentCategory) {
-        const classLevelRec = await prisma.classLevel.findFirst({
-            where: { schoolId: req.user.schoolId, name: studentCategory }
-        });
-        if (classLevelRec && classLevelRec.category) {
-            studentCategory = classLevelRec.category;
-        }
-        const sec = await prisma.section.findFirst({
-            where: { 
-                schoolId: req.user.schoolId, 
-                name: { contains: studentCategory, mode: 'insensitive' } 
-            }
-        });
-        if (sec) studentCategory = sec.id;
-    }
-
-    let gradingScaleRecord = null;
-    
-    if (studentCategory) {
-        gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: studentCategory, resultType: scaleResultType, assessmentType: scaleAssessmentType }
-        });
-    }
-    if (!gradingScaleRecord) {
-        gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, category: 'ALL', resultType: scaleResultType, assessmentType: scaleAssessmentType }
-        });
-    }
-    if (!gradingScaleRecord) {
-        gradingScaleRecord = await prisma.gradingScale.findFirst({
-            where: { schoolId: req.user.schoolId, resultType: scaleResultType, assessmentType: scaleAssessmentType }
-        });
-    }
-    const grades = gradingScaleRecord?.grades ?? [];
-    const passMark = gradingScaleRecord?.passMark ?? 40;
-
-    const enrichedResults = results.map(r => {
-        const { grade, remark } = computeGrade(r.totalScore, grades);
-        
-        const scoresObj = typeof r.scores === 'string' ? JSON.parse(r.scores) : (r.scores || {});
-        let ca1 = null, ca2 = null, ca3 = null, exam = null;
-        
-        for (const [k, v] of Object.entries(scoresObj)) {
-            const key = k.toLowerCase();
-            if (key.includes('1st ca') || key === 'ca1') ca1 = Number(v);
-            else if (key.includes('2nd ca') || key === 'ca2') ca2 = Number(v);
-            else if (key.includes('3rd ca') || key === 'ca3') ca3 = Number(v);
-            else if (key.includes('exam')) exam = Number(v);
-        }
-
-        return {
-            ...r,
-            ca1,
-            ca2,
-            ca3,
-            exam,
-            computedGrade: grade,
-            computedRemark: remark,
-            isPassing: r.totalScore >= passMark
-        };
-    });
-
-    const totalSubjects = enrichedResults.length;
-    const totalScore = enrichedResults.reduce((sum, r) => sum + r.totalScore, 0);
-    const average = totalSubjects > 0 ? (totalScore / totalSubjects).toFixed(1) : '0';
-
-
-    let classAverage = null;
-    let highestAvg = null;
-    let lowestAvg = null;
-    let studentsInClass = null;
-    let overallPosition = null;
-    if (effectiveClassId) {
-        const allClassResults = await prisma.studentResult.findMany({
-        where: { isDeleted: false,  classId: effectiveClassId, term, academicYear, schoolId: req.user.schoolId }
-        });
-
-        const studentTotals = {};
-        for (const r of allClassResults) {
-            if (!studentTotals[r.studentProfileId]) studentTotals[r.studentProfileId] = { total: 0, count: 0 };
-            studentTotals[r.studentProfileId].total += r.totalScore;
-            studentTotals[r.studentProfileId].count += 1;
-        }
-
-        const rankingStrategy = schoolSettingsRecord?.resultConfig?.rankingStrategy || 'standard';
-        const tieBreaker = schoolSettingsRecord?.resultConfig?.tieBreaker || 'total';
-
-        const averages = Object.entries(studentTotals)
-            .map(([sid, d]) => ({ sid, avg: d.count > 0 ? d.total / d.count : 0, total: d.total }));
-
-        applyRanking(averages, 'avg', 'total', rankingStrategy, tieBreaker);
-
-        const studentRankObj = averages.find(a => a.sid === studentProfileId);
-        overallPosition = studentRankObj ? studentRankObj.position : null;
-
-        const allAvgs = averages.map(a => a.avg);
-        classAverage = allAvgs.length > 0 ? (allAvgs.reduce((s, v) => s + v, 0) / allAvgs.length).toFixed(1) : null;
-        if (allAvgs.length > 0) {
-            highestAvg = Math.max(...allAvgs).toFixed(1);
-            lowestAvg = Math.min(...allAvgs).toFixed(1);
-        }
-        studentsInClass = allAvgs.length;
-    }
-
-    const schoolInfo = await prisma.school.findUnique({
-        where: { id: req.user.schoolId }
-    });
-
-    const manualComment = await prisma.studentReportComment.findUnique({
-        where: {
-            schoolId_studentProfileId_term_academicYear: {
-                schoolId: req.user.schoolId,
-                studentProfileId,
-                term,
-                academicYear
-            }
-        }
-    });
-
-    let teacherComment = manualComment?.teacherComment || null;
-    let principalComment = manualComment?.principalComment || null;
-
-    if (schoolSettingsRecord?.resultAutomaticComments) {
-        const { resultType: scaleResultType, assessmentType: scaleAssessmentType } = getGradingScaleType(req.query.resultType);
-        const commentRules = await prisma.commentRule.findMany({
-            where: { schoolId: req.user.schoolId, resultType: scaleAssessmentType }
-        });
-        const numericAverage = parseFloat(average);
-        
-        const matchedRules = commentRules.filter(r => numericAverage >= r.minScore && numericAverage <= r.maxScore);
-        let dynamicNarrativeComments = {};
-
-        matchedRules.forEach(rule => {
-            const role = rule.role;
-            const comment = rule.comment;
-            
-            if (role === 'Class Teacher') teacherComment = comment;
-            if (role === 'Principal') principalComment = comment;
-            
-            dynamicNarrativeComments[role] = comment;
-            dynamicNarrativeComments[role.toUpperCase()] = comment;
-            dynamicNarrativeComments[role.toLowerCase()] = comment;
-        });
-
-        if (!manualComment) {
-            manualComment = { narrativeComments: dynamicNarrativeComments };
-        } else {
-            let existingNarrative = manualComment.narrativeComments;
-            if (typeof existingNarrative === 'string') {
-                try { existingNarrative = JSON.parse(existingNarrative); } catch(e) { existingNarrative = {}; }
-            }
-            if (!existingNarrative || typeof existingNarrative !== 'object') existingNarrative = {};
-            
-            Object.keys(dynamicNarrativeComments).forEach(role => {
-                existingNarrative[role] = dynamicNarrativeComments[role];
-            });
-            manualComment.narrativeComments = existingNarrative;
-        }
-    }
-
-    const templateData = {
-        school: {
-            name: schoolSettingsRecord?.schoolName || schoolInfo?.name,
-            motto: schoolSettingsRecord?.motto || schoolSettingsRecord?.tagline || "Knowledge and Integrity",
-            address: schoolSettingsRecord?.address || schoolInfo?.address,
-            phone: schoolSettingsRecord?.phone || schoolInfo?.phone,
-            logoUrl: schoolSettingsRecord?.logoUrl || schoolInfo?.logoUrl,
-            arabicName: schoolSettingsRecord?.arabicName || schoolInfo?.arabicName
-        },
-        student: {
-            name: student.user.name,
-            admissionNo: student.admissionNo,
-            class: student.classArm?.name || student.classLevel,
-            noInClass: 30,
-            nextTermFee: student.classArm?.nextTermFee || null,
-            photoUrl: student.profilePicture || null
-        },
-        result: {
-            term,
-            academicYear,
-            position: overallPosition ? `${overallPosition}` : '—',
-            scores: enrichedResults.map(r => ({
-                subject: r.subject.name,
-                ca1: r.ca1,
-                ca2: r.ca2,
-                exam: r.exam,
-                total: r.totalScore,
-                grade: r.computedGrade,
-                remark: r.computedRemark
-            })),
-            affectiveTraits: [],
-            psychomotorTraits: [],
-            comment: teacherComment,
-            principalComment: principalComment,
-            narrativeComments: manualComment?.narrativeComments || {},
-            showClassPosition: schoolSettingsRecord?.resultConfig?.display?.showClassPosition ?? true,
-            showSubjectPosition: schoolSettingsRecord?.resultConfig?.display?.showSubjectPosition ?? true
-        }
-    };
-
-    let sectionName = null;
-    if (student.classArm && student.classArm.level) sectionName = student.classArm.level;
-    const clsWithSection = await prisma.class.findUnique({ where: { id: effectiveClassId } });
-    if (clsWithSection && clsWithSection.level) sectionName = clsWithSection.level;
-
-    let activeTemplate = null;
-    const requestedType = req.query.resultType || '';
-    let dbTemplateType = 'SCORE_BASED';
-    if (requestedType.includes('COMMENT')) dbTemplateType = 'COMMENT_BASED';
-    else if (requestedType === 'TRANSCRIPT') dbTemplateType = 'TRANSCRIPT';
-
-    if (sectionName) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: sectionName, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
-    if (!activeTemplate) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, isDefault: true, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
-    if (!activeTemplate) activeTemplate = await prisma.resultTemplate.findFirst({ where: { schoolId: req.user.schoolId, assignedSectionId: null, resultType: dbTemplateType }, orderBy: [{ isActive: 'desc' }, { createdAt: 'desc' }] });
-    const templateId = activeTemplate?.name || 'template1';
-    const config = activeTemplate?.config || {};
+    // Render via the same Puppeteer-navigates-to-a-real-frontend-route pattern
+    // batchExportPDF already uses (generateDynamicPDF in pdf.service.js), instead
+    // of the old hardcoded template1()-template5() HTML generator. The /print-batch
+    // page fetches the real data and each student's resolved template itself, so
+    // the parent's downloaded PDF is whatever template is selected in Result
+    // Templates — there's no separate data-assembly path left to drift out of sync.
+    const frontendUrl = req.headers.origin || process.env.FRONTEND_URL || 'http://localhost:5173';
+    const token = jwt.sign(
+        { userId: req.user.userId, schoolId: req.user.schoolId, role: req.user.role, printVerified: true },
+        process.env.JWT_SECRET,
+        { expiresIn: '30m' }
+    );
+    const url = `${frontendUrl}/print-batch?studentIds=${studentProfileId}&classId=${effectiveClassId || ''}&term=${encodeURIComponent(term)}&academicYear=${encodeURIComponent(academicYear)}&resultType=${req.query.resultType || 'FULL'}&token=${token}`;
 
     try {
-        const pdfBuffer = await generateResultPDF(templateData, templateId, config);
-        
+        const pdfBuffer = await generateDynamicPDF(url);
+
         res.set({
             'Content-Type': 'application/pdf',
             'Content-Disposition': `attachment; filename=result_${student.admissionNo}.pdf`,
@@ -1880,8 +1667,12 @@ const updateTemplateDefault = async (req, res) => {
     const { isDefault } = req.body;
     
     if (isDefault) {
+        // Only one default per result type — a Score-Based default must not
+        // unset the Comment-Based/Transcript one (the resolver reads them per type).
+        const target = await prisma.resultTemplate.findFirst({ where: { id, schoolId: req.user.schoolId } });
+        if (!target) throw new CustomError.NotFoundError('Template not found');
         await prisma.resultTemplate.updateMany({
-            where: { schoolId: req.user.schoolId, id: { not: id } },
+            where: { schoolId: req.user.schoolId, resultType: target.resultType, id: { not: id } },
             data: { isDefault: false }
         });
     }
