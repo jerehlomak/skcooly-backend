@@ -16,8 +16,9 @@ const addParent = async (req, res) => {
         address, occupation, studentIds
     } = req.body;
 
-    if (!name || !phone) {
-        throw new CustomError.BadRequestError('Please provide name and phone number');
+    // Parent's name is the only required field; everything else is optional.
+    if (!name || !name.trim()) {
+        throw new CustomError.BadRequestError("Please provide the parent's name");
     }
 
     const currentYear = new Date().getFullYear();
@@ -53,7 +54,7 @@ const addParent = async (req, res) => {
                     create: {
                         schoolId: req.user.schoolId,
                         parentId,
-                        phone,
+                        phone: phone || '', // column is non-nullable; '' = not provided
                         address: address || null,
                         occupation: occupation || null,
                         // Father / Primary Guardian

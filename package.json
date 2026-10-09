@@ -9,7 +9,7 @@
     "postinstall": "prisma generate && prisma db push",
     "create-admin": "node scripts/create-admin.js",
     "seed": "node scripts/seed.js",
-    "seed:permissions": "node scripts/seed-permissions.js"
+    "seed:permissions": "node scripts/sync-permissions.js"
   },
   "author": "",
   "license": "ISC",

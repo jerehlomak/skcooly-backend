@@ -1,7 +1,7 @@
 const express = require('express');
 const router = express.Router();
 
-const { authenticateUser, authorizePermissions } = require('../middleware/authentication');
+const { authenticateUser, authorizePermissions, requireRolePermission } = require('../middleware/authentication');
 
 const {
     getPaymentSettings,
@@ -57,6 +57,9 @@ const {
 } = require('../controllers/financePayment.controller');
 
 const ADMIN_ROLES = ['ADMIN', 'SCHOOL_SUPER_ADMIN', 'SCHOOL_ADMIN'];
+
+// Role-constrained staff need the "Pay Invoice" permission (key derived from its menu path).
+const requirePayInvoice = requireRolePermission('finance.payment-management');
 
 
 // Note: /webhook/paystack is mounted directly in app.js (BEFORE express.json())
@@ -115,7 +118,7 @@ router.get('/invoices/:id', getInvoice);
 router.put('/invoices/:id', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),updateInvoice);
 router.post('/invoices/:id/send', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),resendInvoice);
 router.post('/invoices/:id/print', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),markInvoicePrinted);
-router.post('/invoices/:id/pay', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),recordManualPayment);
+router.post('/invoices/:id/pay', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'), requirePayInvoice, recordManualPayment);
 // Cancel/delete are destructive — admin-only, not open to teachers/branch staff.
 router.post('/invoices/bulk-cancel', authorizePermissions(...ADMIN_ROLES),bulkCancelInvoices);
 router.post('/invoices/bulk-delete', authorizePermissions(...ADMIN_ROLES),bulkDeleteInvoices);
@@ -127,7 +130,7 @@ router.get('/transactions', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRA
 
 // Receipts
 router.get('/receipts', getReceipts);
-router.post('/receipts/:id/print', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'),markReceiptPrinted);
+router.post('/receipts/:id/print', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF'), requirePayInvoice, markReceiptPrinted);
 
 // Wallet application (Admins & Parents)
 router.post('/wallet/apply', authorizePermissions(...ADMIN_ROLES, 'TEACHER', 'BRANCH_STAFF', 'PARENT'), applyWalletToInvoice);

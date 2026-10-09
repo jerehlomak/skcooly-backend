@@ -22,7 +22,7 @@ function collectPermissions(nodes, topLevelTitle, sortOrder) {
             rows.push({
                 key: deriveKey(node.path),
                 label: node.title,
-                module,
+                module: node.module || module, // optional per-node override in menuCatalog.js
                 path: node.path,
                 sortOrder: sortOrder.value++,
             });

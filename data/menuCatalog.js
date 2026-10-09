@@ -12,6 +12,8 @@
 
 module.exports = [
     { title: 'Dashboard', path: '/dashboard' },
+    // Staff's own payslips; grouped under Finance so it follows that module's subscription.
+    { title: 'My Payroll', path: '/dashboard/my-payroll', module: 'Finance' },
     {
         title: 'General Settings',
         children: [
@@ -91,6 +93,7 @@ module.exports = [
         title: 'Students',
         children: [
             { title: 'All Students', path: '/dashboard/students/all' },
+            { title: 'Bulk Import (Students)', path: '/dashboard/bulk-import/students' },
             { title: 'Add New', path: '/dashboard/students/add' },
             { title: 'Bulk Import', path: '/dashboard/bulk-import' },
             { title: 'Promote Students', path: '/dashboard/students/promote' },
@@ -101,6 +104,7 @@ module.exports = [
         children: [
             { title: 'All Parents', path: '/dashboard/parents/all' },
             { title: 'Add Parent', path: '/dashboard/parents/add' },
+            { title: 'Bulk Import (Parents)', path: '/dashboard/bulk-import/parents' },
         ],
     },
     {
@@ -111,6 +115,7 @@ module.exports = [
             { title: 'Add Staff', path: '/dashboard/employees/add' },
             { title: 'Employment Form', path: '/dashboard/settings/employment-form' },
             { title: 'Employment Letter', path: '/dashboard/settings/employment-letter' },
+            { title: 'Bulk Import (Staff)', path: '/dashboard/bulk-import/staff' },
             { title: 'Bulk Import', path: '/dashboard/bulk-import' },
             { title: 'Teacher Assignments', path: '/dashboard/academics/assignments' },
         ],
@@ -136,6 +141,10 @@ module.exports = [
             { title: 'School Fees', path: '/dashboard/finance/fees' },
             { title: 'Single Billing', path: '/dashboard/finance/single-billing' },
             { title: 'Family Billing', path: '/dashboard/finance/family-billing' },
+            { title: 'Pay Invoice', path: '/dashboard/finance/payment-management' },
+            { title: 'All Student Payments', path: '/dashboard/finance/all-payments' },
+            { title: 'Finance Messages', path: '/dashboard/finance/messages' },
+            { title: 'Assets Management', path: '/dashboard/finance/assets' },
             { title: 'Scholarships & Discounts', path: '/dashboard/finance/scholarships' },
             {
                 title: 'Fees Setup',

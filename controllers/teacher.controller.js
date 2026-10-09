@@ -12,8 +12,9 @@ const generateRandomPassword = () => { return '12345'; };
 const addTeacher = async (req, res) => {
     const { name, email, department, phone, gender, dateOfBirth, address, qualification, salary, subjects, bankName, accountName, accountNumber } = req.body;
 
-    if (!name || !gender) {
-        throw new CustomError.BadRequestError('Please provide name and gender');
+    // Full name is the only required field; everything else is optional.
+    if (!name || !name.trim()) {
+        throw new CustomError.BadRequestError('Please provide the staff full name');
     }
 
     const school = await prisma.school.findUnique({
@@ -105,7 +106,7 @@ const addTeacher = async (req, res) => {
                         photoUrl: photoUrl,
                         department: department || null,
                         phone: phone || null,
-                        gender,
+                        gender: gender || '', // column is non-nullable; '' = not specified
                         status: 'Active',
                         dateOfBirth: dateOfBirth ? new Date(dateOfBirth) : null,
                         address: address || null,

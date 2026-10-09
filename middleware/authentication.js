@@ -53,7 +53,9 @@ const authenticateUser = async (req, res, next) => {
             groupId: payload.groupId || null,
             branchId: payload.branchId || null,       // Phase 1: assigned branch
             activeBranchId: activeBranchId,           // Phase 2: viewed branch
-            originalSchoolId: payload.originalSchoolId || null  // Branch switching: true home school
+            originalSchoolId: payload.originalSchoolId || null,  // Branch switching: true home school
+            // Set only on the short-lived token the PDF controller mints for Puppeteer, after it has already verified the result PIN.
+            printVerified: payload.printVerified === true
         }
         next()
     } catch (error) {
@@ -98,8 +100,32 @@ const requirePermission = (permissionKey) => {
     };
 };
 
+// Same check as requirePermission, but only enforced for users constrained by an
+// assigned custom role (the "Roles & Permissions" screen). Everyone else keeps the
+// access their base role already gives them through authorizePermissions, so adding
+// this to an existing route can't lock out admins who were never role-ticked.
+const requireRolePermission = (permissionKey) => {
+    return async (req, res, next) => {
+        try {
+            const user = await prisma.user.findUnique({
+                where: { id: req.user.userId },
+                select: { customRoleId: true },
+            });
+            if (!user?.customRoleId) return next();
+            const { permissions } = await resolveUserAccess(req.user.userId);
+            if (!permissions.includes(permissionKey)) {
+                throw new CustomError.UnauthorizedError(`Permission denied. Requires: ${permissionKey}`);
+            }
+            next();
+        } catch (error) {
+            next(error);
+        }
+    };
+};
+
 module.exports = {
     authenticateUser,
     authorizePermissions,
-    requirePermission
+    requirePermission,
+    requireRolePermission
 }
